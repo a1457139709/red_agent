@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mini-claude-code"
+version = "0.1.0"
+description = "A local CLI code agent built with LangChain and OpenAI-compatible APIs."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "langchain>=0.3,<0.4",
+    "langchain-openai>=0.3,<0.4",
+    "python-dotenv>=1.0,<2.0",
+    "colorama>=0.4.6,<0.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<9.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
