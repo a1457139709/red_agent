@@ -1,239 +1,75 @@
 # mini-claude-code
 
-一个运行在本地终端里的轻量级 Python Code Agent。项目基于 LangChain 和 OpenAI 兼容接口实现，围绕“读文件、改文件、执行命令、管理上下文”这几个核心能力，搭出了一套最小可运行的 Agent 框架。
+`mini-claude-code` is a local Python CLI coding agent built around:
 
-它更偏教学和原型验证：结构清晰、模块边界明确，适合继续扩展工具链、提示词、安全策略和上下文管理能力。
+- a LangChain tool-calling loop
+- a persisted task runtime
+- a controlled local tool execution boundary
 
-## 项目特点
+The project is intended for local single-user development work. It is not a SaaS agent platform or a multi-user service.
 
-- 本地 CLI 交互，直接面向开发任务
-- 基于 `LangChain` 的 tool calling 流程
-- 支持文件读取、写入、局部编辑、目录浏览、关键字搜索、Shell 执行、文件删除
-- 具备基础安全控制：路径越界拦截、敏感文件提示、危险命令阻断或二次确认
-- 支持长会话上下文压缩，降低 token 累积带来的上下文压力
+## Current Capabilities
 
-## 项目结构
+- interactive local CLI
+- file tools: read, write, edit, list, search, delete
+- shell command execution with safety checks
+- session state and context compression
+- persisted tasks, runs, checkpoints, and task logs
 
-```text
-.
-├── docs/                     # 设计文档
-├── src/
-│   ├── main.py               # CLI 入口，负责交互、命令处理、会话管理
-│   ├── SYSTEM_PROMPT.md      # Agent 核心系统提示词
-│   ├── ARCHITECTURE.md       # 当前项目架构说明
-│   ├── agent/
-│   │   ├── context.py        # 上下文压缩与结构化摘要
-│   │   ├── logger.py         # 彩色输出与步骤日志
-│   │   ├── loop.py           # Agent 主循环，处理模型与工具往返
-│   │   ├── prompt.py         # 系统提示词拼装
-│   │   ├── provider.py       # 模型创建
-│   │   ├── settings.py       # 统一配置
-│   │   └── state.py          # 会话状态
-│   ├── tools/
-│   │   ├── __init__.py       # 显式装配工具列表与注册表
-│   │   ├── executor.py       # 工具执行器，负责确认与安全前置检查
-│   │   ├── registry.py       # 兼容旧装饰器入口
-│   │   ├── readFile.py       # 读文件
-│   │   ├── writeFile.py      # 写文件
-│   │   ├── editFile.py       # 局部替换编辑
-│   │   ├── listDir.py        # 列目录
-│   │   ├── search.py         # 递归文本搜索
-│   │   ├── bash.py           # Shell 命令执行
-│   │   ├── deleteFile.py     # 删除文件
-│   │   └── webSearch.py      # Web 搜索预留，当前未启用
-│   └── utils/
-│       ├── confirm.py        # 风险命令确认
-│       ├── safety.py         # 路径与命令安全规则
-│       └── truncate.py       # 工具输出截断
-├── test/                     # 实验性脚本与早期测试代码
-└── .env                      # 本地模型配置
-```
-
-## 核心架构
-
-```mermaid
-flowchart TD
-    A["用户输入"] --> B["src/main.py"]
-    B --> C["agent.loop.agent_loop"]
-    C --> D["agent.prompt.assemble_system_prompt"]
-    C --> E["agent.provider.create_model"]
-    C --> F["tools.get_tools()"]
-    E --> G["ChatOpenAI.bind_tools(tools)"]
-    D --> G
-    F --> G
-    G --> H{"模型是否发起 tool_calls"}
-    H -- 否 --> I["返回最终答案"]
-    H -- 是 --> J["执行工具"]
-    J --> K["拼接 ToolMessage"]
-    K --> G
-    I --> L{"token 接近阈值?"}
-    L -- 是 --> M["agent.context.compress_context"]
-    L -- 否 --> N["等待下一轮输入"]
-    M --> N
-```
-
-### 运行链路
-
-1. `src/main.py` 接收用户输入，并处理 `/help`、`/reset`、`/exit` 等命令。
-2. `agent/loop.py` 组装系统提示词、创建模型、绑定工具，并驱动多轮 tool calling。
-3. 模型若返回工具调用，则在本地执行工具并把结果作为 `ToolMessage` 再喂回模型。
-4. 模型不再请求工具时，返回最终回答。
-5. 若本轮 token 使用接近阈值，则触发 `agent/context.py` 的历史压缩逻辑，把旧会话压缩成结构化摘要，供后续轮次继续使用。
-
-## 核心模块说明
-
-### 1. CLI 入口层
-
-`src/main.py` 负责：
-
-- 读取终端输入
-- 维护 `history`
-- 打印步骤日志和最终回答
-- 在长会话时触发上下文压缩
-
-### 2. Agent 执行层
-
-`src/agent/loop.py` 是主控模块，职责包括：
-
-- 生成系统提示词
-- 初始化模型
-- 从 `ToolExecutor` 获取工具并执行模型推理与工具回环
-- 汇总本轮消息与 token 使用信息
-
-### 3. 工具层
-
-当前代码实际注册的工具有：
-
-- `read_file`：按行读取文件，支持 `offset` 和 `limit`
-- `write_file`：全量写入文件，不存在则创建
-- `edit_file`：通过唯一 `old_string` 做局部替换
-- `list_dir`：非递归列出目录内容
-- `search`：递归搜索文本并返回匹配行
-- `bash`：执行 Shell 命令
-- `delete_file`：删除单个文件
-
-说明：
-
-- `src/tools/__init__.py` 显式定义当前启用的工具
-- `src/tools/executor.py` 统一处理命令确认、敏感路径提示和工具执行分发
-- `webSearch.py` 目前是预留实现，实际未启用
-
-### 4. 安全与约束
-
-`src/utils/safety.py` 提供了两类核心保护：
-
-- 路径保护：拒绝绝对路径和目录穿越，所有文件操作都限制在当前工作目录下
-- 命令保护：由 `src/tools/executor.py` 统一对高风险命令直接阻止，对潜在危险命令要求用户确认
-
-同时，敏感路径如 `.env`、私钥、凭证文件会触发提示，避免误操作。
-
-### 5. 上下文管理
-
-`src/agent/context.py` 负责：
-
-- 粗略估算 token 消耗
-- 判断是否接近上下文阈值
-- 调用模型压缩历史消息
-- 生成摘要型上下文，供下一轮继续执行
-
-这让项目具备了基础的长对话续航能力。
-
-## 快速开始
-
-### 1. 安装依赖
-
-项目现在提供了 `pyproject.toml` 和 `requirements.txt` 两种安装入口。
+## Run
 
 ```bash
 pip install -r requirements.txt
-```
-
-如果你只想安装运行时依赖，也可以直接使用：
-
-```bash
-pip install .
-```
-
-### 2. 配置环境变量
-
-在项目根目录创建或补全 `.env`：
-
-```env
-OPENAI_API_KEY=your_api_key
-OPENAI_API_BASE=https://your-openai-compatible-endpoint
-OPENAI_MODEL=gpt-4o-mini
-```
-
-说明：
-
-- `OPENAI_API_BASE` 支持 OpenAI 兼容接口地址
-- `OPENAI_MODEL` 由 `src/agent/provider.py` 直接读取
-
-### 3. 启动项目
-
-```bash
 python src/main.py
 ```
 
-启动后可直接在终端输入问题，例如：
+## Task Commands
 
-```text
-> 帮我分析一下 src 目录结构
-> 读取 main.py 并解释主流程
-> 帮我把某个函数重构一下
-```
+The CLI currently supports:
 
-## 交互命令
+- `/task create`
+- `/task list`
+- `/task show <task_id>`
+- `/task logs <task_id> [limit]`
+- `/task resume <task_id>`
+- `/task detach`
+- `/task complete`
 
-CLI 内置命令：
+## Current Architecture
 
-- `/help`：查看帮助
-- `/reset`：清空当前会话历史
-- `/exit` 或 `/quit`：退出程序
+Core source areas:
 
-## 开发建议
+- `src/main.py`
+- `src/agent/`
+- `src/app/`
+- `src/runtime/`
+- `src/models/`
+- `src/storage/`
+- `src/tools/`
+- `src/utils/`
 
-### 新增工具
+## Documentation
 
-1. 在 `src/tools/` 下新增模块
-2. 使用 `@tool(...)` 定义工具
-3. 在 `src/tools/__init__.py` 中显式加入工具列表
-4. 如需兼容旧写法，可以保留 `register_tool(...)` 装饰器，但当前主流程不再依赖导入副作用
+The `docs/` folder was cleaned up to keep only current documents:
 
-### 修改 Agent 行为
+- `docs/architecture.md`
+- `docs/task-runtime.md`
+- `docs/engineering-development-plan.en.md`
+- `docs/skill-system-standard.md`
 
-- 角色和行为边界：改 `src/SYSTEM_PROMPT.md`
-- 系统提示词拼装方式：改 `src/agent/prompt.py`
-- 主执行循环：改 `src/agent/loop.py`
-- 安全策略：改 `src/utils/safety.py`
+The docs index is at `docs/README.md`.
 
-## 文档索引
+## Next Direction
 
-`docs/` 目录下已经有更细的设计文档：
+The next major engineering phase is a standardized `SKILL.md`-based skill system:
 
-- `docs/overview.md`：项目定位与背景
-- `docs/architecture.md`：整体架构说明
-- `docs/agent-loop.md`：Agent 循环设计
-- `docs/context.md`：上下文压缩策略
-- `docs/security.md`：安全设计
-- `docs/tools.md`：工具设计
-- `docs/prompt-architecture.md`：提示词架构
+- parse and load standard `SKILL.md` files
+- bind `Task.skill_profile` to runtime behavior
+- let skills affect prompt composition
+- let skills filter the visible tool set
 
-## 当前状态与限制
-
-- 当前更像教学型/实验型项目，还不是生产级 Agent
-- `webSearch.py` 尚未接入正式可用的联网搜索能力
-- `test/` 目录仍然保留了一批实验脚本；规范化基础测试现在位于 `tests/`
-
-## 测试
+## Tests
 
 ```bash
 pytest
 ```
-
-## 后续可扩展方向
-
-- 增加 Git 工具链，如 `git status`、`git diff`、`git commit`
-- 增加代码分析和测试执行工具
-- 完善沙箱、权限、超时和资源限制
-- 补齐依赖管理、自动化测试和发布流程

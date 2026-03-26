@@ -1,57 +1,30 @@
-# mini-claude-code 文档导航
+# Documentation Index
 
-本目录记录的是当前 Python 版本 `mini-claude-code` 的实现说明。
+This folder now contains only the current, maintained documentation for the Python codebase.
 
-## 当前优先阅读
+## Keep Reading These First
 
-1. [overview.md](./overview.md)
-   项目定位、当前技术栈、目录入口
-2. [architecture.md](./architecture.md)
-   当前分层、运行链路、关键模块职责
-3. [agent-loop.md](./agent-loop.md)
-   Agent 主循环、`SessionState`、`ToolExecutor`、上下文压缩的协作方式
-4. [architecture-improvement-report.md](./architecture-improvement-report.md)
-   当前问题清单、P0/P1/P2 路线和改进建议
-5. [engineering-development-plan.md](./engineering-development-plan.md)
-   后续持续开发的内部工程蓝图、阶段路线与验收标准
-6. [engineering-development-plan.en.md](./engineering-development-plan.en.md)
-   English version of the internal engineering blueprint for future implementation work
+1. `architecture.md`
+   Current runtime architecture, module boundaries, and execution flow.
+2. `task-runtime.md`
+   Persisted task model, run lifecycle, checkpoints, and CLI task commands.
+3. `engineering-development-plan.en.md`
+   Current development roadmap and next implementation priorities.
+4. `skill-system-standard.md`
+   Planned `SKILL.md`-based skill system standard and compatibility rules.
 
-## 专题文档
+## Maintenance Rules
 
-- [tools.md](./tools.md)
-- [context.md](./context.md)
-- [security.md](./security.md)
-- [prompt-architecture.md](./prompt-architecture.md)
+- `docs/` should describe the current Python implementation, not historical experiments.
+- If a document becomes stale, rewrite it or remove it.
+- Do not keep imported design notes from other projects unless they are clearly marked as historical and still useful.
+- When code and docs disagree, update the docs immediately after confirming the code path.
 
-说明：
+## Removed Legacy Docs
 
-- 这些专题文档仍然保留了部分设计过程信息
-- 其中个别示例代码不是最新实现
-- 阅读时请优先以 `src/` 下真实代码和上面的当前文档为准
+The previous topic docs that described old TypeScript-era or otherwise stale designs were removed on purpose. Their responsibilities are now covered by:
 
-## 与代码对应的核心文件
-
-```text
-src/
-├── main.py
-├── agent/
-│   ├── context.py
-│   ├── loop.py
-│   ├── provider.py
-│   ├── settings.py
-│   └── state.py
-├── tools/
-│   ├── __init__.py
-│   ├── executor.py
-│   ├── bash.py
-│   ├── readFile.py
-│   ├── writeFile.py
-│   ├── editFile.py
-│   ├── search.py
-│   └── deleteFile.py
-└── utils/
-    ├── confirm.py
-    ├── safety.py
-    └── truncate.py
-```
+- `architecture.md`
+- `task-runtime.md`
+- `engineering-development-plan.en.md`
+- `skill-system-standard.md`

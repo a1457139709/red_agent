@@ -4,21 +4,19 @@
 
 This document is the internal engineering blueprint for the continued development of `mini-claude-code`.
 
-Its goal is not to explain what the project is at a high level, but to define:
+It is not a high-level project introduction. Its purpose is to define:
 
 - what the project should evolve toward
-- which capabilities should be built first
-- how the codebase should be structured over time
-- what each delivery phase must achieve
-- which architectural boundaries must remain intact during development
+- which capabilities should be built next
+- which skill standard the project should adopt
+- which architectural boundaries must remain intact
+- what the next implementation entry point should be
 
 This document is written for future implementation work in this repository.
 
 ## 2. Product Scope and Constraints
 
 ### 2.1 Current Target
-
-This project is not intended to become a team platform or a SaaS agent service.
 
 The current target is:
 
@@ -34,37 +32,31 @@ The current target is:
 The following are not current goals:
 
 - multi-tenancy
-- web control panel
-- user accounts
+- SaaS deployment
+- web control panels
 - organization-level permission models
 - distributed scheduling
-- complex cloud deployment
+- complex cloud infrastructure
 
 Conclusion:
 
-The project should continue evolving from the current codebase rather than being rewritten from scratch, but future work must be done as structured engineering improvements instead of ad hoc feature accumulation.
+The project should continue evolving from the current codebase rather than being rewritten from scratch. However, future work must be done as structured engineering work, not as ad hoc feature accumulation.
 
 ## 3. Current Foundation
 
 The current codebase already has enough structure to support continued growth:
 
-- a working CLI interaction loop
-- `Settings` for centralized configuration
-- `SessionState` for centralized session state
-- `ToolExecutor` for controlled tool execution
+- a working local CLI interaction loop
+- centralized `Settings`
+- centralized `SessionState`
+- a controlled `ToolExecutor`
 - explicit tool assembly
-- baseline tests and packaging metadata
+- persisted `Task`, `Run`, `Checkpoint`, and task logs
+- baseline regression tests
 
-Because of this, the next stage is not about replacing the core loop. It is about adding four major capabilities:
-
-1. long-running task support
-2. skill / plugin support
-3. stronger local execution safety
-4. maintainable engineering infrastructure
+Because of this, the next stage is no longer “build a minimal agent prototype.” The next stage is “standardize the skill system and integrate it into the existing task runtime.”
 
 ## 4. Guiding Principles
-
-All future development should follow these principles.
 
 ### 4.1 Local-First
 
@@ -72,9 +64,9 @@ Every design decision should optimize for local single-machine usage.
 
 This means:
 
-- prefer local files and SQLite for persistence
-- prefer local task execution over external brokers
-- prefer readable file-based configuration over service-heavy infrastructure
+- prefer local files and SQLite
+- prefer local directory conventions over service-heavy infrastructure
+- prefer local skill discovery over remote registries
 
 ### 4.2 Keep the Core Runtime Small
 
@@ -89,7 +81,7 @@ The core should own:
 - task orchestration
 - safety policy
 
-Complex domain behavior should be introduced through explicit skills, not by overloading the main loop.
+Complex domain behavior should be introduced through skills, not by overloading `agent_loop`.
 
 ### 4.3 All Side Effects Must Go Through a Controlled Layer
 
@@ -97,450 +89,354 @@ Any capability that changes files, executes commands, or touches the network mus
 
 This implies:
 
-- tools must not handle user interaction directly
-- tools must not define their own permission model
-- tools must not bypass unified logging or audit logic
+- skills must not bypass `ToolExecutor`
+- skills must not define an independent permission model
+- skills may influence tool availability and prompt composition, but not break the runtime boundary
 
-### 4.4 Long-Running Tasks Must Be Recoverable
+### 4.4 Long-Running Tasks Must Remain Recoverable
 
-Future long-running task support must prioritize:
+The existing task runtime already supports resumability. Skills must not break:
 
-- resumability after interruption
-- retryability after failure
-- step-level execution history
-- visibility into current task state
+- interruption recovery
+- retry after failure
+- checkpoint restore
+- task/run log traceability
 
-### 4.5 Safety Must Be Enforced by Code, Not Only by Prompts
+### 4.5 Skill Standard Before Private Format
 
-When cybersecurity skills are introduced later, safety must not rely only on prompt instructions.
+The project should not invent a private skill format first and migrate later.
 
-It must be enforced through:
+The project will standardize on:
 
-- tool-level permissions
-- command classification
-- workspace restrictions
-- allowlists / denylists
-- audit trails
+- `SKILL.md` as the primary skill artifact
+- the Agent Skills open standard as the baseline
+- Claude Code extensions as optional compatibility fields
+- forward-compatible parsing that ignores unknown extensions
 
-## 5. Target Architecture Direction
+## 5. Standardized Skill Strategy
 
-The codebase should gradually move toward the following shape:
+### 5.1 Adopted Standard
+
+The project will use a `SKILL.md`-based skill system.
+
+The design direction is informed by:
+
+- the Agent Skills open standard
+- the Claude Code skills ecosystem
+
+Engineering decisions:
+
+1. `SKILL.md` is the only required entry file
+2. a skill directory may also contain `scripts/`, `references/`, and `assets/`
+3. the runtime first parses standard fields, then optional compatibility extensions
+4. skill definitions must not be hard-coded as Python-only manifests
+
+### 5.2 Standard Directory Shape
+
+Recommended built-in skill structure:
+
+```text
+src/skills/
+  development-default/
+    SKILL.md
+    references/
+    scripts/
+  security-audit/
+    SKILL.md
+    references/
+    scripts/
+```
+
+The runtime should also be able to support a future user-local skill directory such as:
+
+```text
+.mini-claude-code/skills/
+  development-default/
+    SKILL.md
+```
+
+### 5.3 Required Standard Fields
+
+The first implementation stage must support at least:
+
+- `name`
+- `description`
+- `license`
+- `compatibility`
+- `metadata`
+- `allowed-tools`
+
+Rules:
+
+- `name` must match or map stably to the skill directory name
+- `description` must explain both what the skill does and when it should be used
+- `allowed-tools` constrains tool visibility for that skill
+
+### 5.4 Claude Code Compatibility Extensions
+
+The runtime should allow, but not require, the following fields:
+
+- `argument-hint`
+- `disable-model-invocation`
+- `user-invocable`
+- `model`
+- `effort`
+- `context`
+- `agent`
+- `hooks`
+- `shell`
+
+Strategy:
+
+- keep parsing support
+- only consume the fields actually needed in the first runtime slice
+- retain unhandled fields in raw metadata or a compatibility layer
+
+### 5.5 Role of the `SKILL.md` Body
+
+The body of `SKILL.md` is not decorative documentation. It is the primary prompt fragment source for the skill.
+
+The body should describe:
+
+- when to use the skill
+- goals
+- workflow
+- output expectations
+- safety boundaries
+- references to `references/` and `scripts/`
+
+## 6. Target Architecture Direction
+
+The codebase should gradually move toward this shape:
 
 ```text
 src/
-├── main.py                     # local CLI entry point
-├── app/
-│   ├── session_service.py      # session management
-│   ├── task_service.py         # task management
-│   ├── run_service.py          # single-run orchestration
-│   └── skill_service.py        # skill loading and resolution
-├── agent/
-│   ├── loop.py
-│   ├── context.py
-│   ├── prompt.py
-│   ├── provider.py
-│   ├── settings.py
-│   └── state.py
-├── runtime/
-│   ├── task_runner.py          # long-running task executor
-│   ├── checkpoint.py           # save / restore checkpoints
-│   ├── event_bus.py            # runtime events
-│   └── policies.py             # runtime policies
-├── skills/
-│   ├── registry.py             # skill registry
-│   ├── base.py                 # skill interface
-│   ├── development/
-│   └── security/
-├── tools/
-│   ├── __init__.py
-│   ├── executor.py
-│   ├── policies.py             # tool permission rules
-│   └── ...
-├── storage/
-│   ├── sqlite.py               # SQLite access layer
-│   ├── tasks.py
-│   ├── sessions.py
-│   └── runs.py
-├── models/
-│   ├── task.py
-│   ├── skill.py
-│   ├── run.py
-│   └── events.py
-└── utils/
+  main.py
+  app/
+    task_service.py
+    run_service.py
+    skill_service.py
+  agent/
+    loop.py
+    context.py
+    prompt.py
+    provider.py
+    settings.py
+    state.py
+  runtime/
+    task_runner.py
+    policies.py
+  skills/
+    loader.py
+    registry.py
+    manifest.py
+    development-default/
+      SKILL.md
+    security-audit/
+      SKILL.md
+  storage/
+    sqlite.py
+    tasks.py
+    runs.py
+  models/
+    task.py
+    run.py
+    skill.py
+  tools/
+    executor.py
+  utils/
 ```
 
 Notes:
 
-- this is a direction, not an immediate rewrite target
-- new work should be added in a way that converges toward this shape
+- `src/skills/` will contain both runtime support code and built-in skills
+- the runtime should support both built-in and user-local skill sources
 
-## 6. Capability Roadmap
+## 7. Capability Roadmap
 
-## Phase 1: Minimal Long-Running Task Support
+### Phase 1: Minimal Long-Running Task Support
 
-### Goal
+This phase is now largely in place:
 
-Move the agent from pure request-response interaction toward explicit task execution.
+- `Task`
+- `Run`
+- `Checkpoint`
+- task logs
+- `/task create|list|show|logs|resume|detach|complete`
 
-### Required Work
+Only incremental refinement remains here.
 
-1. define a `Task` model
-2. define a task state machine
-3. bind one execution run to one task
-4. store task logs
-5. support interruption and resume
+### Phase 2: Standardized Skill System
 
-### Suggested Task Fields
+#### Goal
 
-- `id`
-- `title`
-- `goal`
-- `status`
-- `created_at`
-- `updated_at`
-- `workspace`
-- `last_checkpoint`
-- `last_error`
+Represent development, security, and future domain behaviors as standard `SKILL.md` skills instead of private prompt packs or hard-coded manifests.
 
-Suggested states:
+#### Required Work
 
-- `pending`
-- `running`
-- `paused`
-- `failed`
-- `completed`
-- `cancelled`
+1. define an internal `SkillManifest` model
+2. implement `SKILL.md` frontmatter parsing
+3. implement skill directory discovery and registration
+4. make `Task.skill_profile` actually drive skill loading
+5. let skills affect prompt composition
+6. let skills affect the available tool set
+7. ship at least two built-in templates:
+   - `development-default`
+   - `security-audit`
 
-### Definition of Done
+#### Not Required in the First Slice
 
-- tasks can be created and persisted locally
-- interrupted tasks can be resumed
-- current task state can be inspected
-- recent task logs can be viewed
+- complex hook execution
+- multi-agent skill collaboration
+- online skill marketplaces
+- remote dependency resolution
 
-## Phase 2: Skill / Plugin System
+#### Definition of Done
 
-### Goal
+- skills can be loaded from standard directories
+- standard frontmatter fields are supported
+- `Task.skill_profile` can bind a skill
+- different skills affect prompt assembly and tool visibility
+- unknown extension fields do not break loading
+- built-in templates serve as scaffolding for future skills
 
-Represent development, security, and future domain behaviors as skills rather than embedding them directly into the core loop.
+### Phase 3: Stronger Execution Safety
 
-### Minimal Skill Structure
+Required work:
 
-Each skill should define:
+- tool permission levels
+- workspace allowlists
+- command allowlists and denylists
+- stronger confirmation policies for risky operations
+- task/run-level audit logging
 
-- `manifest`
-- prompt fragments
-- required tools
-- execution hooks
-- safety constraints
-- examples
+Rule:
 
-### Initial Skill Families
+Security skills must not expand faster than execution controls.
 
-Start with two families:
+### Phase 4: Persistence and Recovery Enhancements
 
-1. `development`
-   - code reading
-   - refactoring
-   - test generation
-   - project structure analysis
+Suggested persisted entities:
 
-2. `security`
-   - asset enumeration
-   - vulnerability triage
-   - web security inspection
-   - local security analysis
-
-### Definition of Done
-
-- skills can be explicitly enabled or disabled
-- skills can affect prompt composition and available tools
-- a task can bind to a default skill profile
-- each skill can declare required tools and permission needs
-
-## Phase 3: Stronger Execution Safety
-
-### Goal
-
-Build a real local execution boundary before adding more powerful security capabilities.
-
-### Required Work
-
-1. tool permission levels
-2. workspace allowlist support
-3. command allowlist / denylist
-4. stronger confirmation policy for risky operations
-5. audit logging for critical actions
-
-### Suggested Permission Levels
-
-- `read_only`
-- `workspace_write`
-- `system_command_safe`
-- `system_command_sensitive`
-- `network_access`
-
-### Important Constraint
-
-Security-oriented skills are likely to request more powerful commands later, so execution safety must be strengthened before expanding those tools.
-
-### Definition of Done
-
-- every tool has an explicit permission level
-- every execution can be traced to a task and run
-- risky commands still go through the unified executor even in single-user local mode
-
-## Phase 4: Local Persistence and Recovery
-
-### Goal
-
-Allow the agent to survive process exits and continue unfinished work.
-
-### Recommended Approach
-
-Use SQLite first.
-
-Why:
-
-- enough for single-machine usage
-- easy to query
-- no extra service dependency
-- good fit for tasks, sessions, runs, and event history
-
-### Suggested Persisted Entities
-
-- Sessions
 - Tasks
 - Runs
-- RunEvents
-- SkillConfigs
 - Checkpoints
+- Task logs
+- skill selection metadata
+- skill resolution snapshots
 
-### Definition of Done
+The skill source of truth should still remain file-based whenever possible.
 
-- historical tasks can be listed after restart
-- unfinished tasks can be resumed
-- execution history can be inspected
+### Phase 5: Observability and Debugging
 
-## Phase 5: Observability and Debugging
-
-### Goal
-
-Make it possible to understand what the agent did, why it failed, and where the bottleneck is.
-
-### Required Work
-
-1. structured logs
-2. event stream recording
-3. task-level log files
-4. tool timing metrics
-5. error classification
-
-### Suggested Log Fields
+At minimum, logs should include:
 
 - `task_id`
-- `session_id`
 - `run_id`
-- `step_index`
+- `skill_name`
 - `tool_name`
-- `tool_args`
 - `duration_ms`
 - `status`
 - `error_type`
 
-### Definition of Done
-
-- failed tasks can be replayed from logs
-- failures can be categorized as model, tool, permission, or runtime issues
-
-## Phase 6: Cybersecurity Skill Introduction
-
-### Goal
-
-Add security-oriented skills on top of an already controlled local runtime.
-
-### Recommended Order
-
-Add lower-risk capabilities first, then stronger ones.
-
-1. information gathering
-   - fingerprinting
-   - basic HTTP probing
-   - local file audit
-
-2. inspection
-   - common misconfiguration checks
-   - dependency risk analysis
-   - route / exposure analysis
-
-3. semi-automated verification
-   - only on explicitly controlled local targets
-   - explicit target confirmation required
-   - clear risk confirmation required
-
-### Hard Rule
-
-Do not add high-risk scanning or offensive command execution before permission control and audit logging are significantly stronger.
-
-## 7. Directory Evolution Plan
-
-## 7.1 Directories to Keep
-
-These parts of the current codebase should remain and evolve:
-
-- `src/agent/*`
-- `src/tools/*`
-- `src/utils/*`
-- `src/main.py`
-
-## 7.2 New Directories to Introduce First
+### Phase 6: Cybersecurity Skill Introduction
 
 Recommended order:
 
-1. `src/models/`
-2. `src/storage/`
-3. `src/app/`
-4. `src/runtime/`
-5. `src/skills/`
+1. information gathering
+2. local config and dependency audit
+3. semi-automated verification
 
-## 7.3 Existing Legacy Areas
+Hard rule:
 
-- `test/` remains a sandbox / experimental scripts area
-- real regression tests should continue to live under `tests/`
+Do not add high-risk scanning or offensive behavior before stronger permissions and audit controls exist.
 
-## 8. Suggested Data Models
+## 8. Skill Data Model Guidance
 
-The following models should become stable first.
-
-### 8.1 Session
-
-Suggested fields:
-
-- `id`
-- `created_at`
-- `updated_at`
-- `workspace`
-- `compressed_summary`
-- `metadata`
-
-### 8.2 Task
-
-Suggested fields:
-
-- `id`
-- `session_id`
-- `title`
-- `goal`
-- `status`
-- `priority`
-- `workspace`
-- `skill_profile`
-- `created_at`
-- `updated_at`
-
-### 8.3 Run
-
-Suggested fields:
-
-- `id`
-- `task_id`
-- `status`
-- `started_at`
-- `finished_at`
-- `step_count`
-- `last_usage`
-- `last_error`
-
-### 8.4 SkillManifest
-
-Suggested fields:
+The internal `SkillManifest` should stabilize around at least:
 
 - `name`
-- `version`
 - `description`
-- `default_prompt_fragments`
-- `required_tools`
-- `forbidden_tools`
-- `risk_level`
+- `license`
+- `compatibility`
+- `allowed_tools`
+- `metadata`
+- `raw_frontmatter`
+- `body`
+- `references`
+- `scripts`
+
+Recommended compatibility fields to retain:
+
+- `argument_hint`
+- `user_invocable`
+- `disable_model_invocation`
+- `model`
+- `effort`
+- `shell`
 
 ## 9. Testing Strategy
 
-Testing must stay layered as the system grows.
-
-### 9.1 Unit Tests
+### 9.1 Skill Loader Tests
 
 Cover:
 
-- state objects
-- config parsing
-- safety rules
-- tool executor
-- compression summary parsing
+- valid `SKILL.md` parsing
+- failure for missing `name` or `description`
+- `allowed-tools` parsing
+- compatibility with unknown extension fields
+- discovery of `references/` and `scripts/`
 
 ### 9.2 Runtime Tests
 
 Cover:
 
-- main loop behavior
-- multi-tool calls
-- max-step handling
-- interruption and resume
-- skill switching
+- prompt assembly with a bound skill
+- tool filtering with a bound skill
+- fallback behavior for missing skills
+- failure handling for malformed or hostile skill files
 
-### 9.3 Tool Tests
+### 9.3 Regression Rule
 
-Cover:
-
-- file tools
-- search behavior
-- command execution boundaries
-- permission enforcement
-
-### 9.4 Regression Rule
-
-Each new phase should ship with tests that protect the new behavior. No major refactor should be accepted without matching regression coverage.
+Every new skill-related capability must ship with loader and runtime regression coverage.
 
 ## 10. Documentation Policy
 
-The project must not fall back into a state where the code evolves but the docs still describe an old architecture.
-
 Rules:
 
-1. update `docs/` whenever architecture changes
-2. update `README.md` when module structure changes
-3. update this document when a new phase begins or completes
-4. explicitly mark documents that are historical rather than current
+1. update `docs/` whenever skill structure changes
+2. update the documentation index when built-in skills are added
+3. update this plan whenever the skill standard or compatibility strategy changes
+4. explicitly distinguish current standard behavior from future optional extensions
 
 ## 11. Delivery Priority
 
-Recommended next implementation order:
-
 ### Priority 1
 
-- local task system
-- SQLite persistence
-- task logs and checkpoints
+- standard `SKILL.md` loader
+- skill registry
+- runtime integration for `Task.skill_profile`
+- prompt and tool filtering via skills
 
 ### Priority 2
 
-- skill registry
-- skill manifest
-- skill-to-tool permission binding
+- built-in `development-default` template
+- built-in `security-audit` template
+- compatibility extension handling
 
 ### Priority 3
 
-- stronger local execution safety
-- tool permission levels
-- minimal cybersecurity skill set
+- stronger tool permissions and safety policies
+- minimal safe cybersecurity skill set
 
 ### Priority 4
 
 - stronger observability
-- richer examples and documentation
+- skill import and installation workflows
 
 ## 12. Definition of Done for Any Phase
 
-Every future phase should satisfy at least the following:
+Every phase must satisfy at least:
 
 1. a clear code entry point exists
 2. regression tests are included
@@ -552,14 +448,18 @@ Every future phase should satisfy at least the following:
 
 The most practical next implementation step is:
 
-1. create `src/models/task.py`
-2. create `src/storage/sqlite.py`
-3. create `src/storage/tasks.py`
-4. create `src/app/task_service.py`
-5. implement the minimal create / load / resume task loop
+1. create `src/models/skill.py`
+2. create `src/skills/loader.py`
+3. create `src/skills/registry.py`
+4. create `src/app/skill_service.py`
+5. integrate `Task.skill_profile` into `TaskRunner`, prompt assembly, and tool filtering
+6. add two built-in standard skills:
+   - `src/skills/development-default/SKILL.md`
+   - `src/skills/security-audit/SKILL.md`
 
 Why this is next:
 
-- it directly supports the long-running task goal
-- it avoids introducing skill-system complexity too early
-- it creates the stable task substrate needed before security skills are added
+- the Phase 1 task substrate already exists
+- the skill system is the clean extension point for future development and security capabilities
+- adopting standard `SKILL.md` now avoids lock-in to a private format
+- it creates a durable base for future cybersecurity skills and external skill import

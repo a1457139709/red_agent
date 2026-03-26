@@ -24,6 +24,14 @@ class Settings:
     system_prompt_reserve: int = DEFAULT_SYSTEM_PROMPT_RESERVE
     working_directory: Path = Path.cwd().resolve()
 
+    @property
+    def app_data_dir(self) -> Path:
+        return self.working_directory / ".mini-claude-code"
+
+    @property
+    def sqlite_path(self) -> Path:
+        return self.app_data_dir / "agent.db"
+
     @classmethod
     def from_env(cls) -> "Settings":
         dotenv.load_dotenv()

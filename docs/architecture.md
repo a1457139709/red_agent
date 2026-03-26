@@ -1,138 +1,211 @@
-# 当前架构
+# Current Architecture
 
-## 分层结构
+## Summary
 
-```text
-CLI Layer
-  └── src/main.py
+`mini-claude-code` is a local Python CLI agent with three active pillars:
 
-Application State Layer
-  ├── src/agent/settings.py
-  └── src/agent/state.py
+- an interactive chat shell
+- a persisted task runtime
+- a controlled tool execution boundary
 
-Agent Runtime Layer
-  ├── src/agent/loop.py
-  ├── src/agent/context.py
-  ├── src/agent/prompt.py
-  └── src/agent/provider.py
+It is not yet a plugin-driven or service-oriented system. The current runtime is intentionally small and local-first.
 
-Tool Execution Layer
-  └── src/tools/executor.py
-
-Tool Layer
-  ├── src/tools/bash.py
-  ├── src/tools/readFile.py
-  ├── src/tools/writeFile.py
-  ├── src/tools/editFile.py
-  ├── src/tools/search.py
-  ├── src/tools/deleteFile.py
-  └── src/tools/listDir.py
-
-Infrastructure / Utility Layer
-  ├── src/utils/safety.py
-  ├── src/utils/confirm.py
-  └── src/utils/truncate.py
-```
-
-## 运行链路
+## Top-Level Structure
 
 ```text
-用户输入
-  ↓
-main.py
-  ↓
-SessionState / Settings
-  ↓
-agent.loop.agent_loop()
-  ↓
-ChatOpenAI.bind_tools(tools)
-  ↓
-模型输出 tool_calls
-  ↓
-ToolExecutor.execute()
-  ↓
-工具结果回填为 ToolMessage
-  ↓
-模型继续推理或返回最终答案
-  ↓
-必要时触发 context.compress_context()
+src/
+  main.py               # CLI shell and task commands
+  agent/                # prompt assembly, model loop, session state, context compression
+  app/                  # task and run service layer
+  runtime/              # task runner orchestration
+  models/               # Task, Run, Checkpoint, TaskLogEntry
+  storage/              # SQLite repositories
+  tools/                # tool implementations and tool registry
+  utils/                # path safety, command safety, confirmations, truncation helpers
 ```
 
-## 各层职责
+## Runtime Layers
 
 ### 1. CLI Layer
 
-`src/main.py` 负责：
+`src/main.py` owns:
 
-- 接收终端输入
-- 处理 `/help`、`/reset`、`/exit`
-- 初始化 `Settings`、`SessionState`、`ToolExecutor`
-- 在一轮对话结束后决定是否触发压缩
+- the interactive shell
+- slash command handling
+- active task binding
+- prompt routing
+- display of task details and task logs
 
-### 2. Application State Layer
+This is the user-facing entry point for both ad-hoc chat and task-oriented work.
 
-`Settings` 负责统一承载：
+### 2. Agent Runtime Layer
 
-- 模型配置
-- 最大步数
-- 上下文阈值
-- 工作目录
+`src/agent/` owns:
 
-`SessionState` 负责统一承载：
+- `loop.py`
+  The LangChain tool-calling loop.
+- `prompt.py`
+  System prompt assembly.
+- `provider.py`
+  Model creation.
+- `state.py`
+  In-memory session state and checkpoint serialization.
+- `context.py`
+  Context compression and compressed-summary rendering.
 
-- 历史消息
-- 压缩摘要
-- 最近一次 usage
+This layer is responsible for one conversational turn at a time.
 
-这层的目标是避免运行态状态散落在多个局部变量里。
+### 3. Application Layer
 
-### 3. Agent Runtime Layer
+`src/app/` owns:
 
-`agent/loop.py` 是主控逻辑：
+- `task_service.py`
+  Task CRUD and task status updates.
+- `run_service.py`
+  Run lifecycle, checkpoints, and task log operations.
 
-- 组装系统提示词
-- 创建模型
-- 绑定工具
-- 驱动 tool-calling 循环
-- 控制最大步数
+These services are thin wrappers over storage and hold the app-level persistence API used by the CLI and runtime.
 
-`agent/context.py` 负责：
+### 4. Task Runtime Layer
 
-- 判断是否需要压缩
-- 调用模型压缩历史消息
-- 产出结构化 `CompressionSummary`
+`src/runtime/task_runner.py` owns:
 
-### 4. Tool Execution Layer
+- task resume rules
+- one-prompt-to-one-run orchestration
+- checkpoint creation after successful bound runs
+- task status transitions for resume, detach, complete, and failure
 
-`tools/executor.py` 统一处理工具调用前后的控制逻辑：
+This is the bridge between the generic chat loop and persisted task execution.
 
-- 命令风险检测
-- 用户确认
-- 敏感路径提示
-- 工具名到工具对象的分发
+### 5. Persistence Layer
 
-这样工具本身只做执行，不再直接承担 CLI 交互职责。
+`src/storage/` owns SQLite access:
 
-### 5. Tool Layer
+- `sqlite.py`
+  Database connection setup.
+- `tasks.py`
+  `tasks` table repository.
+- `runs.py`
+  `runs`, `checkpoints`, and `task_logs` table repository.
 
-当前显式装配的工具有：
+The current source of truth for local persisted runtime state is `.mini-claude-code/agent.db`.
 
-- `bash`
+### 6. Tool Layer
+
+`src/tools/` contains the current built-in tools:
+
 - `read_file`
 - `write_file`
 - `edit_file`
-- `search`
-- `delete_file`
 - `list_dir`
+- `search`
+- `bash`
+- `delete_file`
 
-工具注册由 `src/tools/__init__.py` 显式定义，不再依赖自动扫描导入副作用。
+`src/tools/__init__.py` is the explicit tool registry entry point.
 
-## 当前架构的改进点
+### 7. Safety Layer
 
-相比早期实现，当前架构已经完成了几项关键治理：
+`src/tools/executor.py` and `src/utils/safety.py` together provide:
 
-- 用 `Settings` 替代散落的环境变量读取
-- 用 `SessionState` 替代松散的历史和摘要变量
-- 用 `ToolExecutor` 把确认和展示从工具函数中抽离
-- 用显式工具装配替代 import 副作用注册
-- 为上下文压缩补了结构化 `CompressionSummary`
+- path restriction to the working directory
+- sensitive-path warnings
+- command danger classification
+- confirmation for risky shell commands
+
+Tools do not own their own approval UI. The executor is the current policy boundary.
+
+## Execution Flow
+
+### Ad-Hoc Chat
+
+1. The user enters a prompt in `main.py`.
+2. `agent.loop.agent_loop(...)` runs a normal model-plus-tools turn.
+3. The result is applied into `SessionState`.
+4. Context compression may run if token usage crosses the threshold.
+5. The shell waits for the next prompt.
+
+### Bound Task Prompt
+
+1. The user resumes a task with `/task resume <id>`.
+2. The latest checkpoint is restored into `SessionState`.
+3. Normal prompts now route through `TaskRunner.run_prompt(...)`.
+4. A `Run` is created.
+5. `agent_loop(...)` executes one turn.
+6. The updated `SessionState` is checkpointed.
+7. Task logs are written.
+8. The task stays bound until detach, complete, reset, or exit.
+
+## Current Data Model
+
+### Task
+
+The current `Task` entity stores:
+
+- identity and metadata
+- title and goal
+- workspace
+- task status
+- optional `skill_profile`
+- last checkpoint ID
+- last error
+
+### Run
+
+A `Run` represents one bound user prompt processed through the task runtime.
+
+It stores:
+
+- run status
+- start and finish timestamps
+- step count
+- last usage
+- last error
+
+### Checkpoint
+
+A `Checkpoint` stores a serialized `SessionState` snapshot for a task, optionally linked to a run.
+
+### TaskLogEntry
+
+A `TaskLogEntry` records task-level runtime events such as:
+
+- task resumed
+- run started
+- checkpoint saved
+- run completed
+- run failed
+- task detached
+- task completed
+
+## Current Boundaries
+
+The current architecture already enforces these boundaries:
+
+- `main.py` handles shell interaction
+- `TaskRunner` handles persisted task orchestration
+- `agent_loop` handles one model/tool loop
+- `ToolExecutor` handles safety checks before tool execution
+- repositories handle SQLite reads and writes
+
+## What Is Not Implemented Yet
+
+The following are still future work:
+
+- the `SKILL.md`-based skill system
+- skill-aware prompt composition
+- skill-aware tool filtering
+- stronger permission levels per tool
+- richer observability and metrics
+- a user-local skill directory loader
+
+## Recommended Next Direction
+
+The next major architecture step is not more tools. It is the standardized skill layer:
+
+- `models/skill.py`
+- `skills/loader.py`
+- `skills/registry.py`
+- `app/skill_service.py`
+
+That will allow future development and security capabilities to extend the runtime without bloating the core loop.
