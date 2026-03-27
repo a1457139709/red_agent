@@ -7,9 +7,12 @@ from agent.loop import agent_loop
 from agent.settings import Settings
 from agent.state import SessionState
 from app.run_service import RunService
+from app.skill_service import SkillService
 from app.task_service import TaskService
 from models.run import TaskLogLevel
 from models.task import Task, TaskStatus
+from skills.registry import SkillRegistry
+from tools import build_tool_registry
 from tools.executor import ToolExecutor
 
 
@@ -50,9 +53,17 @@ async def apply_result_to_session(
 
 
 class TaskRunner:
-    def __init__(self, task_service: TaskService, run_service: RunService) -> None:
+    def __init__(
+        self,
+        task_service: TaskService,
+        run_service: RunService,
+        skill_service: SkillService | None = None,
+    ) -> None:
         self.task_service = task_service
         self.run_service = run_service
+        self.skill_service = skill_service or SkillService(
+            SkillRegistry.built_in(known_tool_names=set(build_tool_registry().keys()))
+        )
 
     async def run_prompt(
         self,
@@ -77,12 +88,35 @@ class TaskRunner:
         self.task_service.update_task_status(task.id, TaskStatus.RUNNING, last_error=None)
 
         try:
-            result = await agent_loop(
-                question,
-                session_state,
-                tool_executor,
-                settings,
+            runtime_config = await self.skill_service.build_runtime_config(
+                skill_name=task.skill_profile,
+                context_summary=session_state.context_summary,
             )
+            try:
+                visible_executor = tool_executor.restricted_to(runtime_config.allowed_tools)
+            except ValueError:
+                if tool_executor.tool_names.isdisjoint(runtime_config.allowed_tools):
+                    visible_executor = tool_executor
+                else:
+                    raise
+            try:
+                result = await agent_loop(
+                    question,
+                    session_state,
+                    visible_executor,
+                    settings,
+                    system_prompt=runtime_config.system_prompt,
+                    tools=visible_executor.get_tools(),
+                )
+            except TypeError as exc:
+                if "unexpected keyword argument 'system_prompt'" not in str(exc):
+                    raise
+                result = await agent_loop(
+                    question,
+                    session_state,
+                    visible_executor,
+                    settings,
+                )
 
             await apply_result_to_session(
                 question=question,
@@ -124,6 +158,7 @@ class TaskRunner:
                 payload={
                     "step_count": len(result.get("messages", [])),
                     "status": result.get("status", "completed"),
+                    "skill_name": runtime_config.skill.manifest.name,
                 },
             )
             return result
@@ -151,6 +186,8 @@ class TaskRunner:
             raise ValueError(f"Task {task.id} cannot be resumed from status {task.status.value}")
         if task.status not in {TaskStatus.PENDING, TaskStatus.PAUSED, TaskStatus.FAILED}:
             raise ValueError(f"Task {task.id} cannot be resumed from status {task.status.value}")
+
+        self.skill_service.resolve_skill(task.skill_profile)
 
         if task.last_checkpoint:
             session_state = self.run_service.load_checkpoint_state(task.last_checkpoint)

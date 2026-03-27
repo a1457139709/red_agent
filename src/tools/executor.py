@@ -15,8 +15,22 @@ class ToolExecutor:
         self._confirm_command = confirm_command
         self._on_info = on_info
 
+    @property
+    def tool_names(self) -> set[str]:
+        return set(self._tools)
     def get_tools(self) -> list:
         return list(self._tools.values())
+
+    def restricted_to(self, allowed_names: list[str] | set[str] | tuple[str, ...]) -> "ToolExecutor":
+        allowed = set(allowed_names)
+        unknown = sorted(tool_name for tool_name in allowed if tool_name not in self._tools)
+        if unknown:
+            raise ValueError(f"Unknown tools requested: {', '.join(unknown)}")
+        return ToolExecutor(
+            {name: tool for name, tool in self._tools.items() if name in allowed},
+            confirm_command=self._confirm_command,
+            on_info=self._on_info,
+        )
 
     def execute(self, tool_name: str, args: dict) -> str:
         tool = self._tools[tool_name]

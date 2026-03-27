@@ -2,19 +2,50 @@
 
 ## Summary
 
-`mini-claude-code` will build its skill system around the standard `SKILL.md` format.
+`mini-claude-code` uses the standard `SKILL.md` format as the skill artifact.
 
-The project will follow this compatibility strategy:
+The compatibility strategy remains:
 
 - baseline: Agent Skills open standard
 - compatibility target: Claude Code style extensions
-- runtime policy: parse standard fields first, ignore unknown extensions safely
+- runtime policy: parse standard fields first and ignore unsupported extensions safely
 
-This gives the project a portable skill format without locking the runtime into a vendor-specific schema.
+However, the runtime direction is now explicitly:
+
+- skills are **on-demand**
+- skills are **not** the default base runtime mode
+
+## Runtime Model
+
+The intended runtime model is:
+
+### Base Mode
+
+Normal agent usage should work without any skill loaded.
+
+In base mode:
+
+- no skill body is injected
+- no skill-specific tool filtering is applied
+- the base runtime uses the standard default tool set
+
+### Activated Skill Mode
+
+A skill should be loaded only when explicitly activated by:
+
+- a skill command
+- a skill shorthand such as `/skill-name`
+- a task with an explicit `skill_profile`
+
+When activated, a skill may affect:
+
+- prompt composition
+- visible tools
+- future policy hints
 
 ## Directory Layout
 
-Recommended built-in skill layout:
+Built-in skill layout:
 
 ```text
 src/skills/
@@ -28,17 +59,17 @@ src/skills/
     scripts/
 ```
 
-Optional future user-local layout:
+Planned future user-local layout:
 
 ```text
 .mini-claude-code/skills/
-  development-default/
+  my-skill/
     SKILL.md
 ```
 
 ## Required `SKILL.md` Fields
 
-The first implementation stage must support these frontmatter fields:
+The current implementation requires:
 
 - `name`
 - `description`
@@ -50,12 +81,12 @@ The first implementation stage must support these frontmatter fields:
 Rules:
 
 - `name` must match or map stably to the directory name
-- `description` must describe both what the skill does and when to use it
-- `allowed-tools` constrains the visible tool set for that skill
+- `description` should describe both what the skill does and when it should be used
+- `allowed-tools` constrains tool visibility while the skill is active
 
 ## Optional Claude-Compatible Fields
 
-The runtime may accept these fields for compatibility:
+The runtime may preserve these fields for compatibility:
 
 - `argument-hint`
 - `disable-model-invocation`
@@ -67,16 +98,16 @@ The runtime may accept these fields for compatibility:
 - `hooks`
 - `shell`
 
-These fields are not all required to be active in the first implementation. Unknown or unsupported extensions must not break loading.
+These fields are not all active yet.
 
 ## Body Requirements
 
-The `SKILL.md` body is treated as the main prompt fragment for the skill.
+The `SKILL.md` body is the prompt fragment for the skill.
 
 It should define:
 
-- when the skill should be used
-- goals
+- what the skill is for
+- when to use it
 - workflow
 - output expectations
 - safety boundaries
@@ -106,55 +137,30 @@ Recommended compatibility fields to preserve:
 - `effort`
 - `shell`
 
-## Recommended First Built-In Skills
+## Activation Expectations
 
-The first built-in templates should be:
+The desired user-facing behavior is:
+
+- no skill loaded by default
+- explicit skill activation for ad-hoc CLI work
+- explicit skill binding for tasks
+
+This means skill loading should feel temporary and visible, not implicit.
+
+## Recommended Built-In Skills
+
+Current built-in templates:
 
 1. `development-default`
 2. `security-audit`
 
-These should serve as both real runtime skills and scaffolding templates for future skills.
+Note:
 
-## Example Template
-
-```md
----
-name: development-default
-description: Help with local development tasks such as reading code, refactoring, and test updates. Use when working on a local repository and you want standard coding assistance.
-license: Proprietary
-compatibility: Agent Skills baseline with Claude-compatible extensions
-allowed-tools:
-  - read_file
-  - write_file
-  - edit_file
-  - list_dir
-  - search
-  - bash
-metadata:
-  risk_level: low
-  category: development
----
-
-# Development Default
-
-## When to use
-Use this skill for normal local development work, code reading, refactoring, and test-oriented changes.
-
-## Workflow
-1. Read the existing code before editing.
-2. Reuse current project patterns.
-3. Keep edits minimal and verifiable.
-4. Summarize what changed and how it was verified.
-
-## Output
-- concise implementation-focused answers
-- clear verification notes
-- explicit mention of risks or assumptions
-```
+`development-default` is still useful as a reusable skill template, but it should not define the long-term default runtime model by itself.
 
 ## Runtime Integration Rules
 
-When a task has `skill_profile` set:
+When a skill is explicitly activated:
 
 1. resolve the skill by name
 2. load and normalize `SKILL.md`
@@ -162,12 +168,20 @@ When a task has `skill_profile` set:
 4. filter the visible tool registry by `allowed-tools`
 5. preserve unknown extension fields for future compatibility
 
+When no skill is activated:
+
+1. run the base runtime
+2. do not inject a skill prompt
+3. do not apply skill-specific tool filtering
+
 ## Testing Requirements
 
-At minimum, tests must cover:
+At minimum, tests should cover:
 
 - valid `SKILL.md` parsing
 - invalid frontmatter failure paths
-- `allowed-tools` filtering
-- missing skill fallback behavior
-- prompt assembly with a loaded skill
+- `allowed-tools` filtering while a skill is active
+- explicit skill activation behavior
+- no-skill base runtime behavior
+- missing skill handling
+- prompt assembly with an activated skill

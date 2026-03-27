@@ -7,11 +7,11 @@ This folder now contains only the current, maintained documentation for the Pyth
 1. `architecture.md`
    Current runtime architecture, module boundaries, and execution flow.
 2. `task-runtime.md`
-   Persisted task model, run lifecycle, checkpoints, and CLI task commands.
+   Persisted task model, run lifecycle, checkpoints, CLI task commands, and current skill-aware execution flow.
 3. `engineering-development-plan.en.md`
-   Current development roadmap and next implementation priorities.
+   Current development roadmap after the first `SKILL.md` runtime slice.
 4. `skill-system-standard.md`
-   Planned `SKILL.md`-based skill system standard and compatibility rules.
+   Current `SKILL.md`-based skill standard and compatibility rules.
 
 ## Maintenance Rules
 

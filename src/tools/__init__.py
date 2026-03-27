@@ -21,5 +21,10 @@ def get_tools():
     return list(AVAILABLE_TOOLS)
 
 
-def build_tool_registry():
-    return {tool.name: tool for tool in AVAILABLE_TOOLS}
+def build_tool_registry(allowed_names: list[str] | set[str] | tuple[str, ...] | None = None):
+    allowed = None if allowed_names is None else set(allowed_names)
+    return {
+        tool.name: tool
+        for tool in AVAILABLE_TOOLS
+        if allowed is None or tool.name in allowed
+    }

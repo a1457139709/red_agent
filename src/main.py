@@ -9,10 +9,13 @@ from agent.loop import agent_loop
 from agent.settings import Settings, get_settings
 from agent.state import SessionState
 from app.run_service import RunService
+from app.skill_service import DEFAULT_SKILL_NAME, SkillService
 from app.task_service import TaskService
 from models.run import TaskLogEntry
+from models.skill import LoadedSkill
 from models.task import Task
 from runtime.task_runner import TaskRunner, apply_result_to_session
+from skills.registry import SkillRegistry
 from tools import build_tool_registry, get_tools
 from tools.executor import ToolExecutor
 from utils.confirm import confirm_from_user
@@ -50,14 +53,26 @@ def parse_task_command(command: str) -> tuple[str, list[str]] | None:
     return parts[1], parts[2:]
 
 
+def parse_skill_command(command: str) -> tuple[str, list[str]] | None:
+    stripped = command.strip()
+    if not stripped.startswith("/skill"):
+        return None
+
+    parts = stripped.split()
+    if len(parts) == 1:
+        return "", []
+    return parts[1], parts[2:]
+
+
 def render_task_list(tasks: list[Task]) -> str:
     if not tasks:
         return "No tasks found."
 
-    lines = ["ID       STATUS      UPDATED                  TITLE"]
+    lines = ["ID       STATUS      UPDATED                  SKILL                 TITLE"]
     for task in tasks:
+        skill_name = task.skill_profile or DEFAULT_SKILL_NAME
         lines.append(
-            f"{task.id[:8]:8} {task.status.value:11} {task.updated_at:24} {task.title}"
+            f"{task.id[:8]:8} {task.status.value:11} {task.updated_at:24} {skill_name:21} {task.title}"
         )
     return "\n".join(lines)
 
@@ -69,6 +84,7 @@ def render_task_detail(task: Task) -> str:
             f"Title: {task.title}",
             f"Goal: {task.goal}",
             f"Status: {task.status.value}",
+            f"Skill: {task.skill_profile or DEFAULT_SKILL_NAME}",
             f"Workspace: {task.workspace}",
             f"Created At: {task.created_at}",
             f"Updated At: {task.updated_at}",
@@ -91,6 +107,38 @@ def render_task_logs(entries: list[TaskLogEntry]) -> str:
     return "\n".join(lines)
 
 
+def render_skill_list(skills: list[LoadedSkill]) -> str:
+    if not skills:
+        return "No skills found."
+
+    lines = ["NAME                 DESCRIPTION"]
+    for skill in skills:
+        lines.append(f"{skill.manifest.name:20} {skill.manifest.description}")
+    return "\n".join(lines)
+
+
+def render_skill_detail(skill: LoadedSkill) -> str:
+    metadata = skill.manifest.metadata or {}
+    metadata_lines = (
+        [f"  {key}: {value}" for key, value in sorted(metadata.items())]
+        if metadata
+        else ["  -"]
+    )
+
+    return "\n".join(
+        [
+            f"Name: {skill.manifest.name}",
+            f"Description: {skill.manifest.description}",
+            f"License: {skill.manifest.license}",
+            f"Compatibility: {skill.manifest.compatibility}",
+            f"Allowed Tools: {', '.join(skill.manifest.allowed_tools)}",
+            f"Path: {skill.skill_file}",
+            "Metadata:",
+            *metadata_lines,
+        ]
+    )
+
+
 def copy_session_state(target: SessionState, source: SessionState) -> None:
     target.history = list(source.history)
     target.compressed_summary = source.compressed_summary
@@ -98,7 +146,7 @@ def copy_session_state(target: SessionState, source: SessionState) -> None:
 
 
 def print_help(output: OutputFn = print) -> None:
-    tools = get_tools()
+    #tools = get_tools()
     output(
         "\n".join(
             [
@@ -115,9 +163,11 @@ def print_help(output: OutputFn = print) -> None:
                 "/task resume <id>     Resume and bind a task to this shell",
                 "/task detach          Pause and detach the active task",
                 "/task complete        Mark the active task as completed",
+                "/skill list           List built-in skills",
+                "/skill show <name>    Show skill details",
                 "",
-                "Available tools:",
-                str(tools),
+                #"Available tools:",
+                #str(tools),
             ]
         )
     )
@@ -134,6 +184,57 @@ def _parse_limit(raw: str) -> int:
     return limit
 
 
+def handle_skill_command(
+    command: str,
+    *,
+    skill_service: SkillService | None = None,
+    text_output: OutputFn = _default_text_output,
+    error_output: OutputFn = ColoredOutput.print_error,
+) -> bool:
+    parsed = parse_skill_command(command)
+    if parsed is None:
+        return False
+
+    skill_service = skill_service or SkillService(
+        SkillRegistry.built_in(known_tool_names=set(build_tool_registry().keys()))
+    )
+    action, args = parsed
+
+    try:
+        if action in {"", "help"}:
+            text_output(
+                "\n".join(
+                    [
+                        "Skill commands:",
+                        "/skill list",
+                        "/skill show <name>",
+                    ]
+                )
+            )
+            return True
+
+        if action == "list":
+            text_output(render_skill_list(skill_service.list_skills()))
+            return True
+
+        if action == "show":
+            if len(args) != 1:
+                error_output("Usage: /skill show <name>")
+                return True
+            skill = skill_service.get_skill(args[0])
+            if skill is None:
+                error_output(f"Skill not found: {args[0]}")
+                return True
+            text_output(render_skill_detail(skill))
+            return True
+
+        error_output(f"Unknown skill command: {action}")
+        return True
+    except Exception as exc:
+        error_output(f"Skill command failed: {exc}")
+        return True
+
+
 def handle_task_command(
     command: str,
     *,
@@ -142,6 +243,7 @@ def handle_task_command(
     task_service: TaskService,
     run_service: RunService,
     task_runner: TaskRunner,
+    skill_service: SkillService | None = None,
     text_output: OutputFn = _default_text_output,
     info_output: OutputFn = ColoredOutput.print_info,
     error_output: OutputFn = ColoredOutput.print_error,
@@ -152,6 +254,9 @@ def handle_task_command(
     if parsed is None:
         return False
 
+    skill_service = skill_service or SkillService(
+        SkillRegistry.built_in(known_tool_names=set(build_tool_registry().keys()))
+    )
     action, args = parsed
 
     try:
@@ -175,10 +280,16 @@ def handle_task_command(
         if action == "create":
             title = input_func("Title: ").strip()
             goal = input_func("Goal: ").strip()
+            try:
+                skill_raw = input_func(f"Skill [{DEFAULT_SKILL_NAME}]: ").strip()
+            except (EOFError, StopIteration):
+                skill_raw = ""
+            skill_name = skill_raw or DEFAULT_SKILL_NAME
             if not title or not goal:
                 error_output("Task title and goal are required.")
                 return True
-            task = task_service.create_task(title=title, goal=goal)
+            skill_service.resolve_skill(skill_name)
+            task = task_service.create_task(title=title, goal=goal, skill_profile=skill_name)
             success_output(f"Created task {task.id[:8]} ({task.id})")
             return True
 
@@ -273,6 +384,7 @@ async def run_interactive_shell(
     task_service: TaskService,
     run_service: RunService,
     task_runner: TaskRunner,
+    skill_service: SkillService,
     input_func: InputFn = input,
 ) -> None:
     while True:
@@ -309,6 +421,12 @@ async def run_interactive_shell(
             print_help()
             continue
 
+        if handle_skill_command(
+            question,
+            skill_service=skill_service,
+        ):
+            continue
+
         if handle_task_command(
             question,
             shell_state=shell_state,
@@ -316,6 +434,7 @@ async def run_interactive_shell(
             task_service=task_service,
             run_service=run_service,
             task_runner=task_runner,
+            skill_service=skill_service,
         ):
             continue
 
@@ -335,11 +454,18 @@ async def run_interactive_shell(
                     on_error=ColoredOutput.print_error,
                 )
             else:
+                runtime_config = await skill_service.build_runtime_config(
+                    skill_name=None,
+                    context_summary=session_state.context_summary,
+                )
+                visible_executor = tool_executor.restricted_to(runtime_config.allowed_tools)
                 result = await agent_loop(
                     question,
                     session_state,
-                    tool_executor,
+                    visible_executor,
                     settings,
+                    system_prompt=runtime_config.system_prompt,
+                    tools=visible_executor.get_tools(),
                 )
                 await apply_result_to_session(
                     question=question,
@@ -367,7 +493,11 @@ async def main() -> None:
     shell_state = ShellState()
     task_service = TaskService.from_settings(settings)
     run_service = RunService.from_settings(settings)
-    task_runner = TaskRunner(task_service, run_service)
+    skill_registry = SkillRegistry.built_in(
+        known_tool_names=set(build_tool_registry().keys()),
+    )
+    skill_service = SkillService(skill_registry)
+    task_runner = TaskRunner(task_service, run_service, skill_service)
     tool_executor = ToolExecutor(
         build_tool_registry(),
         confirm_command=confirm_from_user,
@@ -382,6 +512,7 @@ async def main() -> None:
         task_service=task_service,
         run_service=run_service,
         task_runner=task_runner,
+        skill_service=skill_service,
     )
 
 

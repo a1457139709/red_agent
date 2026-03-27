@@ -2,23 +2,25 @@
 
 ## Summary
 
-`mini-claude-code` is a local Python CLI agent with three active pillars:
+`mini-claude-code` is a local Python CLI agent with four active pillars:
 
 - an interactive chat shell
 - a persisted task runtime
+- a built-in `SKILL.md` skill layer
 - a controlled tool execution boundary
 
-It is not yet a plugin-driven or service-oriented system. The current runtime is intentionally small and local-first.
+The system remains intentionally local-first and single-user focused.
 
 ## Top-Level Structure
 
 ```text
 src/
-  main.py               # CLI shell and task commands
+  main.py               # CLI shell, slash commands, and prompt routing
   agent/                # prompt assembly, model loop, session state, context compression
-  app/                  # task and run service layer
+  app/                  # task, run, and skill service layer
   runtime/              # task runner orchestration
-  models/               # Task, Run, Checkpoint, TaskLogEntry
+  models/               # Task, Run, Checkpoint, TaskLogEntry, SkillManifest
+  skills/               # SKILL.md loader, registry, and built-in skills
   storage/              # SQLite repositories
   tools/                # tool implementations and tool registry
   utils/                # path safety, command safety, confirmations, truncation helpers
@@ -34,9 +36,10 @@ src/
 - slash command handling
 - active task binding
 - prompt routing
-- display of task details and task logs
+- `/task ...` commands
+- `/skill list` and `/skill show <name>`
 
-This is the user-facing entry point for both ad-hoc chat and task-oriented work.
+`/task create` now also validates and stores a skill profile.
 
 ### 2. Agent Runtime Layer
 
@@ -45,7 +48,7 @@ This is the user-facing entry point for both ad-hoc chat and task-oriented work.
 - `loop.py`
   The LangChain tool-calling loop.
 - `prompt.py`
-  System prompt assembly.
+  System prompt assembly with base prompt, skill prompt, and context summary.
 - `provider.py`
   Model creation.
 - `state.py`
@@ -63,8 +66,8 @@ This layer is responsible for one conversational turn at a time.
   Task CRUD and task status updates.
 - `run_service.py`
   Run lifecycle, checkpoints, and task log operations.
-
-These services are thin wrappers over storage and hold the app-level persistence API used by the CLI and runtime.
+- `skill_service.py`
+  Skill discovery, default resolution, prompt assembly, and allowed-tool selection.
 
 ### 4. Task Runtime Layer
 
@@ -74,10 +77,26 @@ These services are thin wrappers over storage and hold the app-level persistence
 - one-prompt-to-one-run orchestration
 - checkpoint creation after successful bound runs
 - task status transitions for resume, detach, complete, and failure
+- skill resolution for bound task execution
 
 This is the bridge between the generic chat loop and persisted task execution.
 
-### 5. Persistence Layer
+### 5. Skill Layer
+
+`src/skills/` now contains:
+
+- `loader.py`
+  Minimal frontmatter parser for standard `SKILL.md`.
+- `registry.py`
+  Built-in skill discovery and validation.
+- `development-default/`
+  The default coding skill.
+- `security-audit/`
+  A narrower read-heavy audit skill.
+
+Built-in skills are currently loaded only from `src/skills/*/SKILL.md`.
+
+### 6. Persistence Layer
 
 `src/storage/` owns SQLite access:
 
@@ -90,7 +109,7 @@ This is the bridge between the generic chat loop and persisted task execution.
 
 The current source of truth for local persisted runtime state is `.mini-claude-code/agent.db`.
 
-### 6. Tool Layer
+### 7. Tool Layer
 
 `src/tools/` contains the current built-in tools:
 
@@ -102,9 +121,9 @@ The current source of truth for local persisted runtime state is `.mini-claude-c
 - `bash`
 - `delete_file`
 
-`src/tools/__init__.py` is the explicit tool registry entry point.
+`src/tools/__init__.py` is the explicit tool registry entry point. The visible tool set is now filtered per skill before each model turn.
 
-### 7. Safety Layer
+### 8. Safety Layer
 
 `src/tools/executor.py` and `src/utils/safety.py` together provide:
 
@@ -113,28 +132,32 @@ The current source of truth for local persisted runtime state is `.mini-claude-c
 - command danger classification
 - confirmation for risky shell commands
 
-Tools do not own their own approval UI. The executor is the current policy boundary.
+Tools do not own their own approval UI. The executor remains the execution policy boundary.
 
 ## Execution Flow
 
 ### Ad-Hoc Chat
 
 1. The user enters a prompt in `main.py`.
-2. `agent.loop.agent_loop(...)` runs a normal model-plus-tools turn.
-3. The result is applied into `SessionState`.
-4. Context compression may run if token usage crosses the threshold.
-5. The shell waits for the next prompt.
+2. `SkillService` resolves `development-default`.
+3. The skill body is appended into system prompt assembly.
+4. The visible tool registry is filtered by the skill.
+5. `agent.loop.agent_loop(...)` runs the model-plus-tools turn.
+6. The result is applied into `SessionState`.
+7. Context compression may run if token usage crosses the threshold.
+8. The shell waits for the next prompt.
 
 ### Bound Task Prompt
 
 1. The user resumes a task with `/task resume <id>`.
 2. The latest checkpoint is restored into `SessionState`.
-3. Normal prompts now route through `TaskRunner.run_prompt(...)`.
-4. A `Run` is created.
-5. `agent_loop(...)` executes one turn.
-6. The updated `SessionState` is checkpointed.
-7. Task logs are written.
-8. The task stays bound until detach, complete, reset, or exit.
+3. The task skill is resolved from `Task.skill_profile`.
+4. Normal prompts now route through `TaskRunner.run_prompt(...)`.
+5. A `Run` is created.
+6. `agent_loop(...)` executes one turn with the resolved skill prompt and filtered tools.
+7. The updated `SessionState` is checkpointed.
+8. Task logs are written.
+9. The task stays bound until detach, complete, reset, or exit.
 
 ## Current Data Model
 
@@ -180,10 +203,11 @@ A `TaskLogEntry` records task-level runtime events such as:
 
 ## Current Boundaries
 
-The current architecture already enforces these boundaries:
+The current architecture enforces these boundaries:
 
 - `main.py` handles shell interaction
 - `TaskRunner` handles persisted task orchestration
+- `SkillService` handles skill resolution and prompt/tool shaping
 - `agent_loop` handles one model/tool loop
 - `ToolExecutor` handles safety checks before tool execution
 - repositories handle SQLite reads and writes
@@ -192,20 +216,7 @@ The current architecture already enforces these boundaries:
 
 The following are still future work:
 
-- the `SKILL.md`-based skill system
-- skill-aware prompt composition
-- skill-aware tool filtering
+- a user-local skill directory loader
 - stronger permission levels per tool
 - richer observability and metrics
-- a user-local skill directory loader
-
-## Recommended Next Direction
-
-The next major architecture step is not more tools. It is the standardized skill layer:
-
-- `models/skill.py`
-- `skills/loader.py`
-- `skills/registry.py`
-- `app/skill_service.py`
-
-That will allow future development and security capabilities to extend the runtime without bloating the core loop.
+- richer use of optional Claude-compatible skill extensions

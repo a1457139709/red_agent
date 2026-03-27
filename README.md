@@ -11,6 +11,7 @@ The project is intended for local single-user development work. It is not a SaaS
 ## Current Capabilities
 
 - interactive local CLI
+- built-in `SKILL.md` skill system
 - file tools: read, write, edit, list, search, delete
 - shell command execution with safety checks
 - session state and context compression
@@ -34,6 +35,8 @@ The CLI currently supports:
 - `/task resume <task_id>`
 - `/task detach`
 - `/task complete`
+- `/skill list`
+- `/skill show <name>`
 
 ## Current Architecture
 
@@ -44,6 +47,7 @@ Core source areas:
 - `src/app/`
 - `src/runtime/`
 - `src/models/`
+- `src/skills/`
 - `src/storage/`
 - `src/tools/`
 - `src/utils/`
@@ -59,14 +63,18 @@ The `docs/` folder was cleaned up to keep only current documents:
 
 The docs index is at `docs/README.md`.
 
-## Next Direction
+## Built-In Skills
 
-The next major engineering phase is a standardized `SKILL.md`-based skill system:
+The current built-in skills are:
 
-- parse and load standard `SKILL.md` files
-- bind `Task.skill_profile` to runtime behavior
-- let skills affect prompt composition
-- let skills filter the visible tool set
+- `development-default`
+- `security-audit`
+
+These skills are loaded from `src/skills/*/SKILL.md` and currently affect:
+
+- prompt composition
+- visible tool availability
+- task creation and task resume validation
 
 ## Tests
 
