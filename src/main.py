@@ -9,36 +9,53 @@ from agent.loop import agent_loop
 from agent.settings import Settings, get_settings
 from agent.state import SessionState
 from app.run_service import RunService
-from app.skill_service import DEFAULT_SKILL_NAME, SkillService
+from app.skill_service import SkillService
 from app.task_service import TaskService
 from models.run import TaskLogEntry
 from models.skill import LoadedSkill
 from models.task import Task
 from runtime.task_runner import TaskRunner, apply_result_to_session
 from skills.registry import SkillRegistry
-from tools import build_tool_registry, get_tools
+from tools import build_tool_registry
 from tools.executor import ToolExecutor
 from utils.confirm import confirm_from_user
 
 
 OutputFn = Callable[[str], None]
 InputFn = Callable[[str], str]
+NONE_LABEL = "none"
 
 
 @dataclass
 class ShellState:
     active_task_id: str | None = None
+    active_task_public_id: str | None = None
+    active_skill_name: str | None = None
 
     @property
-    def active_task_short_id(self) -> str | None:
+    def active_task_label(self) -> str | None:
+        if self.active_task_public_id:
+            return self.active_task_public_id
         if self.active_task_id is None:
             return None
         return self.active_task_id[:8]
 
 
+def create_skill_service() -> SkillService:
+    tool_names = list(build_tool_registry().keys())
+    registry = SkillRegistry.built_in(known_tool_names=set(tool_names))
+    return SkillService(
+        registry,
+        base_tool_names=tool_names,
+        default_task_skill_name=None,
+    )
+
+
 def build_prompt(shell_state: ShellState) -> str:
-    if shell_state.active_task_short_id:
-        return f"\ntask:{shell_state.active_task_short_id} > "
+    if shell_state.active_task_label:
+        return f"\ntask:{shell_state.active_task_label} > "
+    if shell_state.active_skill_name:
+        return f"\nskill:{shell_state.active_skill_name} > "
     return "\n> "
 
 
@@ -64,15 +81,40 @@ def parse_skill_command(command: str) -> tuple[str, list[str]] | None:
     return parts[1], parts[2:]
 
 
+def parse_skill_shorthand(
+    command: str,
+    *,
+    skill_service: SkillService,
+) -> tuple[str, str] | None:
+    stripped = command.strip()
+    if not stripped.startswith("/") or stripped.startswith("/skill") or stripped.startswith("/task"):
+        return None
+
+    raw_parts = stripped[1:].split(maxsplit=1)
+    if not raw_parts:
+        return None
+
+    skill_name = raw_parts[0]
+    if skill_service.get_skill(skill_name) is None:
+        return None
+
+    prompt = raw_parts[1].strip() if len(raw_parts) > 1 else ""
+    return skill_name, prompt
+
+
+def render_skill_name(skill_name: str | None) -> str:
+    return skill_name or NONE_LABEL
+
+
 def render_task_list(tasks: list[Task]) -> str:
     if not tasks:
         return "No tasks found."
 
-    lines = ["ID       STATUS      UPDATED                  SKILL                 TITLE"]
+    lines = ["TASK     STATUS      UPDATED                  SKILL                 TITLE"]
     for task in tasks:
-        skill_name = task.skill_profile or DEFAULT_SKILL_NAME
+        skill_name = render_skill_name(task.skill_profile)
         lines.append(
-            f"{task.id[:8]:8} {task.status.value:11} {task.updated_at:24} {skill_name:21} {task.title}"
+            f"{task.public_id:8} {task.status.value:11} {task.updated_at:24} {skill_name:21} {task.title}"
         )
     return "\n".join(lines)
 
@@ -80,11 +122,12 @@ def render_task_list(tasks: list[Task]) -> str:
 def render_task_detail(task: Task) -> str:
     return "\n".join(
         [
-            f"ID: {task.id}",
+            f"Task ID: {task.public_id}",
+            f"Internal ID: {task.id}",
             f"Title: {task.title}",
             f"Goal: {task.goal}",
             f"Status: {task.status.value}",
-            f"Skill: {task.skill_profile or DEFAULT_SKILL_NAME}",
+            f"Skill: {render_skill_name(task.skill_profile)}",
             f"Workspace: {task.workspace}",
             f"Created At: {task.created_at}",
             f"Updated At: {task.updated_at}",
@@ -146,15 +189,17 @@ def copy_session_state(target: SessionState, source: SessionState) -> None:
 
 
 def print_help(output: OutputFn = print) -> None:
-    #tools = get_tools()
     output(
         "\n".join(
             [
                 "mini-claude-code",
                 "",
+                "Base mode:",
+                "Normal chat runs with the base prompt and built-in tools.",
+                "",
                 "Commands:",
                 "/help                 Show help",
-                "/reset                Reset the current in-memory session",
+                "/reset                Reset the current in-memory session and clear the active skill",
                 "/exit or /quit        Exit the CLI",
                 "/task create          Create a persisted task",
                 "/task list            List recent tasks",
@@ -165,9 +210,10 @@ def print_help(output: OutputFn = print) -> None:
                 "/task complete        Mark the active task as completed",
                 "/skill list           List built-in skills",
                 "/skill show <name>    Show skill details",
-                "",
-                #"Available tools:",
-                #str(tools),
+                "/skill use <name>     Activate a skill for this shell",
+                "/skill clear          Clear the active shell skill",
+                "/skill current        Show the active shell skill",
+                "/skill-name <prompt>  Run one prompt with a skill without activating it",
             ]
         )
     )
@@ -184,20 +230,64 @@ def _parse_limit(raw: str) -> int:
     return limit
 
 
+def _select_visible_executor(
+    tool_executor: ToolExecutor,
+    allowed_tools: list[str],
+) -> ToolExecutor:
+    try:
+        return tool_executor.restricted_to(allowed_tools)
+    except ValueError:
+        if tool_executor.tool_names.isdisjoint(allowed_tools):
+            return tool_executor
+        raise
+
+
+async def run_prompt_with_runtime(
+    *,
+    question: str,
+    runtime_config,
+    session_state: SessionState,
+    tool_executor: ToolExecutor,
+    settings: Settings,
+    on_info: OutputFn,
+    on_error: OutputFn,
+) -> dict:
+    visible_executor = _select_visible_executor(tool_executor, runtime_config.allowed_tools)
+    runtime_executor = visible_executor.with_safety_policy(runtime_config.safety_policy)
+    result = await agent_loop(
+        question,
+        session_state,
+        runtime_executor,
+        settings,
+        system_prompt=runtime_config.system_prompt,
+        tools=runtime_executor.get_tools(),
+    )
+    await apply_result_to_session(
+        question=question,
+        result=result,
+        session_state=session_state,
+        settings=settings,
+        on_info=on_info,
+        on_error=on_error,
+    )
+    return result
+
+
 def handle_skill_command(
     command: str,
     *,
+    shell_state: ShellState | None = None,
     skill_service: SkillService | None = None,
     text_output: OutputFn = _default_text_output,
     error_output: OutputFn = ColoredOutput.print_error,
+    success_output: OutputFn = ColoredOutput.print_success,
 ) -> bool:
     parsed = parse_skill_command(command)
     if parsed is None:
         return False
 
-    skill_service = skill_service or SkillService(
-        SkillRegistry.built_in(known_tool_names=set(build_tool_registry().keys()))
-    )
+    shell_state = shell_state or ShellState()
+    skill_service = skill_service or create_skill_service()
     action, args = parsed
 
     try:
@@ -208,6 +298,9 @@ def handle_skill_command(
                         "Skill commands:",
                         "/skill list",
                         "/skill show <name>",
+                        "/skill use <name>",
+                        "/skill clear",
+                        "/skill current",
                     ]
                 )
             )
@@ -226,6 +319,24 @@ def handle_skill_command(
                 error_output(f"Skill not found: {args[0]}")
                 return True
             text_output(render_skill_detail(skill))
+            return True
+
+        if action == "use":
+            if len(args) != 1:
+                error_output("Usage: /skill use <name>")
+                return True
+            skill_service.resolve_skill(args[0])
+            shell_state.active_skill_name = args[0]
+            success_output(f"Activated skill {args[0]}.")
+            return True
+
+        if action == "clear":
+            shell_state.active_skill_name = None
+            success_output("Cleared active skill.")
+            return True
+
+        if action == "current":
+            text_output(f"Current skill: {render_skill_name(shell_state.active_skill_name)}")
             return True
 
         error_output(f"Unknown skill command: {action}")
@@ -254,9 +365,7 @@ def handle_task_command(
     if parsed is None:
         return False
 
-    skill_service = skill_service or SkillService(
-        SkillRegistry.built_in(known_tool_names=set(build_tool_registry().keys()))
-    )
+    skill_service = skill_service or create_skill_service()
     action, args = parsed
 
     try:
@@ -281,16 +390,17 @@ def handle_task_command(
             title = input_func("Title: ").strip()
             goal = input_func("Goal: ").strip()
             try:
-                skill_raw = input_func(f"Skill [{DEFAULT_SKILL_NAME}]: ").strip()
+                skill_raw = input_func(f"Skill [{NONE_LABEL}]: ").strip()
             except (EOFError, StopIteration):
                 skill_raw = ""
-            skill_name = skill_raw or DEFAULT_SKILL_NAME
+            skill_name = skill_raw or skill_service.default_task_skill_name
             if not title or not goal:
                 error_output("Task title and goal are required.")
                 return True
-            skill_service.resolve_skill(skill_name)
+            if skill_name is not None:
+                skill_service.resolve_skill(skill_name)
             task = task_service.create_task(title=title, goal=goal, skill_profile=skill_name)
-            success_output(f"Created task {task.id[:8]} ({task.id})")
+            success_output(f"Created task {task.public_id} ({task.id})")
             return True
 
         if action == "list":
@@ -325,7 +435,8 @@ def handle_task_command(
             task, restored = task_runner.resume_task(args[0])
             copy_session_state(session_state, restored)
             shell_state.active_task_id = task.id
-            success_output(f"Resumed task {task.id[:8]}: {task.title}")
+            shell_state.active_task_public_id = task.public_id
+            success_output(f"Resumed task {task.public_id}: {task.title}")
             return True
 
         if action == "detach":
@@ -334,7 +445,8 @@ def handle_task_command(
                 return True
             task = task_runner.detach_task(shell_state.active_task_id, session_state)
             shell_state.active_task_id = None
-            success_output(f"Detached task {task.id[:8]} and saved a checkpoint.")
+            shell_state.active_task_public_id = None
+            success_output(f"Detached task {task.public_id} and saved a checkpoint.")
             return True
 
         if action == "complete":
@@ -343,7 +455,8 @@ def handle_task_command(
                 return True
             task = task_runner.complete_task(shell_state.active_task_id, session_state)
             shell_state.active_task_id = None
-            success_output(f"Completed task {task.id[:8]}.")
+            shell_state.active_task_public_id = None
+            success_output(f"Completed task {task.public_id}.")
             return True
 
         error_output(f"Unknown task command: {action}")
@@ -369,8 +482,9 @@ def pause_active_task_if_needed(
 
     try:
         task = task_runner.detach_task(shell_state.active_task_id, session_state)
-        info_output(f"Paused task {task.id[:8]} before leaving the current session.")
+        info_output(f"Paused task {task.public_id} before leaving the current session.")
         shell_state.active_task_id = None
+        shell_state.active_task_public_id = None
     except Exception as exc:
         error_output(str(exc))
 
@@ -414,6 +528,7 @@ async def run_interactive_shell(
                 task_runner=task_runner,
             )
             session_state.reset()
+            shell_state.active_skill_name = None
             ColoredOutput.print_header("Session reset")
             continue
 
@@ -423,6 +538,7 @@ async def run_interactive_shell(
 
         if handle_skill_command(
             question,
+            shell_state=shell_state,
             skill_service=skill_service,
         ):
             continue
@@ -436,6 +552,37 @@ async def run_interactive_shell(
             task_runner=task_runner,
             skill_service=skill_service,
         ):
+            continue
+
+        skill_shorthand = parse_skill_shorthand(question, skill_service=skill_service)
+        if skill_shorthand is not None:
+            skill_name, shorthand_prompt = skill_shorthand
+            if not shorthand_prompt:
+                ColoredOutput.print_error(f"Usage: /{skill_name} <prompt>")
+                continue
+            reset_steps()
+            try:
+                runtime_config = await skill_service.build_skill_runtime_config(
+                    skill_name=skill_name,
+                    context_summary=session_state.context_summary,
+                )
+                result = await run_prompt_with_runtime(
+                    question=shorthand_prompt,
+                    runtime_config=runtime_config,
+                    session_state=session_state,
+                    tool_executor=tool_executor,
+                    settings=settings,
+                    on_info=ColoredOutput.print_info,
+                    on_error=ColoredOutput.print_error,
+                )
+                text = result["response"]
+                status = result.get("status", "completed")
+                if status == "completed":
+                    ColoredOutput.print_final_answer(text)
+                else:
+                    ColoredOutput.print_error(text)
+            except Exception as exc:
+                ColoredOutput.print_error(str(exc))
             continue
 
         if not question:
@@ -454,23 +601,20 @@ async def run_interactive_shell(
                     on_error=ColoredOutput.print_error,
                 )
             else:
-                runtime_config = await skill_service.build_runtime_config(
-                    skill_name=None,
-                    context_summary=session_state.context_summary,
-                )
-                visible_executor = tool_executor.restricted_to(runtime_config.allowed_tools)
-                result = await agent_loop(
-                    question,
-                    session_state,
-                    visible_executor,
-                    settings,
-                    system_prompt=runtime_config.system_prompt,
-                    tools=visible_executor.get_tools(),
-                )
-                await apply_result_to_session(
+                if shell_state.active_skill_name is None:
+                    runtime_config = await skill_service.build_base_runtime_config(
+                        context_summary=session_state.context_summary,
+                    )
+                else:
+                    runtime_config = await skill_service.build_skill_runtime_config(
+                        skill_name=shell_state.active_skill_name,
+                        context_summary=session_state.context_summary,
+                    )
+                result = await run_prompt_with_runtime(
                     question=question,
-                    result=result,
+                    runtime_config=runtime_config,
                     session_state=session_state,
+                    tool_executor=tool_executor,
                     settings=settings,
                     on_info=ColoredOutput.print_info,
                     on_error=ColoredOutput.print_error,
@@ -493,10 +637,7 @@ async def main() -> None:
     shell_state = ShellState()
     task_service = TaskService.from_settings(settings)
     run_service = RunService.from_settings(settings)
-    skill_registry = SkillRegistry.built_in(
-        known_tool_names=set(build_tool_registry().keys()),
-    )
-    skill_service = SkillService(skill_registry)
+    skill_service = create_skill_service()
     task_runner = TaskRunner(task_service, run_service, skill_service)
     tool_executor = ToolExecutor(
         build_tool_registry(),

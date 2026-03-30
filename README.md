@@ -37,6 +37,10 @@ The CLI currently supports:
 - `/task complete`
 - `/skill list`
 - `/skill show <name>`
+- `/skill use <name>`
+- `/skill clear`
+- `/skill current`
+- `/skill-name <prompt>`
 
 ## Current Architecture
 
@@ -72,9 +76,10 @@ The current built-in skills are:
 
 These skills are loaded from `src/skills/*/SKILL.md` and currently affect:
 
-- prompt composition
-- visible tool availability
-- task creation and task resume validation
+- explicit session skill activation
+- one-shot skill invocation
+- task-bound prompt composition
+- task-bound visible tool availability
 
 ## Tests
 

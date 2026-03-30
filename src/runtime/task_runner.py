@@ -14,6 +14,7 @@ from models.task import Task, TaskStatus
 from skills.registry import SkillRegistry
 from tools import build_tool_registry
 from tools.executor import ToolExecutor
+from tools.policy import SafetyAuditEvent
 
 
 InfoCallback = Callable[[str], None] | None
@@ -62,7 +63,8 @@ class TaskRunner:
         self.task_service = task_service
         self.run_service = run_service
         self.skill_service = skill_service or SkillService(
-            SkillRegistry.built_in(known_tool_names=set(build_tool_registry().keys()))
+            SkillRegistry.built_in(known_tool_names=set(build_tool_registry().keys())),
+            base_tool_names=list(build_tool_registry().keys()),
         )
 
     async def run_prompt(
@@ -88,10 +90,15 @@ class TaskRunner:
         self.task_service.update_task_status(task.id, TaskStatus.RUNNING, last_error=None)
 
         try:
-            runtime_config = await self.skill_service.build_runtime_config(
-                skill_name=task.skill_profile,
-                context_summary=session_state.context_summary,
-            )
+            if task.skill_profile is None:
+                runtime_config = await self.skill_service.build_base_runtime_config(
+                    context_summary=session_state.context_summary,
+                )
+            else:
+                runtime_config = await self.skill_service.build_skill_runtime_config(
+                    skill_name=task.skill_profile,
+                    context_summary=session_state.context_summary,
+                )
             try:
                 visible_executor = tool_executor.restricted_to(runtime_config.allowed_tools)
             except ValueError:
@@ -99,14 +106,18 @@ class TaskRunner:
                     visible_executor = tool_executor
                 else:
                     raise
+            runtime_executor = visible_executor.with_safety_policy(
+                runtime_config.safety_policy,
+                on_audit=self._build_safety_audit_logger(task.id, run.id),
+            )
             try:
                 result = await agent_loop(
                     question,
                     session_state,
-                    visible_executor,
+                    runtime_executor,
                     settings,
                     system_prompt=runtime_config.system_prompt,
-                    tools=visible_executor.get_tools(),
+                    tools=runtime_executor.get_tools(),
                 )
             except TypeError as exc:
                 if "unexpected keyword argument 'system_prompt'" not in str(exc):
@@ -114,7 +125,7 @@ class TaskRunner:
                 result = await agent_loop(
                     question,
                     session_state,
-                    visible_executor,
+                    runtime_executor,
                     settings,
                 )
 
@@ -158,7 +169,7 @@ class TaskRunner:
                 payload={
                     "step_count": len(result.get("messages", [])),
                     "status": result.get("status", "completed"),
-                    "skill_name": runtime_config.skill.manifest.name,
+                    "skill_name": runtime_config.skill.manifest.name if runtime_config.skill else None,
                 },
             )
             return result
@@ -187,7 +198,8 @@ class TaskRunner:
         if task.status not in {TaskStatus.PENDING, TaskStatus.PAUSED, TaskStatus.FAILED}:
             raise ValueError(f"Task {task.id} cannot be resumed from status {task.status.value}")
 
-        self.skill_service.resolve_skill(task.skill_profile)
+        if task.skill_profile is not None:
+            self.skill_service.resolve_skill(task.skill_profile)
 
         if task.last_checkpoint:
             session_state = self.run_service.load_checkpoint_state(task.last_checkpoint)
@@ -263,3 +275,20 @@ class TaskRunner:
         if task.status in {TaskStatus.COMPLETED, TaskStatus.CANCELLED}:
             raise ValueError(f"Task {task.id} cannot run in status {task.status.value}")
         return task
+
+    def _build_safety_audit_logger(self, task_id: str, run_id: str):
+        def log_event(event: SafetyAuditEvent) -> None:
+            level = (
+                TaskLogLevel.ERROR
+                if event.event_type in {"operation_blocked", "policy_denied", "operation_failed"}
+                else TaskLogLevel.INFO
+            )
+            self.run_service.write_log(
+                task_id=task_id,
+                run_id=run_id,
+                level=level,
+                message=f"safety_{event.event_type}",
+                payload=event.to_payload(),
+            )
+
+        return log_event

@@ -24,6 +24,7 @@ class TaskStatus(StrEnum):
 @dataclass(slots=True)
 class Task:
     id: str
+    public_id: str
     title: str
     goal: str
     workspace: str
@@ -51,6 +52,7 @@ class Task:
     ) -> "Task":
         return cls(
             id=str(uuid4()),
+            public_id="",
             title=title,
             goal=goal,
             workspace=workspace,
@@ -65,6 +67,7 @@ class Task:
         metadata = row.get("metadata")
         return cls(
             id=row["id"],
+            public_id=row.get("public_id") or "",
             title=row["title"],
             goal=row["goal"],
             workspace=row["workspace"],
@@ -82,6 +85,7 @@ class Task:
     def to_row(self) -> dict[str, Any]:
         return {
             "id": self.id,
+            "public_id": self.public_id,
             "title": self.title,
             "goal": self.goal,
             "workspace": self.workspace,
@@ -105,6 +109,7 @@ class Task:
     ) -> "Task":
         return Task(
             id=self.id,
+            public_id=self.public_id,
             title=self.title,
             goal=self.goal,
             workspace=self.workspace,

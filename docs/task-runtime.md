@@ -12,23 +12,23 @@ Tasks are useful for:
 - run logs
 - failure recovery
 
-Tasks are **not** only a future web/UI concern.
-They are still valuable in the CLI, but the current task identity model is not CLI-friendly enough.
+Tasks are not only for a future web or UI layer. They are a first-class part of the CLI workflow.
 
-## Current Task Identity Problem
+## Task Identity Model
 
-Today, tasks are primarily identified by UUID.
+Tasks now use two identifiers:
 
-This is acceptable for storage, but awkward for CLI interaction because:
+- internal ID: UUID for storage and relations
+- public ID: CLI-friendly identifier such as `T0001`
 
-- full UUIDs are long
-- task lists usually show shortened IDs
-- `/task show <id>` and `/task resume <id>` are inconvenient when the real key is a UUID
+CLI-facing task operations should use the public ID first.
+The internal UUID is still shown for debugging and remains valid for compatibility.
 
-The corrected direction is:
+Current lookup behavior:
 
-- keep UUID as the internal storage identifier
-- add a CLI-friendly public/display ID for human interaction
+- exact public ID lookup is supported
+- exact UUID lookup is supported
+- unique UUID prefix lookup is still tolerated for compatibility
 
 ## CLI Commands
 
@@ -49,10 +49,7 @@ The corrected direction is:
 - `/task detach`
 - `/task complete`
 
-Current note:
-
-`<task_id>` is still inconvenient because it maps to UUID-oriented lookup today.
-This is a roadmap item to improve.
+In normal CLI usage, `<task_id>` should now be the public task ID.
 
 ## Shell Binding Model
 
@@ -60,7 +57,7 @@ Only one task can be bound to one interactive shell session at a time.
 
 When a task is bound:
 
-- the prompt changes to `task:<short_id> >`
+- the prompt changes to `task:<public_id> >`
 - prompts execute through the task runtime
 - `/reset`, `/exit`, and `/quit` pause and detach the task first
 
@@ -86,18 +83,14 @@ Current behavior:
 
 ## Skill Relationship
 
-Tasks may bind a `skill_profile`.
+Tasks may bind an optional `skill_profile`.
 
-Current implementation status:
+Current behavior:
 
-- task-bound skill behavior exists in code
-- this supports persisted, skill-aware task execution
-
-Target direction:
-
-- task-bound skills remain explicit
-- ad-hoc chat should move toward base mode with no implicit default skill
-- task skills should stay visible and predictable
+- a blank skill at task creation means no task skill
+- an explicit task skill is resolved only while that task is bound
+- tasks with no `skill_profile` run in base mode
+- task skill binding does not overwrite the shell’s active session skill outside the task lifecycle
 
 ## Runtime Flow for a Bound Prompt
 
@@ -122,9 +115,11 @@ Stored in the `tasks` table.
 
 Used for:
 
-- task identity
-- goal and metadata
-- current status
+- internal UUID
+- public task ID
+- title and goal
+- status
+- workspace
 - `skill_profile`
 - current checkpoint pointer
 - last error
@@ -178,17 +173,17 @@ Supported message types:
 
 ## Current Limitations
 
-- tasks still rely on UUID-oriented interaction
-- there is no CLI-friendly public task ID yet
+- task public IDs are currently generated locally and sequentially
+- there is no task search by title yet
 - tasks are still manually completed with `/task complete`
 - there is no autonomous background runner yet
-- task UX in the CLI needs improvement
+- task UX can still be improved further
 
 ## Next Direction
 
-The next task-related development goals should be:
+The next task-related goals should focus on ergonomics beyond identity:
 
-1. add CLI-friendly task public IDs
-2. support public ID lookup in task commands
-3. keep UUID as the internal storage key
-4. improve task list and task selection ergonomics
+1. better task selection and filtering
+2. possible title-based or recent-task shortcuts
+3. richer task/run inspection
+4. eventual task-centric CLI flows for long-running work

@@ -6,16 +6,16 @@
 
 - an interactive chat shell
 - a persisted task runtime
-- a built-in `SKILL.md` skill layer
+- an explicit `SKILL.md` skill layer
 - a controlled tool execution boundary
 
-The system remains intentionally local-first and single-user focused.
+The system remains local-first and single-user focused.
 
 ## Top-Level Structure
 
 ```text
 src/
-  main.py               # CLI shell, slash commands, and prompt routing
+  main.py               # CLI shell, slash commands, prompt routing, active skill state
   agent/                # prompt assembly, model loop, session state, context compression
   app/                  # task, run, and skill service layer
   runtime/              # task runner orchestration
@@ -35,11 +35,11 @@ src/
 - the interactive shell
 - slash command handling
 - active task binding
+- active session skill binding
 - prompt routing
 - `/task ...` commands
-- `/skill list` and `/skill show <name>`
-
-`/task create` now also validates and stores a skill profile.
+- `/skill ...` commands
+- `/skill-name <prompt>` one-shot skill shorthand
 
 ### 2. Agent Runtime Layer
 
@@ -48,7 +48,7 @@ src/
 - `loop.py`
   The LangChain tool-calling loop.
 - `prompt.py`
-  System prompt assembly with base prompt, skill prompt, and context summary.
+  System prompt assembly with base prompt, optional skill prompt, and optional context summary.
 - `provider.py`
   Model creation.
 - `state.py`
@@ -67,7 +67,9 @@ This layer is responsible for one conversational turn at a time.
 - `run_service.py`
   Run lifecycle, checkpoints, and task log operations.
 - `skill_service.py`
-  Skill discovery, default resolution, prompt assembly, and allowed-tool selection.
+  Skill discovery plus runtime config building for:
+  - base mode
+  - explicit skill mode
 
 ### 4. Task Runtime Layer
 
@@ -77,20 +79,21 @@ This layer is responsible for one conversational turn at a time.
 - one-prompt-to-one-run orchestration
 - checkpoint creation after successful bound runs
 - task status transitions for resume, detach, complete, and failure
-- skill resolution for bound task execution
+- explicit task-skill resolution when `Task.skill_profile` is set
+- base-mode execution when `Task.skill_profile` is unset
 
 This is the bridge between the generic chat loop and persisted task execution.
 
 ### 5. Skill Layer
 
-`src/skills/` now contains:
+`src/skills/` contains:
 
 - `loader.py`
   Minimal frontmatter parser for standard `SKILL.md`.
 - `registry.py`
   Built-in skill discovery and validation.
 - `development-default/`
-  The default coding skill.
+  A built-in development skill template.
 - `security-audit/`
   A narrower read-heavy audit skill.
 
@@ -121,11 +124,11 @@ The current source of truth for local persisted runtime state is `.mini-claude-c
 - `bash`
 - `delete_file`
 
-`src/tools/__init__.py` is the explicit tool registry entry point. The visible tool set is now filtered per skill before each model turn.
+`src/tools/__init__.py` is the explicit tool registry entry point.
 
 ### 8. Safety Layer
 
-`src/tools/executor.py` and `src/utils/safety.py` together provide:
+`src/tools/executor.py` and `src/utils/safety.py` provide:
 
 - path restriction to the working directory
 - sensitive-path warnings
@@ -136,25 +139,39 @@ Tools do not own their own approval UI. The executor remains the execution polic
 
 ## Execution Flow
 
-### Ad-Hoc Chat
+### Ad-Hoc Chat in Base Mode
 
-1. The user enters a prompt in `main.py`.
-2. `SkillService` resolves `development-default`.
-3. The skill body is appended into system prompt assembly.
-4. The visible tool registry is filtered by the skill.
-5. `agent.loop.agent_loop(...)` runs the model-plus-tools turn.
-6. The result is applied into `SessionState`.
-7. Context compression may run if token usage crosses the threshold.
-8. The shell waits for the next prompt.
+1. The user enters a normal prompt in `main.py`.
+2. No skill is resolved.
+3. `SkillService` builds a base runtime config.
+4. The base prompt plus optional context summary is assembled.
+5. The full built-in tool registry is visible to the model.
+6. `agent.loop.agent_loop(...)` runs the model-plus-tools turn.
+7. The result is applied into `SessionState`.
+
+### Ad-Hoc Chat with an Active Session Skill
+
+1. The user activates a skill with `/skill use <name>`.
+2. Normal prompts now route through the selected skill.
+3. The skill body is appended into prompt assembly.
+4. The visible tool set is filtered by the skill’s `allowed-tools`.
+5. The result is applied into `SessionState`.
+
+### One-Shot Skill Invocation
+
+1. The user enters `/skill-name <prompt>`.
+2. The skill is resolved for that turn only.
+3. The prompt executes with the skill’s prompt body and filtered tools.
+4. The shell does not keep that skill active afterward.
 
 ### Bound Task Prompt
 
 1. The user resumes a task with `/task resume <id>`.
 2. The latest checkpoint is restored into `SessionState`.
-3. The task skill is resolved from `Task.skill_profile`.
-4. Normal prompts now route through `TaskRunner.run_prompt(...)`.
+3. If the task has `skill_profile`, that skill is resolved.
+4. If the task has no `skill_profile`, the task runs in base mode.
 5. A `Run` is created.
-6. `agent_loop(...)` executes one turn with the resolved skill prompt and filtered tools.
+6. `agent_loop(...)` executes one turn.
 7. The updated `SessionState` is checkpointed.
 8. Task logs are written.
 9. The task stays bound until detach, complete, reset, or exit.
@@ -206,8 +223,8 @@ A `TaskLogEntry` records task-level runtime events such as:
 The current architecture enforces these boundaries:
 
 - `main.py` handles shell interaction
+- `SkillService` builds base or skill runtime configs
 - `TaskRunner` handles persisted task orchestration
-- `SkillService` handles skill resolution and prompt/tool shaping
 - `agent_loop` handles one model/tool loop
 - `ToolExecutor` handles safety checks before tool execution
 - repositories handle SQLite reads and writes
@@ -216,7 +233,8 @@ The current architecture enforces these boundaries:
 
 The following are still future work:
 
-- a user-local skill directory loader
+- user-local skill directory loading
+- CLI-friendly public task IDs
 - stronger permission levels per tool
 - richer observability and metrics
 - richer use of optional Claude-compatible skill extensions
