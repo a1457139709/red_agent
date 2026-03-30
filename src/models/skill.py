@@ -34,3 +34,4 @@ class LoadedSkill:
     manifest: SkillManifest
     root_dir: Path
     skill_file: Path
+    source: str = "unknown"

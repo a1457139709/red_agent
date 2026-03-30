@@ -1,0 +1,27 @@
+{
+  "Shanghai": {
+    "condition": "Sunny",
+    "temperature_c": 22,
+    "humidity_pct": 48
+  },
+  "Beijing": {
+    "condition": "Windy",
+    "temperature_c": 17,
+    "humidity_pct": 30
+  },
+  "Shenzhen": {
+    "condition": "Cloudy",
+    "temperature_c": 26,
+    "humidity_pct": 68
+  },
+  "San Francisco": {
+    "condition": "Foggy",
+    "temperature_c": 14,
+    "humidity_pct": 81
+  },
+  "London": {
+    "condition": "Light Rain",
+    "temperature_c": 11,
+    "humidity_pct": 77
+  }
+}

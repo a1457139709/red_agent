@@ -1,17 +1,27 @@
 # Documentation Index
 
-This folder now contains only the current, maintained documentation for the Python codebase.
+This folder contains the current maintained documentation for the Python codebase.
 
-## Keep Reading These First
+## Read These First
 
 1. `architecture.md`
-   Current runtime architecture, module boundaries, and execution flow.
+   Current runtime architecture, module boundaries, execution flow, and safety layer.
 2. `task-runtime.md`
-   Persisted task model, run lifecycle, checkpoints, CLI task commands, and current skill-aware execution flow.
+   Persisted task model, run lifecycle, checkpoints, public task IDs, and current safety-aware task flow.
 3. `engineering-development-plan.en.md`
-   Current development roadmap after the first `SKILL.md` runtime slice.
+   Current roadmap, completed phases, and the next implementation phase.
 4. `skill-system-standard.md`
-   Current `SKILL.md`-based skill standard and compatibility rules.
+   Current `SKILL.md` runtime model, built-in plus local skill discovery rules, and compatibility notes.
+
+## Current Status
+
+The docs now reflect the current implementation, including:
+
+- explicit skill activation
+- user-local skill support
+- public task IDs
+- capability-tier execution safety
+- task-scoped safety audit logging
 
 ## Maintenance Rules
 
@@ -19,12 +29,3 @@ This folder now contains only the current, maintained documentation for the Pyth
 - If a document becomes stale, rewrite it or remove it.
 - Do not keep imported design notes from other projects unless they are clearly marked as historical and still useful.
 - When code and docs disagree, update the docs immediately after confirming the code path.
-
-## Removed Legacy Docs
-
-The previous topic docs that described old TypeScript-era or otherwise stale designs were removed on purpose. Their responsibilities are now covered by:
-
-- `architecture.md`
-- `task-runtime.md`
-- `engineering-development-plan.en.md`
-- `skill-system-standard.md`

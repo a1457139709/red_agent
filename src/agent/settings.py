@@ -32,6 +32,10 @@ class Settings:
     def sqlite_path(self) -> Path:
         return self.app_data_dir / "agent.db"
 
+    @property
+    def skills_dir(self) -> Path:
+        return self.app_data_dir / "skills"
+
     @classmethod
     def from_env(cls) -> "Settings":
         dotenv.load_dotenv()

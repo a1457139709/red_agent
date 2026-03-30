@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass, field
 
 from agent.context import build_compressed_context, compress_context, should_compress
 from agent.loop import agent_loop
@@ -9,15 +10,22 @@ from agent.state import SessionState
 from app.run_service import RunService
 from app.skill_service import SkillService
 from app.task_service import TaskService
-from models.run import TaskLogLevel
+from models.run import RunFailureKind, TaskLogLevel
 from models.task import Task, TaskStatus
 from skills.registry import SkillRegistry
 from tools import build_tool_registry
-from tools.executor import ToolExecutor
+from tools.executor import ToolExecutionError, ToolExecutionEvent, ToolExecutor
 from tools.policy import SafetyAuditEvent
 
 
 InfoCallback = Callable[[str], None] | None
+
+
+@dataclass(slots=True)
+class RunObservabilityState:
+    effective_skill_name: str | None = None
+    effective_tools: list[str] = field(default_factory=list)
+    saw_policy_denied: bool = False
 
 
 async def apply_result_to_session(
@@ -80,36 +88,65 @@ class TaskRunner:
     ) -> dict:
         task = self._require_runnable_task(task_id)
         run = self.run_service.start_run(task.id)
+        observability = RunObservabilityState()
         self.run_service.write_log(
             task_id=task.id,
             run_id=run.id,
             level=TaskLogLevel.INFO,
             message="run_started",
-            payload={"question": question},
+            payload={"question": question, "run_public_id": run.public_id},
         )
         self.task_service.update_task_status(task.id, TaskStatus.RUNNING, last_error=None)
 
+        runtime_config = None
         try:
-            if task.skill_profile is None:
-                runtime_config = await self.skill_service.build_base_runtime_config(
-                    context_summary=session_state.context_summary,
+            try:
+                if task.skill_profile is None:
+                    runtime_config = await self.skill_service.build_base_runtime_config(
+                        context_summary=session_state.context_summary,
+                    )
+                else:
+                    runtime_config = await self.skill_service.build_skill_runtime_config(
+                        skill_name=task.skill_profile,
+                        context_summary=session_state.context_summary,
+                    )
+            except Exception as exc:
+                await self._fail_run_and_task(
+                    task=task,
+                    run_id=run.id,
+                    error=str(exc),
+                    failure_kind=RunFailureKind.SKILL_RESOLUTION_ERROR,
+                    effective_skill_name=task.skill_profile,
+                    effective_tools=[],
                 )
-            else:
-                runtime_config = await self.skill_service.build_skill_runtime_config(
-                    skill_name=task.skill_profile,
-                    context_summary=session_state.context_summary,
-                )
+                raise
+
             try:
                 visible_executor = tool_executor.restricted_to(runtime_config.allowed_tools)
             except ValueError:
                 if tool_executor.tool_names.isdisjoint(runtime_config.allowed_tools):
                     visible_executor = tool_executor
                 else:
+                    await self._fail_run_and_task(
+                        task=task,
+                        run_id=run.id,
+                        error="Visible tool selection failed.",
+                        failure_kind=RunFailureKind.RUNTIME_ERROR,
+                        effective_skill_name=runtime_config.skill.manifest.name if runtime_config.skill else None,
+                        effective_tools=list(runtime_config.allowed_tools),
+                    )
                     raise
+
+            observability.effective_skill_name = (
+                runtime_config.skill.manifest.name if runtime_config.skill else None
+            )
+            observability.effective_tools = [tool.name for tool in visible_executor.get_tools()]
             runtime_executor = visible_executor.with_safety_policy(
                 runtime_config.safety_policy,
-                on_audit=self._build_safety_audit_logger(task.id, run.id),
+                on_audit=self._build_safety_audit_logger(task.id, run.id, observability),
+                on_tool_event=self._build_tool_event_logger(task.id, run.id),
             )
+
             try:
                 result = await agent_loop(
                     question,
@@ -121,74 +158,135 @@ class TaskRunner:
                 )
             except TypeError as exc:
                 if "unexpected keyword argument 'system_prompt'" not in str(exc):
+                    await self._fail_run_and_task(
+                        task=task,
+                        run_id=run.id,
+                        error=str(exc),
+                        failure_kind=RunFailureKind.MODEL_ERROR,
+                        effective_skill_name=observability.effective_skill_name,
+                        effective_tools=observability.effective_tools,
+                    )
                     raise
-                result = await agent_loop(
-                    question,
-                    session_state,
-                    runtime_executor,
-                    settings,
+                try:
+                    result = await agent_loop(
+                        question,
+                        session_state,
+                        runtime_executor,
+                        settings,
+                    )
+                except ToolExecutionError as exc:
+                    await self._fail_run_and_task(
+                        task=task,
+                        run_id=run.id,
+                        error=exc.error,
+                        failure_kind=RunFailureKind.TOOL_ERROR,
+                        effective_skill_name=observability.effective_skill_name,
+                        effective_tools=observability.effective_tools,
+                    )
+                    raise
+                except Exception as inner_exc:
+                    await self._fail_run_and_task(
+                        task=task,
+                        run_id=run.id,
+                        error=str(inner_exc),
+                        failure_kind=RunFailureKind.MODEL_ERROR,
+                        effective_skill_name=observability.effective_skill_name,
+                        effective_tools=observability.effective_tools,
+                    )
+                    raise
+            except ToolExecutionError as exc:
+                await self._fail_run_and_task(
+                    task=task,
+                    run_id=run.id,
+                    error=exc.error,
+                    failure_kind=RunFailureKind.TOOL_ERROR,
+                    effective_skill_name=observability.effective_skill_name,
+                    effective_tools=observability.effective_tools,
+                )
+                raise
+            except Exception as exc:
+                failure_kind = (
+                    RunFailureKind.POLICY_DENIED
+                    if observability.saw_policy_denied
+                    else RunFailureKind.MODEL_ERROR
+                )
+                await self._fail_run_and_task(
+                    task=task,
+                    run_id=run.id,
+                    error=str(exc),
+                    failure_kind=failure_kind,
+                    effective_skill_name=observability.effective_skill_name,
+                    effective_tools=observability.effective_tools,
+                )
+                raise
+
+            try:
+                await apply_result_to_session(
+                    question=question,
+                    result=result,
+                    session_state=session_state,
+                    settings=settings,
+                    on_info=on_info,
+                    on_error=on_error,
                 )
 
-            await apply_result_to_session(
-                question=question,
-                result=result,
-                session_state=session_state,
-                settings=settings,
-                on_info=on_info,
-                on_error=on_error,
-            )
-
-            checkpoint = self.run_service.save_checkpoint(
-                task_id=task.id,
-                run_id=run.id,
-                session_state=session_state,
-            )
-            self.task_service.update_task_status(
-                task.id,
-                TaskStatus.RUNNING,
-                last_checkpoint=checkpoint.id,
-                last_error=None,
-            )
-            self.run_service.complete_run(
-                run.id,
-                step_count=len(result.get("messages", [])),
-                last_usage=result.get("usage") or {},
-            )
-            self.run_service.write_log(
-                task_id=task.id,
-                run_id=run.id,
-                level=TaskLogLevel.INFO,
-                message="checkpoint_saved",
-                payload={"checkpoint_id": checkpoint.id, "reason": "run_completed"},
-            )
-            self.run_service.write_log(
-                task_id=task.id,
-                run_id=run.id,
-                level=TaskLogLevel.INFO,
-                message="run_completed",
-                payload={
-                    "step_count": len(result.get("messages", [])),
-                    "status": result.get("status", "completed"),
-                    "skill_name": runtime_config.skill.manifest.name if runtime_config.skill else None,
-                },
-            )
-            return result
-        except Exception as exc:
-            error = str(exc)
-            self.run_service.fail_run(run.id, error=error)
-            self.task_service.update_task_status(
-                task.id,
-                TaskStatus.FAILED,
-                last_checkpoint=task.last_checkpoint,
-                last_error=error,
-            )
-            self.run_service.write_log(
-                task_id=task.id,
-                run_id=run.id,
-                level=TaskLogLevel.ERROR,
-                message="run_failed",
-                payload={"error": error},
-            )
+                checkpoint = self.run_service.save_checkpoint(
+                    task_id=task.id,
+                    run_id=run.id,
+                    session_state=session_state,
+                )
+                self.task_service.update_task_status(
+                    task.id,
+                    TaskStatus.RUNNING,
+                    last_checkpoint=checkpoint.id,
+                    last_error=None,
+                )
+                failure_kind = (
+                    RunFailureKind.MAX_STEPS_EXCEEDED
+                    if result.get("status") == "max_steps_exceeded"
+                    else None
+                )
+                self.run_service.complete_run(
+                    run.id,
+                    step_count=len(result.get("messages", [])),
+                    last_usage=result.get("usage") or {},
+                    effective_skill_name=observability.effective_skill_name,
+                    effective_tools=observability.effective_tools,
+                    failure_kind=failure_kind,
+                )
+                self.run_service.write_log(
+                    task_id=task.id,
+                    run_id=run.id,
+                    level=TaskLogLevel.INFO,
+                    message="checkpoint_saved",
+                    payload={"checkpoint_id": checkpoint.id, "reason": "run_completed"},
+                )
+                self.run_service.write_log(
+                    task_id=task.id,
+                    run_id=run.id,
+                    level=TaskLogLevel.INFO,
+                    message="run_completed",
+                    payload={
+                        "run_public_id": run.public_id,
+                        "step_count": len(result.get("messages", [])),
+                        "status": result.get("status", "completed"),
+                        "skill_name": observability.effective_skill_name,
+                        "effective_tools": observability.effective_tools,
+                        "failure_kind": failure_kind.value if failure_kind else None,
+                    },
+                )
+                return result
+            except Exception as exc:
+                await self._fail_run_and_task(
+                    task=task,
+                    run_id=run.id,
+                    error=str(exc),
+                    failure_kind=RunFailureKind.RUNTIME_ERROR,
+                    effective_skill_name=observability.effective_skill_name,
+                    effective_tools=observability.effective_tools,
+                )
+                raise
+        except Exception:
             raise
 
     def resume_task(self, task_id: str) -> tuple[Task, SessionState]:
@@ -276,8 +374,51 @@ class TaskRunner:
             raise ValueError(f"Task {task.id} cannot run in status {task.status.value}")
         return task
 
-    def _build_safety_audit_logger(self, task_id: str, run_id: str):
+    async def _fail_run_and_task(
+        self,
+        *,
+        task: Task,
+        run_id: str,
+        error: str,
+        failure_kind: RunFailureKind,
+        effective_skill_name: str | None,
+        effective_tools: list[str],
+    ) -> None:
+        self.run_service.fail_run(
+            run_id,
+            error=error,
+            effective_skill_name=effective_skill_name,
+            effective_tools=effective_tools,
+            failure_kind=failure_kind,
+        )
+        self.task_service.update_task_status(
+            task.id,
+            TaskStatus.FAILED,
+            last_checkpoint=task.last_checkpoint,
+            last_error=error,
+        )
+        self.run_service.write_log(
+            task_id=task.id,
+            run_id=run_id,
+            level=TaskLogLevel.ERROR,
+            message="run_failed",
+            payload={
+                "error": error,
+                "failure_kind": failure_kind.value,
+                "effective_skill_name": effective_skill_name,
+                "effective_tools": effective_tools,
+            },
+        )
+
+    def _build_safety_audit_logger(
+        self,
+        task_id: str,
+        run_id: str,
+        observability: RunObservabilityState,
+    ):
         def log_event(event: SafetyAuditEvent) -> None:
+            if event.event_type == "policy_denied":
+                observability.saw_policy_denied = True
             level = (
                 TaskLogLevel.ERROR
                 if event.event_type in {"operation_blocked", "policy_denied", "operation_failed"}
@@ -288,6 +429,19 @@ class TaskRunner:
                 run_id=run_id,
                 level=level,
                 message=f"safety_{event.event_type}",
+                payload=event.to_payload(),
+            )
+
+        return log_event
+
+    def _build_tool_event_logger(self, task_id: str, run_id: str):
+        def log_event(event: ToolExecutionEvent) -> None:
+            level = TaskLogLevel.ERROR if event.event_type == "tool_failed" else TaskLogLevel.INFO
+            self.run_service.write_log(
+                task_id=task_id,
+                run_id=run_id,
+                level=level,
+                message=event.event_type,
                 payload=event.to_payload(),
             )
 

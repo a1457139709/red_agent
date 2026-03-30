@@ -10,6 +10,7 @@ Tasks are useful for:
 - pause/resume
 - checkpoints
 - run logs
+- safety audit logs
 - failure recovery
 
 Tasks are not only for a future web or UI layer. They are a first-class part of the CLI workflow.
@@ -44,6 +45,8 @@ Current lookup behavior:
 - `/task create`
 - `/task list`
 - `/task show <task_id>`
+- `/task runs <task_id> [limit]`
+- `/task run <run_id>`
 - `/task logs <task_id> [limit]`
 - `/task resume <task_id>`
 - `/task detach`
@@ -92,6 +95,24 @@ Current behavior:
 - tasks with no `skill_profile` run in base mode
 - task skill binding does not overwrite the shell’s active session skill outside the task lifecycle
 
+## Safety Relationship
+
+Each bound run executes through the capability-tier safety boundary.
+
+Current behavior:
+
+- base-mode tasks use the base safety policy
+- skill-bound tasks use a narrowed safety policy derived from the skill’s allowed tools
+- risky operations may be confirmed or blocked before tool execution
+- task runs persist high-signal safety events into `task_logs`
+
+Current capability tiers are:
+
+- `read`
+- `write`
+- `execute`
+- `destructive`
+
 ## Runtime Flow for a Bound Prompt
 
 When the user sends a normal prompt while a task is bound:
@@ -100,12 +121,13 @@ When the user sends a normal prompt while a task is bound:
 2. The runtime resolves the task skill if one is explicitly bound.
 3. `RunService` creates a `Run` row.
 4. A task log entry is written.
-5. The model/tool loop executes.
-6. The returned messages are applied to `SessionState`.
-7. Context compression may run.
-8. A checkpoint is saved.
-9. The task is updated with the latest checkpoint and status.
-10. The run is marked `completed` or `failed`.
+5. The effective visible tools and safety policy are derived.
+6. The model/tool loop executes.
+7. The returned messages are applied to `SessionState`.
+8. Context compression may run.
+9. A checkpoint is saved.
+10. The task is updated with the latest checkpoint and status.
+11. The run is marked `completed` or `failed`.
 
 ## Persisted Entities
 
@@ -130,9 +152,14 @@ Stored in the `runs` table.
 
 Used for:
 
+- public run ID
 - one bound prompt execution
 - start and finish timestamps
+- duration
 - step count
+- effective skill
+- effective tools
+- failure kind
 - last usage
 - last error
 
@@ -155,6 +182,7 @@ Used for:
 - run lifecycle events
 - checkpoint-related events
 - failure diagnostics
+- safety audit events
 
 ## Checkpoint Contents
 
@@ -177,13 +205,14 @@ Supported message types:
 - there is no task search by title yet
 - tasks are still manually completed with `/task complete`
 - there is no autonomous background runner yet
-- task UX can still be improved further
+- run inspection is still shallow
+- task logs currently emphasize lifecycle and safety events more than rich diagnostics
 
 ## Next Direction
 
-The next task-related goals should focus on ergonomics beyond identity:
+The next task-related goals should focus on observability:
 
-1. better task selection and filtering
-2. possible title-based or recent-task shortcuts
-3. richer task/run inspection
-4. eventual task-centric CLI flows for long-running work
+1. richer ad-hoc session inspection
+2. clearer cross-run aggregation
+3. richer task filtering and selection
+4. possible export-friendly diagnostics

@@ -11,7 +11,7 @@ from agent.state import SessionState
 from app.run_service import RunService
 from app.skill_service import SkillService
 from app.task_service import TaskService
-from models.run import TaskLogEntry
+from models.run import Run, TaskLogEntry
 from models.skill import LoadedSkill
 from models.task import Task
 from runtime.task_runner import TaskRunner, apply_result_to_session
@@ -41,9 +41,13 @@ class ShellState:
         return self.active_task_id[:8]
 
 
-def create_skill_service() -> SkillService:
+def create_skill_service(settings: Settings | None = None) -> SkillService:
+    settings = settings or get_settings()
     tool_names = list(build_tool_registry().keys())
-    registry = SkillRegistry.built_in(known_tool_names=set(tool_names))
+    registry = SkillRegistry.built_in_and_local(
+        known_tool_names=set(tool_names),
+        local_root=settings.skills_dir,
+    )
     return SkillService(
         registry,
         base_tool_names=tool_names,
@@ -137,16 +141,91 @@ def render_task_detail(task: Task) -> str:
     )
 
 
-def render_task_logs(entries: list[TaskLogEntry]) -> str:
+def format_duration_ms(duration_ms: int | None) -> str:
+    if duration_ms is None:
+        return "-"
+    if duration_ms < 1000:
+        return f"{duration_ms}ms"
+    return f"{duration_ms / 1000:.2f}s"
+
+
+def summarize_log_payload(payload: dict | None) -> str:
+    if not payload:
+        return ""
+    preferred_keys = [
+        "tool_name",
+        "capability",
+        "failure_kind",
+        "skill_name",
+        "args_summary",
+        "result_summary",
+        "error",
+        "reason",
+    ]
+    parts = []
+    for key in preferred_keys:
+        value = payload.get(key)
+        if value in (None, "", []):
+            continue
+        text = str(value)
+        if len(text) > 80:
+            text = text[:77] + "..."
+        parts.append(f"{key}={text}")
+    return " | ".join(parts)
+
+
+def render_task_logs(entries: list[TaskLogEntry], run_labels: dict[str, str] | None = None) -> str:
     if not entries:
         return "No task logs found."
 
     lines = []
     for entry in entries:
-        run_part = entry.run_id[:8] if entry.run_id else "-"
+        run_part = "-"
+        if entry.run_id:
+            run_part = run_labels.get(entry.run_id, entry.run_id[:8]) if run_labels else entry.run_id[:8]
+        payload_summary = summarize_log_payload(entry.payload)
+        suffix = f" {payload_summary}" if payload_summary else ""
         lines.append(
-            f"{entry.created_at} [{entry.level.value}] run={run_part} {entry.message}"
+            f"{entry.created_at} [{entry.level.value}] run={run_part} {entry.message}{suffix}"
         )
+    return "\n".join(lines)
+
+
+def render_run_list(runs: list[Run]) -> str:
+    if not runs:
+        return "No runs found."
+
+    lines = ["RUN      STATUS      STARTED                  DURATION   SKILL                 FAILURE"]
+    for run in runs:
+        lines.append(
+            f"{run.public_id:8} {run.status.value:11} {run.started_at:24} "
+            f"{format_duration_ms(run.duration_ms):10} "
+            f"{render_skill_name(run.effective_skill_name):21} {run.failure_kind or '-'}"
+        )
+    return "\n".join(lines)
+
+
+def render_run_detail(run: Run, task: Task, entries: list[TaskLogEntry]) -> str:
+    task_label = task.public_id or task.id
+    lines = [
+        f"Run ID: {run.public_id}",
+        f"Internal ID: {run.id}",
+        f"Task: {task_label}",
+        f"Task Internal ID: {task.id}",
+        f"Status: {run.status.value}",
+        f"Started At: {run.started_at}",
+        f"Finished At: {run.finished_at or '-'}",
+        f"Duration: {format_duration_ms(run.duration_ms)}",
+        f"Skill: {render_skill_name(run.effective_skill_name)}",
+        f"Tools: {', '.join(run.effective_tools) if run.effective_tools else '-'}",
+        f"Step Count: {run.step_count}",
+        f"Usage: {run.last_usage or {}}",
+        f"Failure Kind: {run.failure_kind or '-'}",
+        f"Last Error: {run.last_error or '-'}",
+        "",
+        "Recent Run Logs:",
+        render_task_logs(entries, {run.id: run.public_id}),
+    ]
     return "\n".join(lines)
 
 
@@ -154,9 +233,9 @@ def render_skill_list(skills: list[LoadedSkill]) -> str:
     if not skills:
         return "No skills found."
 
-    lines = ["NAME                 DESCRIPTION"]
+    lines = ["NAME                 SOURCE     DESCRIPTION"]
     for skill in skills:
-        lines.append(f"{skill.manifest.name:20} {skill.manifest.description}")
+        lines.append(f"{skill.manifest.name:20} {skill.source:10} {skill.manifest.description}")
     return "\n".join(lines)
 
 
@@ -174,6 +253,7 @@ def render_skill_detail(skill: LoadedSkill) -> str:
             f"Description: {skill.manifest.description}",
             f"License: {skill.manifest.license}",
             f"Compatibility: {skill.manifest.compatibility}",
+            f"Source: {skill.source}",
             f"Allowed Tools: {', '.join(skill.manifest.allowed_tools)}",
             f"Path: {skill.skill_file}",
             "Metadata:",
@@ -204,13 +284,16 @@ def print_help(output: OutputFn = print) -> None:
                 "/task create          Create a persisted task",
                 "/task list            List recent tasks",
                 "/task show <id>       Show task details",
+                "/task runs <id> [n]   Show recent runs for a task",
+                "/task run <id>        Show one run in detail",
                 "/task logs <id> [n]   Show recent task logs",
                 "/task resume <id>     Resume and bind a task to this shell",
                 "/task detach          Pause and detach the active task",
                 "/task complete        Mark the active task as completed",
-                "/skill list           List built-in skills",
+                "/skill list           List built-in and local skills",
                 "/skill show <name>    Show skill details",
                 "/skill use <name>     Activate a skill for this shell",
+                "/skill reload         Reload skills from disk",
                 "/skill clear          Clear the active shell skill",
                 "/skill current        Show the active shell skill",
                 "/skill-name <prompt>  Run one prompt with a skill without activating it",
@@ -228,6 +311,16 @@ def _parse_limit(raw: str) -> int:
     if limit <= 0:
         raise ValueError("Limit must be greater than 0")
     return limit
+
+
+def _build_run_label_map(entries: list[TaskLogEntry], run_service: RunService) -> dict[str, str]:
+    labels: dict[str, str] = {}
+    for entry in entries:
+        if not entry.run_id or entry.run_id in labels:
+            continue
+        run = run_service.get_run(entry.run_id)
+        labels[entry.run_id] = run.public_id if run is not None and run.public_id else entry.run_id[:8]
+    return labels
 
 
 def _select_visible_executor(
@@ -299,6 +392,7 @@ def handle_skill_command(
                         "/skill list",
                         "/skill show <name>",
                         "/skill use <name>",
+                        "/skill reload",
                         "/skill clear",
                         "/skill current",
                     ]
@@ -328,6 +422,22 @@ def handle_skill_command(
             skill_service.resolve_skill(args[0])
             shell_state.active_skill_name = args[0]
             success_output(f"Activated skill {args[0]}.")
+            return True
+
+        if action == "reload":
+            if args:
+                error_output("Usage: /skill reload")
+                return True
+            skill_service.reload()
+            if (
+                shell_state.active_skill_name is not None
+                and skill_service.get_skill(shell_state.active_skill_name) is None
+            ):
+                cleared = shell_state.active_skill_name
+                shell_state.active_skill_name = None
+                success_output(f"Reloaded skills and cleared missing active skill {cleared}.")
+                return True
+            success_output("Reloaded skills from disk.")
             return True
 
         if action == "clear":
@@ -377,6 +487,8 @@ def handle_task_command(
                         "/task create",
                         "/task list",
                         "/task show <id>",
+                        "/task runs <id> [limit]",
+                        "/task run <id>",
                         "/task logs <id> [limit]",
                         "/task resume <id>",
                         "/task detach",
@@ -419,13 +531,40 @@ def handle_task_command(
             text_output(render_task_detail(task))
             return True
 
+        if action == "runs":
+            if not args or len(args) > 2:
+                error_output("Usage: /task runs <task_id> [limit]")
+                return True
+            task = task_service.get_task(args[0])
+            if task is None:
+                error_output(f"Task not found: {args[0]}")
+                return True
+            limit = 20 if len(args) == 1 else _parse_limit(args[1])
+            runs = run_service.list_runs(task.id, limit=limit)
+            text_output(render_run_list(runs))
+            return True
+
+        if action == "run":
+            if len(args) != 1:
+                error_output("Usage: /task run <run_id>")
+                return True
+            run = run_service.require_run(args[0])
+            task = task_service.require_task(run.task_id)
+            entries = run_service.list_run_logs(run.id, limit=20)
+            text_output(render_run_detail(run, task, entries))
+            return True
+
         if action == "logs":
             if not args or len(args) > 2:
                 error_output("Usage: /task logs <task_id> [limit]")
                 return True
+            task = task_service.get_task(args[0])
+            if task is None:
+                error_output(f"Task not found: {args[0]}")
+                return True
             limit = 20 if len(args) == 1 else _parse_limit(args[1])
-            entries = run_service.list_logs(args[0], limit=limit)
-            text_output(render_task_logs(entries))
+            entries = run_service.list_logs(task.id, limit=limit)
+            text_output(render_task_logs(entries, _build_run_label_map(entries, run_service)))
             return True
 
         if action == "resume":
@@ -637,7 +776,7 @@ async def main() -> None:
     shell_state = ShellState()
     task_service = TaskService.from_settings(settings)
     run_service = RunService.from_settings(settings)
-    skill_service = create_skill_service()
+    skill_service = create_skill_service(settings)
     task_runner = TaskRunner(task_service, run_service, skill_service)
     tool_executor = ToolExecutor(
         build_tool_registry(),

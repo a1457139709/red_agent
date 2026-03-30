@@ -40,6 +40,12 @@ class SkillService:
     def get_skill(self, name: str) -> LoadedSkill | None:
         return self.registry.get_skill(name)
 
+    def reload(self) -> None:
+        self.registry.reload()
+
+    def require_skill(self, name: str) -> LoadedSkill:
+        return self.registry.require_skill(name)
+
     def resolve_skill(self, skill_name: str | None) -> LoadedSkill:
         resolved_name = skill_name or self.default_skill_name
         if not resolved_name:

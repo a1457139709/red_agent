@@ -4,18 +4,22 @@
 
 - a LangChain tool-calling loop
 - a persisted task runtime
-- a controlled local tool execution boundary
+- an explicit `SKILL.md` skill system
+- a controlled local execution boundary
 
 The project is intended for local single-user development work. It is not a SaaS agent platform or a multi-user service.
 
 ## Current Capabilities
 
 - interactive local CLI
-- built-in `SKILL.md` skill system
+- built-in and user-local `SKILL.md` skills
+- explicit skill activation and one-shot skill invocation
 - file tools: read, write, edit, list, search, delete
 - shell command execution with safety checks
+- capability-tier tool safety
 - session state and context compression
 - persisted tasks, runs, checkpoints, and task logs
+- task-scoped safety audit logging
 
 ## Run
 
@@ -24,13 +28,13 @@ pip install -r requirements.txt
 python src/main.py
 ```
 
-## Task Commands
-
-The CLI currently supports:
+## Current CLI Commands
 
 - `/task create`
 - `/task list`
 - `/task show <task_id>`
+- `/task runs <task_id> [limit]`
+- `/task run <run_id>`
 - `/task logs <task_id> [limit]`
 - `/task resume <task_id>`
 - `/task detach`
@@ -38,9 +42,31 @@ The CLI currently supports:
 - `/skill list`
 - `/skill show <name>`
 - `/skill use <name>`
+- `/skill reload`
 - `/skill clear`
 - `/skill current`
 - `/skill-name <prompt>`
+
+## Skill Locations
+
+Built-in skills live under:
+
+- `src/skills/`
+
+User-local skills live under:
+
+- `.mini-claude-code/skills/`
+
+Example:
+
+```text
+.mini-claude-code/
+  skills/
+    my-skill/
+      SKILL.md
+```
+
+If a local skill has the same name as a built-in skill, the local skill overrides it after `/skill reload`.
 
 ## Current Architecture
 
@@ -58,7 +84,7 @@ Core source areas:
 
 ## Documentation
 
-The `docs/` folder was cleaned up to keep only current documents:
+Current docs:
 
 - `docs/architecture.md`
 - `docs/task-runtime.md`
@@ -73,13 +99,6 @@ The current built-in skills are:
 
 - `development-default`
 - `security-audit`
-
-These skills are loaded from `src/skills/*/SKILL.md` and currently affect:
-
-- explicit session skill activation
-- one-shot skill invocation
-- task-bound prompt composition
-- task-bound visible tool availability
 
 ## Tests
 

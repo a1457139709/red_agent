@@ -10,28 +10,28 @@ The compatibility strategy remains:
 - compatibility target: Claude Code style extensions
 - runtime policy: parse standard fields first and ignore unsupported extensions safely
 
-However, the runtime direction is now explicitly:
+The current runtime direction is:
 
 - skills are **on-demand**
 - skills are **not** the default base runtime mode
+- skills may be loaded from built-in and user-local directories
 
 ## Runtime Model
 
-The intended runtime model is:
-
 ### Base Mode
 
-Normal agent usage should work without any skill loaded.
+Normal agent usage works without any skill loaded.
 
 In base mode:
 
 - no skill body is injected
 - no skill-specific tool filtering is applied
-- the base runtime uses the standard default tool set
+- the base runtime uses the standard built-in tool set
+- the base safety policy is used
 
 ### Activated Skill Mode
 
-A skill should be loaded only when explicitly activated by:
+A skill is loaded only when explicitly activated by:
 
 - a skill command
 - a skill shorthand such as `/skill-name`
@@ -41,7 +41,7 @@ When activated, a skill may affect:
 
 - prompt composition
 - visible tools
-- future policy hints
+- runtime safety narrowing
 
 ## Directory Layout
 
@@ -59,13 +59,33 @@ src/skills/
     scripts/
 ```
 
-Planned future user-local layout:
+User-local layout:
 
 ```text
 .mini-claude-code/skills/
   my-skill/
     SKILL.md
 ```
+
+## Discovery and Precedence
+
+Current discovery behavior:
+
+- built-in skills are loaded from `src/skills/*/SKILL.md`
+- local skills are loaded from `.mini-claude-code/skills/*/SKILL.md`
+- only direct child directories containing `SKILL.md` are considered skills
+
+Current precedence rule:
+
+- built-in skills are loaded first
+- local skills are loaded second
+- if both define the same skill name, the local skill overrides the built-in one
+
+Current reload behavior:
+
+- `/skill reload` clears the in-memory skill registry cache
+- the next skill lookup rescans disk
+- if the current active shell skill disappears after reload, the shell clears it
 
 ## Required `SKILL.md` Fields
 
@@ -80,13 +100,13 @@ The current implementation requires:
 
 Rules:
 
-- `name` must match or map stably to the directory name
+- `name` must match the directory name
 - `description` should describe both what the skill does and when it should be used
-- `allowed-tools` constrains tool visibility while the skill is active
+- `allowed-tools` constrains visible tools while the skill is active
 
 ## Optional Claude-Compatible Fields
 
-The runtime may preserve these fields for compatibility:
+The runtime preserves these fields for compatibility when present:
 
 - `argument-hint`
 - `disable-model-invocation`
@@ -113,9 +133,9 @@ It should define:
 - safety boundaries
 - references to local `references/` or `scripts/`
 
-## Recommended Internal Manifest Shape
+## Current Internal Manifest Shape
 
-The runtime should normalize a loaded skill into an internal manifest with at least:
+The runtime normalizes a loaded skill into an internal manifest with at least:
 
 - `name`
 - `description`
@@ -128,35 +148,46 @@ The runtime should normalize a loaded skill into an internal manifest with at le
 - `references`
 - `scripts`
 
-Recommended compatibility fields to preserve:
+And the loaded skill also carries:
 
-- `argument_hint`
-- `user_invocable`
-- `disable_model_invocation`
-- `model`
-- `effort`
-- `shell`
+- `root_dir`
+- `skill_file`
+- `source`
+
+Supported `source` values currently include:
+
+- `built-in`
+- `local`
+
+## Safety Rules
+
+Current safety integration rules:
+
+- skill tool visibility is constrained by `allowed-tools`
+- the effective runtime safety policy is narrowed from the visible tools
+- skills may tighten permissions relative to base mode
+- skills do not expand permissions beyond base mode
+
+This means a read-heavy skill such as `security-audit` can reduce available capabilities without bypassing the executor’s policy boundary.
 
 ## Activation Expectations
 
-The desired user-facing behavior is:
+The current user-facing behavior is:
 
 - no skill loaded by default
 - explicit skill activation for ad-hoc CLI work
 - explicit skill binding for tasks
+- explicit reload of built-in plus local skill views
 
-This means skill loading should feel temporary and visible, not implicit.
+Supported interaction patterns:
 
-## Recommended Built-In Skills
-
-Current built-in templates:
-
-1. `development-default`
-2. `security-audit`
-
-Note:
-
-`development-default` is still useful as a reusable skill template, but it should not define the long-term default runtime model by itself.
+- `/skill list`
+- `/skill show <name>`
+- `/skill use <name>`
+- `/skill clear`
+- `/skill current`
+- `/skill reload`
+- `/skill-name <prompt>`
 
 ## Runtime Integration Rules
 
@@ -166,13 +197,15 @@ When a skill is explicitly activated:
 2. load and normalize `SKILL.md`
 3. append the body content into prompt assembly
 4. filter the visible tool registry by `allowed-tools`
-5. preserve unknown extension fields for future compatibility
+5. derive the narrowed safety policy from the visible tools
+6. preserve unknown extension fields for future compatibility
 
 When no skill is activated:
 
 1. run the base runtime
 2. do not inject a skill prompt
 3. do not apply skill-specific tool filtering
+4. use the base safety policy
 
 ## Testing Requirements
 
@@ -180,6 +213,10 @@ At minimum, tests should cover:
 
 - valid `SKILL.md` parsing
 - invalid frontmatter failure paths
+- built-in skill discovery
+- local skill discovery
+- local override of built-in skills
+- reload behavior
 - `allowed-tools` filtering while a skill is active
 - explicit skill activation behavior
 - no-skill base runtime behavior

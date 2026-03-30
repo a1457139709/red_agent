@@ -2,12 +2,12 @@
 
 ## Summary
 
-`mini-claude-code` is a local Python CLI agent with four active pillars:
+`mini-claude-code` is a local Python CLI agent with these active pillars:
 
 - an interactive chat shell
 - a persisted task runtime
 - an explicit `SKILL.md` skill layer
-- a controlled tool execution boundary
+- a capability-tier safety boundary
 
 The system remains local-first and single-user focused.
 
@@ -22,7 +22,7 @@ src/
   models/               # Task, Run, Checkpoint, TaskLogEntry, SkillManifest
   skills/               # SKILL.md loader, registry, and built-in skills
   storage/              # SQLite repositories
-  tools/                # tool implementations and tool registry
+  tools/                # tools, safety policy, and executor
   utils/                # path safety, command safety, confirmations, truncation helpers
 ```
 
@@ -39,6 +39,7 @@ src/
 - prompt routing
 - `/task ...` commands
 - `/skill ...` commands
+- `/skill reload`
 - `/skill-name <prompt>` one-shot skill shorthand
 
 ### 2. Agent Runtime Layer
@@ -70,6 +71,7 @@ This layer is responsible for one conversational turn at a time.
   Skill discovery plus runtime config building for:
   - base mode
   - explicit skill mode
+  - runtime safety policy derivation
 
 ### 4. Task Runtime Layer
 
@@ -81,8 +83,7 @@ This layer is responsible for one conversational turn at a time.
 - task status transitions for resume, detach, complete, and failure
 - explicit task-skill resolution when `Task.skill_profile` is set
 - base-mode execution when `Task.skill_profile` is unset
-
-This is the bridge between the generic chat loop and persisted task execution.
+- task-scoped safety audit logging
 
 ### 5. Skill Layer
 
@@ -91,13 +92,18 @@ This is the bridge between the generic chat loop and persisted task execution.
 - `loader.py`
   Minimal frontmatter parser for standard `SKILL.md`.
 - `registry.py`
-  Built-in skill discovery and validation.
+  Built-in plus user-local skill discovery and validation.
 - `development-default/`
   A built-in development skill template.
 - `security-audit/`
   A narrower read-heavy audit skill.
 
-Built-in skills are currently loaded only from `src/skills/*/SKILL.md`.
+Skill sources currently supported:
+
+- built-in: `src/skills/*/SKILL.md`
+- local: `.mini-claude-code/skills/*/SKILL.md`
+
+If a local skill and a built-in skill share the same name, the local skill wins.
 
 ### 6. Persistence Layer
 
@@ -110,7 +116,9 @@ Built-in skills are currently loaded only from `src/skills/*/SKILL.md`.
 - `runs.py`
   `runs`, `checkpoints`, and `task_logs` table repository.
 
-The current source of truth for local persisted runtime state is `.mini-claude-code/agent.db`.
+The current source of truth for persisted runtime state is:
+
+- `.mini-claude-code/agent.db`
 
 ### 7. Tool Layer
 
@@ -124,18 +132,36 @@ The current source of truth for local persisted runtime state is `.mini-claude-c
 - `bash`
 - `delete_file`
 
-`src/tools/__init__.py` is the explicit tool registry entry point.
+`src/tools/policy.py` owns:
+
+- capability classification
+- runtime safety policy calculation
+- safety audit event shape
+
+`src/tools/executor.py` remains the execution policy boundary.
 
 ### 8. Safety Layer
 
-`src/tools/executor.py` and `src/utils/safety.py` provide:
+The safety layer is now split across:
+
+- `src/tools/policy.py`
+- `src/tools/executor.py`
+- `src/utils/safety.py`
+
+Current safety behavior includes:
 
 - path restriction to the working directory
-- sensitive-path warnings
-- command danger classification
-- confirmation for risky shell commands
+- capability tiers:
+  - `read`
+  - `write`
+  - `execute`
+  - `destructive`
+- confirmation for sensitive writes
+- confirmation for destructive tools
+- shell danger classification
+- task-scoped safety audit events for risky operations
 
-Tools do not own their own approval UI. The executor remains the execution policy boundary.
+Skills can tighten the effective safety policy by limiting visible tools, but they do not expand permissions beyond base mode.
 
 ## Execution Flow
 
@@ -146,22 +172,24 @@ Tools do not own their own approval UI. The executor remains the execution polic
 3. `SkillService` builds a base runtime config.
 4. The base prompt plus optional context summary is assembled.
 5. The full built-in tool registry is visible to the model.
-6. `agent.loop.agent_loop(...)` runs the model-plus-tools turn.
-7. The result is applied into `SessionState`.
+6. The base safety policy is attached to the executor.
+7. `agent.loop.agent_loop(...)` runs the model-plus-tools turn.
+8. The result is applied into `SessionState`.
 
 ### Ad-Hoc Chat with an Active Session Skill
 
 1. The user activates a skill with `/skill use <name>`.
-2. Normal prompts now route through the selected skill.
+2. Normal prompts route through the selected skill.
 3. The skill body is appended into prompt assembly.
 4. The visible tool set is filtered by the skill’s `allowed-tools`.
-5. The result is applied into `SessionState`.
+5. The safety policy is narrowed from the allowed tools.
+6. The result is applied into `SessionState`.
 
 ### One-Shot Skill Invocation
 
 1. The user enters `/skill-name <prompt>`.
 2. The skill is resolved for that turn only.
-3. The prompt executes with the skill’s prompt body and filtered tools.
+3. The prompt executes with the skill’s prompt body, filtered tools, and narrowed safety policy.
 4. The shell does not keep that skill active afterward.
 
 ### Bound Task Prompt
@@ -171,10 +199,11 @@ Tools do not own their own approval UI. The executor remains the execution polic
 3. If the task has `skill_profile`, that skill is resolved.
 4. If the task has no `skill_profile`, the task runs in base mode.
 5. A `Run` is created.
-6. `agent_loop(...)` executes one turn.
-7. The updated `SessionState` is checkpointed.
-8. Task logs are written.
-9. The task stays bound until detach, complete, reset, or exit.
+6. The executor is wrapped with the effective safety policy and task-scoped audit logger.
+7. `agent_loop(...)` executes one turn.
+8. The updated `SessionState` is checkpointed.
+9. Task logs are written, including safety events when relevant.
+10. The task stays bound until detach, complete, reset, or exit.
 
 ## Current Data Model
 
@@ -182,7 +211,8 @@ Tools do not own their own approval UI. The executor remains the execution polic
 
 The current `Task` entity stores:
 
-- identity and metadata
+- internal UUID
+- public task ID
 - title and goal
 - workspace
 - task status
@@ -196,9 +226,14 @@ A `Run` represents one bound user prompt processed through the task runtime.
 
 It stores:
 
+- public run ID
 - run status
 - start and finish timestamps
+- duration
 - step count
+- effective skill name
+- effective visible tools
+- failure kind
 - last usage
 - last error
 
@@ -217,6 +252,9 @@ A `TaskLogEntry` records task-level runtime events such as:
 - run failed
 - task detached
 - task completed
+- safety confirmation required
+- safety operation blocked
+- safety policy denied
 
 ## Current Boundaries
 
@@ -233,8 +271,8 @@ The current architecture enforces these boundaries:
 
 The following are still future work:
 
-- user-local skill directory loading
-- CLI-friendly public task IDs
-- stronger permission levels per tool
-- richer observability and metrics
+- richer run inspection commands
+- run duration and structured diagnostics
+- tool invocation summaries beyond safety events
+- structured failure classification
 - richer use of optional Claude-compatible skill extensions

@@ -1,99 +1,96 @@
 # Engineering Development Plan
 
-## 1. Purpose
+## Purpose
 
-This document is the working engineering roadmap for the current repository state.
+This document is the working roadmap for the current repository state.
 
-It should answer:
+It should stay aligned with the actual Python codebase and answer:
 
 - what is already implemented
-- what should change next
-- which architectural assumptions are now considered wrong
-- which direction should guide future implementation
+- what architectural rules now hold
+- what the next development phase should be
 
-## 2. Product Direction
+## Current Product Direction
 
-The project is a local single-user coding agent with:
+`mini-claude-code` is a local single-user coding agent focused on:
 
-- interactive CLI usage as the primary interface
-- support for medium and long-running tasks
+- interactive CLI usage
+- resumable local task execution
+- explicit on-demand skills
 - local-first persistence
-- future expansion into safer cybersecurity-oriented skills
+- controlled local tool execution
 
-Non-goals remain:
+It is still not aiming for:
 
 - SaaS deployment
 - multi-user collaboration
-- heavy web-platform architecture
 - distributed orchestration
+- heavy web-platform architecture
 
-Conclusion:
-
-The project should keep evolving from the current codebase, but the next phase should correct two runtime design mismatches:
-
-1. skills should be explicit and on-demand, not implicitly active by default
-2. tasks should remain persisted, but CLI interaction must not depend on raw UUIDs
-
-## 3. Current Baseline
+## Current Baseline
 
 Already implemented:
 
-- local CLI shell
+- local interactive CLI shell
 - persisted `Task`, `Run`, `Checkpoint`, and task logs
-- resumable task runtime
-- centralized `Settings`
-- centralized `SessionState`
-- controlled `ToolExecutor`
-- standard `SKILL.md` parsing and built-in skill discovery
+- resumable task runtime with public task IDs
+- explicit skill activation
+- one-shot skill shorthand such as `/security-audit ...`
+- built-in and user-local `SKILL.md` loading
+- local skill reload from disk
 - runtime skill-aware prompt composition
 - runtime skill-aware visible tool filtering
-- built-in skills:
-  - `development-default`
-  - `security-audit`
+- capability-tier execution safety:
+  - `read`
+  - `write`
+  - `execute`
+  - `destructive`
+- risk-focused safety audit logging for task runs
 
-However, the current behavior exposes two practical problems:
+Built-in skills currently include:
 
-- the implicit default skill behaves too much like the base runtime, so skill boundaries are unclear
-- UUID-only task identity is awkward for CLI workflows
+- `development-default`
+- `security-audit`
 
-These are now first-class roadmap items.
+User-local skills are now supported under:
 
-## 4. Stable Rules
+- `.mini-claude-code/skills/<skill-name>/SKILL.md`
 
-### 4.1 Local-First
+## Stable Architectural Rules
 
-Prefer:
+### 1. Base Runtime First
 
-- local files
-- SQLite
-- built-in and future user-local skill directories
+Normal ad-hoc chat runs in base mode:
 
-### 4.2 Small Core Runtime
+- no implicit skill prompt
+- no implicit skill-specific tool filtering
+- full built-in tool set
 
-Keep the core runtime focused on:
+Skills are explicit overlays, not the default runtime identity.
 
-- prompt assembly
-- task orchestration
-- session state
-- tool execution
-- persistence
-- safety policy
+### 2. Skills May Tighten, Not Bypass
 
-### 4.3 Unified Side-Effect Boundary
+Skills may influence:
 
-Skills may shape:
-
-- prompt fragments
+- prompt composition
 - visible tools
-- future policy hints
+- runtime safety narrowing
 
 Skills must not:
 
 - bypass `ToolExecutor`
 - create hidden execution paths
-- weaken safety rules implicitly
+- expand permissions beyond base runtime
 
-### 4.4 Recoverable Task Runtime
+### 3. Local-First Persistence
+
+Prefer:
+
+- SQLite for structured runtime state
+- local files for skills and prompts
+- CLI-first workflows
+
+### 4. Recoverable Task Runtime
 
 Future work must preserve:
 
@@ -102,151 +99,83 @@ Future work must preserve:
 - task/run logs
 - explicit failure tracking
 
-## 5. Corrected Skill Direction
+## Phase Status
 
-The previous “default skill always active” direction is no longer the preferred model.
+### Completed
 
-The updated target model is:
+#### Phase 1: Minimal Long-Running Task Support
 
-### 5.1 Base Runtime Mode
+Completed:
 
-Normal ad-hoc chat should run in a base agent mode:
+- task persistence
+- run persistence
+- checkpoints
+- task logs
+- resume/detach/complete flow
 
-- no skill prompt is loaded by default
-- no skill-specific tool filtering is applied by default
-- the base runtime uses the standard built-in tool set
+#### Phase 2: Skill System Foundation
 
-### 5.2 Explicit Skill Activation
+Completed:
 
-Skills should be loaded only when explicitly activated.
+- standard `SKILL.md` parsing
+- built-in skill discovery
+- explicit skill activation
+- task-bound optional skills
+- base runtime with no implicit skill
 
-Target interaction model:
+#### Phase 3: Execution Safety Hardening
 
-- `/skill list`
-- `/skill show <name>`
-- `/skill use <name>`
-- `/skill clear`
-- `/skill-name ...` style invocation or equivalent explicit shorthand
+Completed:
 
-Activation modes to support:
+- capability-tier tool model
+- runtime safety policies
+- skill-driven policy tightening
+- shell danger checks integrated into unified executor flow
+- task-scoped safety audit logs
 
-- one-shot skill invocation
-- session-bound active skill
-- task-bound skill profile
+## Next Phase
 
-### 5.3 Future Skill Sources
+### Phase 4: Observability and Richer Diagnostics
 
-The current built-in `src/skills/` directory remains valid.
-
-Future support should add:
-
-- user-local skills under `.mini-claude-code/skills/`
-
-### 5.4 Skill Runtime Goal
-
-Skills should feel like on-demand capability packs, not a wrapper around the default runtime.
-
-## 6. Corrected Task Direction
-
-Tasks remain useful and should stay in the architecture.
-
-The problem is not that tasks are “for web/UI only”.
-The problem is that task identity is currently storage-friendly but CLI-hostile.
-
-### 6.1 Internal vs CLI Identity
-
-Tasks should use two identifiers:
-
-- internal ID: UUID for persistence and relations
-- public/display ID: short CLI-friendly identifier
-
-Recommended examples:
-
-- `T0001`
-- `T0002`
-- `T0003`
-
-### 6.2 CLI Ergonomics Goal
-
-Task commands should support the CLI-friendly ID directly:
-
-- `/task show T0001`
-- `/task resume T0001`
-- `/task logs T0001`
-
-The full UUID should remain available for debugging, but not be the primary interaction handle.
-
-## 7. Updated Roadmap
-
-### Phase 3: Skill Activation Redesign
-
-This should now come before broader safety expansion.
+This should be the next implementation focus.
 
 Required work:
 
-- remove implicit default-skill behavior from normal chat
-- introduce explicit skill activation state
-- support session-bound active skill
-- support one-shot skill invocation
-- keep task-bound skill profiles explicit
-- prepare user-local skill discovery
+- record run duration
+- record effective skill used for each run
+- record effective visible tools for each run
+- add structured failure classification
+- add higher-signal tool invocation events
+- improve task/run inspection commands
+
+Recommended CLI additions:
+
+- `/task runs <task_id>`
+- `/task run <run_id>`
+- richer `/task logs`
 
 Definition of done:
 
-- ad-hoc chat works with no skill loaded
-- skills are activated explicitly
-- skill loading is clearly visible to the user
-- task skill behavior remains explicit and predictable
+- a user can inspect what happened in a task without reading SQLite directly
+- failed runs are easier to diagnose
+- future skill expansion remains debuggable
 
-### Phase 4: Task CLI Ergonomics
+Status:
 
-Required work:
+- implemented for task-bound runs
+- public run IDs, richer run metadata, tool event logs, and run inspection commands are now available
 
-- add CLI-friendly task public IDs
-- support public ID lookup in all task commands
-- keep UUID as internal storage key
-- improve task listing and selection UX
+## Later Phases
 
-Definition of done:
+### Phase 5: Better Task Ergonomics Beyond Identity
 
-- no common CLI task flow requires typing a full UUID
-- task output consistently shows public IDs first
+Potential work:
 
-### Phase 5: Execution Safety Hardening
+- title or recent-task shortcuts
+- better task filtering
+- compact status views
 
-After skill activation is corrected, strengthen runtime safety.
-
-Required work:
-
-- tool permission levels
-- read/write/execute capability classes
-- workspace allowlists
-- stricter shell safety rules
-- better audit logging for risky operations
-
-Reason:
-
-Security-oriented skills should not expand faster than execution controls.
-
-### Phase 6: Persistence and Recovery Enhancements
-
-Required work:
-
-- persist active skill/session metadata where needed
-- improve run-level metadata
-- support richer recovery semantics
-- prepare for user-local skills and explicit skill session state
-
-### Phase 7: Observability
-
-Required work:
-
-- include `skill_name` where skill execution is active
-- record tool-level execution traces
-- track durations
-- improve failure categorization
-
-### Phase 8: Safe Cybersecurity Skill Expansion
+### Phase 6: Safer Cybersecurity Skill Expansion
 
 Recommended order:
 
@@ -257,37 +186,24 @@ Recommended order:
 
 Hard rule:
 
-Do not introduce high-risk or offensive capabilities before the safety layer is stronger.
+Do not add high-risk or offensive capabilities before observability and safety remain easy to audit.
 
-## 8. Immediate Next Development Entry Point
-
-The best next implementation slice is:
-
-1. redesign skill activation so skills are explicit and on-demand
-2. introduce active-skill session state in the CLI
-3. remove implicit default skill behavior from normal chat
-4. add a CLI-friendly task public ID model
-
-This slice will make the runtime match actual CLI usage expectations before further expansion.
-
-## 9. Testing Priorities
+## Testing Priorities
 
 Future regression coverage should focus on:
 
-- explicit skill activation and clearing
-- no-skill base runtime behavior
-- one-shot skill invocation
-- session-bound skill behavior
-- task public ID generation and lookup
-- backward-safe UUID lookup where still needed
-- invalid skill activation handling
-- explicit task-skill binding behavior
+- local skill override and reload behavior
+- capability-tier enforcement
+- safety audit logging
+- run inspection and diagnostics
+- failure classification
+- richer task/run CLI inspection
 
-## 10. Documentation Policy
+## Documentation Policy
 
 Rules:
 
 1. do not leave completed phases described as “next”
-2. do not describe implicit default skill behavior as the desired long-term model
-3. keep CLI ergonomics concerns explicit in roadmap decisions
-4. update task runtime docs whenever task identity or skill activation behavior changes
+2. keep skill behavior documented as explicit and on-demand
+3. update docs whenever task/run inspection or safety logging changes
+4. prefer rewriting stale docs over accumulating historical notes
