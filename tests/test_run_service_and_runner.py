@@ -6,6 +6,7 @@ from langchain_core.messages import AIMessage
 import runtime.task_runner as task_runner_module
 from agent.settings import Settings
 from agent.state import SessionState
+from app.checkpoint_service import CheckpointService
 from app.run_service import RunService
 from app.task_service import TaskService
 from models.run import RunStatus, TaskLogLevel
@@ -34,7 +35,8 @@ def test_task_runner_persists_run_checkpoint_and_logs(monkeypatch, tmp_path):
     settings = build_settings(tmp_path)
     task_service = TaskService.from_settings(settings)
     run_service = RunService.from_settings(settings)
-    runner = TaskRunner(task_service, run_service)
+    checkpoint_service = CheckpointService.from_settings(settings)
+    runner = TaskRunner(task_service, run_service, checkpoint_service=checkpoint_service)
     executor = ToolExecutor({"fake_tool": FakeTool()})
     task = task_service.create_task(title="Task", goal="Do work")
     task, session_state = runner.resume_task(task.id)
@@ -79,12 +81,13 @@ def test_task_runner_resume_restore_complete_and_block_future_resume(tmp_path):
     settings = build_settings(tmp_path)
     task_service = TaskService.from_settings(settings)
     run_service = RunService.from_settings(settings)
-    runner = TaskRunner(task_service, run_service)
+    checkpoint_service = CheckpointService.from_settings(settings)
+    runner = TaskRunner(task_service, run_service, checkpoint_service=checkpoint_service)
     original_state = SessionState()
     original_state.append_user_message("hello")
 
     task = task_service.create_task(title="Task", goal="Do work")
-    checkpoint = run_service.save_checkpoint(task_id=task.id, session_state=original_state)
+    checkpoint = checkpoint_service.save_checkpoint(task_id=task.id, session_state=original_state)
     task_service.update_task_status(task.id, TaskStatus.PAUSED, last_checkpoint=checkpoint.id)
 
     resumed_task, restored_state = runner.resume_task(task.id)
@@ -102,7 +105,8 @@ def test_task_runner_marks_failures_and_records_error_log(monkeypatch, tmp_path)
     settings = build_settings(tmp_path)
     task_service = TaskService.from_settings(settings)
     run_service = RunService.from_settings(settings)
-    runner = TaskRunner(task_service, run_service)
+    checkpoint_service = CheckpointService.from_settings(settings)
+    runner = TaskRunner(task_service, run_service, checkpoint_service=checkpoint_service)
     executor = ToolExecutor({"fake_tool": FakeTool()})
     task = task_service.create_task(title="Task", goal="Do work")
     task, session_state = runner.resume_task(task.id)

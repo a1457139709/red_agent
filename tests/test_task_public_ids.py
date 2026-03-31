@@ -1,5 +1,6 @@
 from agent.settings import Settings
 from agent.state import SessionState
+from app.checkpoint_service import CheckpointService
 from app.run_service import RunService
 from app.task_service import TaskService
 from main import ShellState, build_prompt, create_skill_service, handle_task_command
@@ -60,7 +61,7 @@ def test_task_cli_uses_public_ids_for_render_and_binding(tmp_path):
     )
 
     task = task_service.list_tasks(limit=1)[0]
-    checkpoint = run_service.save_checkpoint(task_id=task.id, session_state=session_state)
+    checkpoint = CheckpointService.from_settings(settings).save_checkpoint(task_id=task.id, session_state=session_state)
     task_service.update_task_status(task.id, TaskStatus.PAUSED, last_checkpoint=checkpoint.id)
 
     assert handle_task_command(

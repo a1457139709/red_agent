@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from models.run import Checkpoint, Run, TaskLogEntry
+from models.run import Run, TaskLogEntry
 from .sqlite import SQLiteStorage
 
 
@@ -24,18 +24,6 @@ CREATE TABLE IF NOT EXISTS runs (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_public_id ON runs(public_id);
 CREATE INDEX IF NOT EXISTS idx_runs_task_started_at ON runs(task_id, started_at DESC);
-
-CREATE TABLE IF NOT EXISTS checkpoints (
-    id TEXT PRIMARY KEY,
-    task_id TEXT NOT NULL,
-    run_id TEXT,
-    payload TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY(task_id) REFERENCES tasks(id),
-    FOREIGN KEY(run_id) REFERENCES runs(id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_checkpoints_task_created_at ON checkpoints(task_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS task_logs (
     id TEXT PRIMARY KEY,
@@ -120,29 +108,6 @@ class RunRepository:
             )
             connection.commit()
         return run
-
-    def create_checkpoint(self, checkpoint: Checkpoint) -> Checkpoint:
-        with self.storage.connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO checkpoints (
-                    id, task_id, run_id, payload, created_at
-                ) VALUES (
-                    :id, :task_id, :run_id, :payload, :created_at
-                )
-                """,
-                checkpoint.to_row(),
-            )
-            connection.commit()
-        return checkpoint
-
-    def get_checkpoint(self, checkpoint_id: str) -> Checkpoint | None:
-        with self.storage.connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM checkpoints WHERE id = ?",
-                (checkpoint_id,),
-            ).fetchone()
-        return Checkpoint.from_row(dict(row)) if row else None
 
     def create_log_entry(self, entry: TaskLogEntry) -> TaskLogEntry:
         with self.storage.connect() as connection:

@@ -8,9 +8,11 @@ from agent.logger import ColoredOutput, reset_steps
 from agent.loop import agent_loop
 from agent.settings import Settings, get_settings
 from agent.state import SessionState
+from app.checkpoint_service import CheckpointService
 from app.run_service import RunService
 from app.skill_service import SkillService
 from app.task_service import TaskService
+from models.checkpoint import CheckpointSummary
 from models.run import Run, TaskLogEntry
 from models.skill import LoadedSkill
 from models.task import Task
@@ -149,6 +151,14 @@ def format_duration_ms(duration_ms: int | None) -> str:
     return f"{duration_ms / 1000:.2f}s"
 
 
+def format_size_bytes(size_bytes: int) -> str:
+    if size_bytes < 1024:
+        return f"{size_bytes}B"
+    if size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f}KB"
+    return f"{size_bytes / (1024 * 1024):.1f}MB"
+
+
 def summarize_log_payload(payload: dict | None) -> str:
     if not payload:
         return ""
@@ -229,6 +239,58 @@ def render_run_detail(run: Run, task: Task, entries: list[TaskLogEntry]) -> str:
     return "\n".join(lines)
 
 
+def render_checkpoint_list(
+    summaries: list[CheckpointSummary],
+    task: Task,
+    run_service: RunService,
+) -> str:
+    if not summaries:
+        return f"No checkpoints found for task {task.public_id}."
+
+    lines = [
+        f"Task: {task.public_id}",
+        "CHECKPOINT                             CREATED                  STORAGE      SIZE      MSGS   SUMMARY  RUN",
+    ]
+    for summary in summaries:
+        run_label = "-"
+        if summary.run_id:
+            run = run_service.get_run(summary.run_id)
+            run_label = run.public_id if run is not None and run.public_id else summary.run_id[:8]
+        lines.append(
+            f"{summary.id:36} {summary.created_at:24} {summary.storage_kind:12} "
+            f"{format_size_bytes(summary.payload_size_bytes):9} "
+            f"{summary.history_message_count:6} "
+            f"{'yes' if summary.has_compressed_summary else 'no':8} {run_label}"
+        )
+    return "\n".join(lines)
+
+
+def render_checkpoint_detail(
+    summary: CheckpointSummary,
+    task_service: TaskService,
+    run_service: RunService,
+) -> str:
+    task = task_service.require_task(summary.task_id)
+    run = run_service.get_run(summary.run_id) if summary.run_id else None
+    run_label = run.public_id if run is not None and run.public_id else "-"
+    run_internal_id = run.id if run is not None else (summary.run_id or "-")
+    return "\n".join(
+        [
+            f"Checkpoint ID: {summary.id}",
+            f"Task: {task.public_id}",
+            f"Task Internal ID: {task.id}",
+            f"Run: {run_label}",
+            f"Run Internal ID: {run_internal_id}",
+            f"Created At: {summary.created_at}",
+            f"Storage: {summary.storage_kind}",
+            f"Payload Size: {format_size_bytes(summary.payload_size_bytes)}",
+            f"History Message Count: {summary.history_message_count}",
+            f"History Text Bytes: {summary.history_text_bytes}",
+            f"Compressed Summary: {'yes' if summary.has_compressed_summary else 'no'}",
+        ]
+    )
+
+
 def render_skill_list(skills: list[LoadedSkill]) -> str:
     if not skills:
         return "No skills found."
@@ -284,6 +346,8 @@ def print_help(output: OutputFn = print) -> None:
                 "/task create          Create a persisted task",
                 "/task list            List recent tasks",
                 "/task show <id>       Show task details",
+                "/task checkpoints <id> [n] Show recent checkpoints for a task",
+                "/task checkpoint <id> Show one checkpoint in detail",
                 "/task runs <id> [n]   Show recent runs for a task",
                 "/task run <id>        Show one run in detail",
                 "/task logs <id> [n]   Show recent task logs",
@@ -463,6 +527,7 @@ def handle_task_command(
     session_state: SessionState,
     task_service: TaskService,
     run_service: RunService,
+    checkpoint_service: CheckpointService | None = None,
     task_runner: TaskRunner,
     skill_service: SkillService | None = None,
     text_output: OutputFn = _default_text_output,
@@ -475,6 +540,7 @@ def handle_task_command(
     if parsed is None:
         return False
 
+    checkpoint_service = checkpoint_service or task_runner.checkpoint_service
     skill_service = skill_service or create_skill_service()
     action, args = parsed
 
@@ -487,6 +553,8 @@ def handle_task_command(
                         "/task create",
                         "/task list",
                         "/task show <id>",
+                        "/task checkpoints <id> [limit]",
+                        "/task checkpoint <id>",
                         "/task runs <id> [limit]",
                         "/task run <id>",
                         "/task logs <id> [limit]",
@@ -529,6 +597,27 @@ def handle_task_command(
                 error_output(f"Task not found: {args[0]}")
                 return True
             text_output(render_task_detail(task))
+            return True
+
+        if action == "checkpoints":
+            if not args or len(args) > 2:
+                error_output("Usage: /task checkpoints <task_id> [limit]")
+                return True
+            task = task_service.get_task(args[0])
+            if task is None:
+                error_output(f"Task not found: {args[0]}")
+                return True
+            limit = 20 if len(args) == 1 else _parse_limit(args[1])
+            summaries = checkpoint_service.list_checkpoints(task.id, limit=limit)
+            text_output(render_checkpoint_list(summaries, task, run_service))
+            return True
+
+        if action == "checkpoint":
+            if len(args) != 1:
+                error_output("Usage: /task checkpoint <checkpoint_id>")
+                return True
+            summary = checkpoint_service.require_checkpoint_summary(args[0])
+            text_output(render_checkpoint_detail(summary, task_service, run_service))
             return True
 
         if action == "runs":
@@ -636,10 +725,12 @@ async def run_interactive_shell(
     tool_executor: ToolExecutor,
     task_service: TaskService,
     run_service: RunService,
+    checkpoint_service: CheckpointService | None = None,
     task_runner: TaskRunner,
     skill_service: SkillService,
     input_func: InputFn = input,
 ) -> None:
+    checkpoint_service = checkpoint_service or task_runner.checkpoint_service
     while True:
         try:
             question = input_func(build_prompt(shell_state)).strip()
@@ -688,6 +779,7 @@ async def run_interactive_shell(
             session_state=session_state,
             task_service=task_service,
             run_service=run_service,
+            checkpoint_service=checkpoint_service,
             task_runner=task_runner,
             skill_service=skill_service,
         ):
@@ -776,8 +868,14 @@ async def main() -> None:
     shell_state = ShellState()
     task_service = TaskService.from_settings(settings)
     run_service = RunService.from_settings(settings)
+    checkpoint_service = CheckpointService.from_settings(settings)
     skill_service = create_skill_service(settings)
-    task_runner = TaskRunner(task_service, run_service, skill_service)
+    task_runner = TaskRunner(
+        task_service,
+        run_service,
+        skill_service,
+        checkpoint_service,
+    )
     tool_executor = ToolExecutor(
         build_tool_registry(),
         confirm_command=confirm_from_user,
@@ -791,6 +889,7 @@ async def main() -> None:
         tool_executor=tool_executor,
         task_service=task_service,
         run_service=run_service,
+        checkpoint_service=checkpoint_service,
         task_runner=task_runner,
         skill_service=skill_service,
     )

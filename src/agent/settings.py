@@ -33,6 +33,10 @@ class Settings:
         return self.app_data_dir / "agent.db"
 
     @property
+    def checkpoints_dir(self) -> Path:
+        return self.app_data_dir / "checkpoints"
+
+    @property
     def skills_dir(self) -> Path:
         return self.app_data_dir / "skills"
 

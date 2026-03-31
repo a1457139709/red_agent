@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 from agent.settings import Settings, get_settings
-from agent.state import SessionState
 from models.run import (
-    Checkpoint,
     Run,
     RunFailureKind,
     RunStatus,
@@ -101,26 +99,6 @@ class RunService:
 
     def list_runs(self, task_id: str, *, limit: int = 20) -> list[Run]:
         return self.repository.list_runs(task_id, limit=limit)
-
-    def save_checkpoint(
-        self,
-        *,
-        task_id: str,
-        session_state: SessionState,
-        run_id: str | None = None,
-    ) -> Checkpoint:
-        checkpoint = Checkpoint.create(
-            task_id=task_id,
-            run_id=run_id,
-            payload=session_state.to_checkpoint_payload(),
-        )
-        return self.repository.create_checkpoint(checkpoint)
-
-    def load_checkpoint_state(self, checkpoint_id: str) -> SessionState:
-        checkpoint = self.repository.get_checkpoint(checkpoint_id)
-        if checkpoint is None:
-            raise ValueError(f"Checkpoint not found: {checkpoint_id}")
-        return SessionState.from_checkpoint_payload(checkpoint.payload)
 
     def write_log(
         self,

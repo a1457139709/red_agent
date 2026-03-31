@@ -1,5 +1,6 @@
 from agent.settings import Settings
 from agent.state import SessionState
+from app.checkpoint_service import CheckpointService
 from app.run_service import RunService
 from app.task_service import TaskService
 from main import ShellState, handle_task_command, parse_task_command
@@ -109,7 +110,7 @@ def test_handle_task_commands_resume_detach_and_complete(tmp_path):
     errors = []
     successes = []
     task = task_service.create_task(title="Task", goal="Goal")
-    checkpoint = run_service.save_checkpoint(task_id=task.id, session_state=session_state)
+    checkpoint = CheckpointService.from_settings(settings).save_checkpoint(task_id=task.id, session_state=session_state)
     task_service.update_task_status(task.id, TaskStatus.PAUSED, last_checkpoint=checkpoint.id)
 
     fresh_session = SessionState()

@@ -12,6 +12,8 @@ This folder contains the current maintained documentation for the Python codebas
    Current roadmap, completed phases, and the next implementation phase.
 4. `skill-system-standard.md`
    Current `SKILL.md` runtime model, built-in plus local skill discovery rules, and compatibility notes.
+5. `checkpoint-storage-evolution.md`
+   Breaking-change redesign for checkpoint storage: SQLite metadata only, filesystem blobs for full session snapshots.
 
 ## Current Status
 

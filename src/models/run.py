@@ -103,49 +103,6 @@ class Run:
 
 
 @dataclass(slots=True)
-class Checkpoint:
-    id: str
-    task_id: str
-    run_id: str | None
-    payload: dict[str, Any]
-    created_at: str = field(default_factory=utc_now_iso)
-
-    @classmethod
-    def create(
-        cls,
-        *,
-        task_id: str,
-        payload: dict[str, Any],
-        run_id: str | None = None,
-    ) -> "Checkpoint":
-        return cls(
-            id=str(uuid4()),
-            task_id=task_id,
-            run_id=run_id,
-            payload=payload,
-        )
-
-    @classmethod
-    def from_row(cls, row: dict[str, Any]) -> "Checkpoint":
-        return cls(
-            id=row["id"],
-            task_id=row["task_id"],
-            run_id=row["run_id"],
-            payload=json.loads(row["payload"]),
-            created_at=row["created_at"],
-        )
-
-    def to_row(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "task_id": self.task_id,
-            "run_id": self.run_id,
-            "payload": json.dumps(self.payload, ensure_ascii=False),
-            "created_at": self.created_at,
-        }
-
-
-@dataclass(slots=True)
 class TaskLogEntry:
     id: str
     task_id: str

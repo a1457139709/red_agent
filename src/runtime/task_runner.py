@@ -7,6 +7,7 @@ from agent.context import build_compressed_context, compress_context, should_com
 from agent.loop import agent_loop
 from agent.settings import Settings
 from agent.state import SessionState
+from app.checkpoint_service import CheckpointService
 from app.run_service import RunService
 from app.skill_service import SkillService
 from app.task_service import TaskService
@@ -67,9 +68,11 @@ class TaskRunner:
         task_service: TaskService,
         run_service: RunService,
         skill_service: SkillService | None = None,
+        checkpoint_service: CheckpointService | None = None,
     ) -> None:
         self.task_service = task_service
         self.run_service = run_service
+        self.checkpoint_service = checkpoint_service or CheckpointService.from_settings(run_service.settings)
         self.skill_service = skill_service or SkillService(
             SkillRegistry.built_in(known_tool_names=set(build_tool_registry().keys())),
             base_tool_names=list(build_tool_registry().keys()),
@@ -230,7 +233,7 @@ class TaskRunner:
                     on_error=on_error,
                 )
 
-                checkpoint = self.run_service.save_checkpoint(
+                checkpoint = self.checkpoint_service.save_checkpoint(
                     task_id=task.id,
                     run_id=run.id,
                     session_state=session_state,
@@ -300,7 +303,7 @@ class TaskRunner:
             self.skill_service.resolve_skill(task.skill_profile)
 
         if task.last_checkpoint:
-            session_state = self.run_service.load_checkpoint_state(task.last_checkpoint)
+            session_state = self.checkpoint_service.load_checkpoint_state(task.last_checkpoint)
         else:
             session_state = SessionState()
 
@@ -320,7 +323,7 @@ class TaskRunner:
 
     def detach_task(self, task_id: str, session_state: SessionState) -> Task:
         task = self.task_service.require_task(task_id)
-        checkpoint = self.run_service.save_checkpoint(
+        checkpoint = self.checkpoint_service.save_checkpoint(
             task_id=task.id,
             session_state=session_state,
         )
@@ -345,7 +348,7 @@ class TaskRunner:
 
     def complete_task(self, task_id: str, session_state: SessionState) -> Task:
         task = self.task_service.require_task(task_id)
-        checkpoint = self.run_service.save_checkpoint(
+        checkpoint = self.checkpoint_service.save_checkpoint(
             task_id=task.id,
             session_state=session_state,
         )
