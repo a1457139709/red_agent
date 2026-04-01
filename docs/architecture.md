@@ -2,7 +2,7 @@
 
 ## Summary
 
-`mini-claude-code` is a local Python CLI agent with these active pillars:
+`red-code` is a local Python CLI agent with these active pillars:
 
 - an interactive chat shell
 - a persisted task runtime
@@ -113,7 +113,7 @@ This layer is responsible for one conversational turn at a time.
 Skill sources currently supported:
 
 - built-in: `src/skills/*/SKILL.md`
-- local: `.mini-claude-code/skills/*/SKILL.md`
+- local: `.red-code/skills/*/SKILL.md`
 
 If a local skill and a built-in skill share the same name, the local skill wins.
 
@@ -132,11 +132,11 @@ If a local skill and a built-in skill share the same name, the local skill wins.
 
 The current source of truth for persisted runtime state is:
 
-- `.mini-claude-code/agent.db`
+- `.red-code/agent.db`
 
 Checkpoint blobs live under:
 
-- `.mini-claude-code/checkpoints/`
+- `.red-code/checkpoints/`
 
 ### 7. Tool Layer
 

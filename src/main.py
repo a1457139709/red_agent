@@ -191,6 +191,36 @@ def handle_help_command(
     return True
 
 
+def handle_clear_command(
+    command: str,
+    *,
+    shell_state: ShellState,
+    session_state: SessionState,
+    presenter: CliPresenter | None = None,
+    text_output: OutputFn | None = None,
+    info_output: OutputFn | None = None,
+    error_output: OutputFn | None = None,
+    success_output: OutputFn | None = None,
+) -> bool:
+    if command.strip() != "/clear":
+        return False
+
+    session_state.reset()
+    if presenter is not None or any(
+        output is not None for output in (text_output, info_output, error_output, success_output)
+    ):
+        _resolve_presenter(
+            presenter,
+            text_output=text_output,
+            info_output=info_output,
+            error_output=error_output,
+            success_output=success_output,
+        ).clear_screen()
+    else:
+        ColoredOutput.clear_screen()
+    return True
+
+
 def handle_skill_command(
     command: str,
     *,
@@ -650,6 +680,13 @@ async def run_interactive_shell(
             ColoredOutput.print_header("Session reset")
             continue
 
+        if handle_clear_command(
+            question,
+            shell_state=shell_state,
+            session_state=session_state,
+        ):
+            continue
+
         if handle_help_command(question):
             continue
 
@@ -783,5 +820,5 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    print("mini-claude-code 0.1.0 - type /help for available commands")
+    print("red-code 0.1.0 - type /help for available commands")
     asyncio.run(main())

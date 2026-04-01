@@ -16,6 +16,8 @@ This folder contains the current maintained documentation for the Python codebas
    Current `SKILL.md` runtime model, built-in plus local skill discovery rules, and compatibility notes.
 6. `checkpoint-storage-evolution.md`
    Breaking-change redesign for checkpoint storage: SQLite metadata only, filesystem blobs for full session snapshots.
+7. `red-team-agent-feasibility.md`
+   Feasibility study for evolving the current local coding agent into a red-team-oriented agent, including skills, concurrency, safety scope, and monitoring gaps.
 
 ## Current Status
 

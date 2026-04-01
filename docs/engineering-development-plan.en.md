@@ -12,7 +12,7 @@ It should stay aligned with the actual Python codebase and answer:
 
 ## Current Product Direction
 
-`mini-claude-code` is a local single-user coding agent focused on:
+`red-code` is a local single-user coding agent focused on:
 
 - interactive CLI usage
 - resumable local task execution
@@ -61,7 +61,7 @@ Built-in skills currently include:
 
 User-local skills are supported under:
 
-- `.mini-claude-code/skills/<skill-name>/SKILL.md`
+- `.red-code/skills/<skill-name>/SKILL.md`
 
 ## Stable Architectural Rules
 

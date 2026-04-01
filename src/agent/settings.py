@@ -26,7 +26,7 @@ class Settings:
 
     @property
     def app_data_dir(self) -> Path:
-        return self.working_directory / ".mini-claude-code"
+        return self.working_directory / ".red-code"
 
     @property
     def sqlite_path(self) -> Path:

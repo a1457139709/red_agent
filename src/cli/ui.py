@@ -195,7 +195,7 @@ class CliPresenter:
             Rule(style="grey50", characters="-"),
             Panel(topics, title="Help Topics", border_style="bright_blue", box=ASCII_BOX),
             Text("Drill down with /help task or /help skill.", style="dim"),
-            Text("Session shortcuts: /reset, /exit, /quit", style="dim"),
+            Text("Session shortcuts: /clear, /reset, /exit, /quit", style="dim"),
         )
 
     def _help_task(self) -> Group:
@@ -243,7 +243,7 @@ class CliPresenter:
     def show_help(self, topic: str | None = None) -> None:
         if topic is None:
             body = self._help_overview()
-            title = "mini-claude-code"
+            title = "red-code"
         elif topic == "task":
             body = self._help_task()
             title = "Help: task"
@@ -253,6 +253,21 @@ class CliPresenter:
         else:
             raise ValueError(f"Unsupported help topic: {topic}")
         self._emit(Panel(body, title=title, border_style="bright_blue", box=ASCII_BOX))
+
+    def clear_screen(self) -> None:
+        if any(
+            value is not None
+            for value in (
+                self.sinks.text,
+                self.sinks.info,
+                self.sinks.error,
+                self.sinks.success,
+                self.sinks.header,
+                self.sinks.final_answer,
+            )
+        ):
+            return
+        self.console.clear(home=True)
 
     def show_task_list(self, tasks: list[Task], *, filter_label: str | None = None) -> None:
         if not tasks:

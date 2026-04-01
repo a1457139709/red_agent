@@ -2,7 +2,7 @@
 
 ## Summary
 
-This document defines the maintained contract for the runtime prompt layer in `mini-claude-code`.
+This document defines the maintained contract for the runtime prompt layer in `red-code`.
 
 The runtime prompt is assembled in this order:
 

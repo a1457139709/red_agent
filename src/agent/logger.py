@@ -68,3 +68,7 @@ class ColoredOutput:
     @classmethod
     def print_header(cls, title: str) -> None:
         get_presenter().show_header(title)
+
+    @classmethod
+    def clear_screen(cls) -> None:
+        get_presenter().clear_screen()

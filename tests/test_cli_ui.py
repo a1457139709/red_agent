@@ -1,6 +1,8 @@
+from io import StringIO
 from pathlib import Path
 
 from cli.ui import CliPresenter
+from rich.console import Console
 from models.checkpoint import CheckpointSummary
 from models.run import Run, RunStatus, TaskLogEntry, TaskLogLevel
 from models.skill import LoadedSkill, SkillManifest
@@ -24,12 +26,13 @@ def test_presenter_help_and_observation_render_clean_text():
         truncate_chars=200,
     )
 
-    assert "mini-claude-code" in outputs[0]
+    assert "red-code" in outputs[0]
     assert "Help Topics" in outputs[0]
     assert "task" in outputs[0]
     assert "skill" in outputs[0]
     assert "/help task" in outputs[0]
     assert "/help skill" in outputs[0]
+    assert "/clear" in outputs[0]
     assert "Task Commands" in outputs[1]
     assert "Runs and Checkpoints" in outputs[1]
     assert "latest' or 'last" in outputs[1]
@@ -39,6 +42,30 @@ def test_presenter_help_and_observation_render_clean_text():
     assert "line1" in outputs[3]
     assert "line3" in outputs[3]
     assert "[truncated for display]" in outputs[3]
+
+
+def test_presenter_clear_screen_is_silent_for_callback_presenter():
+    outputs: list[str] = []
+    presenter = build_presenter(outputs)
+
+    presenter.clear_screen()
+
+    assert outputs == []
+
+
+def test_presenter_clear_screen_uses_console_clear_in_default_mode():
+    console = Console(file=StringIO(), force_terminal=False)
+    called = {}
+
+    def fake_clear(*, home=True):
+        called["home"] = home
+
+    console.clear = fake_clear
+    presenter = CliPresenter(console=console)
+
+    presenter.clear_screen()
+
+    assert called == {"home": True}
 
 
 def test_presenter_detail_views_include_key_fields_without_blob_internals():

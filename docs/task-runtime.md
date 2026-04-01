@@ -184,7 +184,7 @@ Used for:
 Checkpoint storage is split across:
 
 - SQLite metadata in the `checkpoints` table
-- gzip-compressed session blobs under `.mini-claude-code/checkpoints/`
+- gzip-compressed session blobs under `.red-code/checkpoints/`
 
 Checkpoint inspection currently exposes metadata only:
 

@@ -16,7 +16,7 @@ def build_settings(tmp_path: Path) -> Settings:
 
 
 def write_local_skill(tmp_path: Path, name: str, content: str) -> Path:
-    skill_dir = tmp_path / ".mini-claude-code" / "skills" / name
+    skill_dir = tmp_path / ".red-code" / "skills" / name
     skill_dir.mkdir(parents=True, exist_ok=True)
     skill_file = skill_dir / "SKILL.md"
     skill_file.write_text(textwrap.dedent(content).strip() + "\n", encoding="utf-8")

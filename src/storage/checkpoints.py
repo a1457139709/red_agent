@@ -144,7 +144,7 @@ class CheckpointRepository:
         if "payload" in columns:
             raise ValueError(
                 "This workspace uses an older checkpoint schema. Delete or migrate "
-                "`.mini-claude-code/agent.db` before running the new runtime."
+                "`.red-code/agent.db` before running the new runtime."
             )
 
     def _validate_schema_version(self, connection) -> None:

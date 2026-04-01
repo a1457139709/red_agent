@@ -1,8 +1,8 @@
-# mini-claude-code 架构文档
+# red-code 架构文档
 
 ## 1. 系统概览
 
-mini-claude-code 是一个运行在用户本地终端的 Code Agent，专为编程和开发任务设计。它基于 LangChain 框架构建，具有文件操作、Shell 命令执行、网络访问等能力。
+red-code 是一个运行在用户本地终端的 Code Agent，专为编程和开发任务设计。它基于 LangChain 框架构建，具有文件操作、Shell 命令执行、网络访问等能力。
 
 ### 当前运行环境
 - **操作系统**: Microsoft Windows 10 专业版 (64-bit)
@@ -98,7 +98,7 @@ src/
 > read_file file_path="main.py" limit=10
 
 # 编辑文件
-> edit_file file_path="main.py" old_string="print(\"mini-claude-code\")" new_string="print(\"mini-claude-code v1.0\")"
+> edit_file file_path="main.py" old_string="print(\"red-code\")" new_string="print(\"red-code v1.0\")"
 
 # 执行命令
 > bash command="dir"

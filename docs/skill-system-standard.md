@@ -2,7 +2,7 @@
 
 ## Summary
 
-`mini-claude-code` uses the standard `SKILL.md` format as the skill artifact.
+`red-code` uses the standard `SKILL.md` format as the skill artifact.
 
 The compatibility strategy remains:
 
@@ -62,7 +62,7 @@ src/skills/
 User-local layout:
 
 ```text
-.mini-claude-code/skills/
+.red-code/skills/
   my-skill/
     SKILL.md
 ```
@@ -72,7 +72,7 @@ User-local layout:
 Current discovery behavior:
 
 - built-in skills are loaded from `src/skills/*/SKILL.md`
-- local skills are loaded from `.mini-claude-code/skills/*/SKILL.md`
+- local skills are loaded from `.red-code/skills/*/SKILL.md`
 - only direct child directories containing `SKILL.md` are considered skills
 
 Current precedence rule:

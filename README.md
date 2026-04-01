@@ -36,6 +36,7 @@ python src/main.py
 - `/help`
 - `/help task`
 - `/help skill`
+- `/clear`
 - `/task create`
 - `/task list [status] [limit]`
 - `/task recent [limit]`
@@ -64,6 +65,7 @@ Use `latest` or `last` in task-facing commands to target the most recently updat
 
 `/help` now shows only top-level topics.
 Use `/help task` and `/help skill` for detailed command help.
+`/clear` resets only the in-memory context and clears the screen while preserving any active task binding or active shell skill.
 
 ## Skill Locations
 

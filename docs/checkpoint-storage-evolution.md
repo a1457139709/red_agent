@@ -58,7 +58,7 @@ Filesystem becomes the storage backend for full checkpoint payloads.
 Recommended layout:
 
 ```text
-.mini-claude-code/
+.red-code/
   agent.db
   checkpoints/
     2026/
@@ -106,7 +106,7 @@ Field guidance:
 - `storage_kind`
   - initial value: `file_blob`
 - `blob_path`
-  - path relative to `.mini-claude-code/`
+  - path relative to `.red-code/`
 - `blob_encoding`
   - initial value: `json+gzip`
 - `payload_digest`
@@ -229,7 +229,7 @@ Required policy:
 
 Recommended startup message:
 
-> This workspace uses an older checkpoint schema. Delete or migrate `.mini-claude-code/agent.db` before running the new runtime.
+> This workspace uses an older checkpoint schema. Delete or migrate `.red-code/agent.db` before running the new runtime.
 
 This project is still in a rapid local-development phase. Clean architecture is more valuable than preserving every historical storage format.
 
@@ -255,7 +255,7 @@ If metadata write fails after blob creation, the system may leave orphaned blobs
 Blob files must always live under:
 
 ```text
-.mini-claude-code/checkpoints/
+.red-code/checkpoints/
 ```
 
 No caller-supplied absolute path should be accepted.

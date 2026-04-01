@@ -209,7 +209,7 @@ def test_system_prompt_contains_new_sections_and_no_legacy_corruption():
     assert "# Editing Discipline" in prompt
     assert "# Failure and Recovery Behavior" in prompt
     assert "# Hard Constraints" in prompt
-    assert "You are `mini-claude-code`" in prompt
+    assert "You are `red-code`" in prompt
     assert "Reply in English by default." in prompt
     assert "user's" in prompt
     assert "???" not in prompt
