@@ -32,8 +32,11 @@ It is still not aiming for:
 Already implemented:
 
 - local interactive CLI shell
-- persisted `Task`, `Run`, `Checkpoint`, and task logs
-- resumable task runtime with public task IDs
+- Rich presenter-backed CLI output
+- hierarchical help with compact `/help` plus `/help task` and `/help skill`
+- persisted `Task`, `Run`, checkpoints, and task logs
+- public task IDs and public run IDs
+- resumable task runtime with detach and complete flow
 - explicit skill activation
 - one-shot skill shorthand such as `/security-audit ...`
 - built-in and user-local `SKILL.md` loading
@@ -46,13 +49,17 @@ Already implemented:
   - `execute`
   - `destructive`
 - risk-focused safety audit logging for task runs
+- richer run metadata and run inspection commands
+- blob-backed checkpoint storage with SQLite metadata and filesystem snapshots
+- checkpoint inspection commands
+- checkpoint deletion and pruning APIs
 
 Built-in skills currently include:
 
 - `development-default`
 - `security-audit`
 
-User-local skills are now supported under:
+User-local skills are supported under:
 
 - `.mini-claude-code/skills/<skill-name>/SKILL.md`
 
@@ -87,7 +94,7 @@ Skills must not:
 Prefer:
 
 - SQLite for structured runtime state
-- local files for skills and prompts
+- local files for prompts, skills, and checkpoint blobs
 - CLI-first workflows
 
 ### 4. Recoverable Task Runtime
@@ -109,7 +116,7 @@ Completed:
 
 - task persistence
 - run persistence
-- checkpoints
+- checkpoint creation and restore
 - task logs
 - resume/detach/complete flow
 
@@ -133,49 +140,58 @@ Completed:
 - shell danger checks integrated into unified executor flow
 - task-scoped safety audit logs
 
+#### Phase 4: Observability and Richer Diagnostics
+
+Completed:
+
+- run duration
+- effective skill and effective tools persisted per run
+- structured failure classification
+- tool invocation events for task-bound runs
+- richer `/task runs`, `/task run`, and `/task logs`
+
+#### Checkpoint Storage Redesign
+
+Completed:
+
+- `CheckpointService`
+- SQLite metadata plus filesystem blob storage
+- blob integrity validation
+- fail-fast rejection of legacy inline checkpoint schema
+- `/task checkpoints <task_id>`
+- `/task checkpoint <checkpoint_id>`
+- `delete_checkpoint(...)`
+- `prune_checkpoints(...)`
+
 ## Next Phase
-
-### Phase 4: Observability and Richer Diagnostics
-
-This should be the next implementation focus.
-
-Required work:
-
-- record run duration
-- record effective skill used for each run
-- record effective visible tools for each run
-- add structured failure classification
-- add higher-signal tool invocation events
-- improve task/run inspection commands
-
-Recommended CLI additions:
-
-- `/task runs <task_id>`
-- `/task run <run_id>`
-- richer `/task logs`
-
-Definition of done:
-
-- a user can inspect what happened in a task without reading SQLite directly
-- failed runs are easier to diagnose
-- future skill expansion remains debuggable
-
-Status:
-
-- implemented for task-bound runs
-- public run IDs, richer run metadata, tool event logs, and run inspection commands are now available
-
-## Later Phases
 
 ### Phase 5: Better Task Ergonomics Beyond Identity
 
-Potential work:
+Completed:
 
-- title or recent-task shortcuts
-- better task filtering
-- compact status views
+- status-aware `/task list [status] [limit]`
+- `/task recent [limit]` shortcuts
+- `/task find <query> [limit]` title search
+- compact `/task status <id>` views
+- `latest` / `last` aliases for task-facing commands
+
+### Phase 5A: CLI Presentation and Help Redesign
+
+Completed:
+
+- Rich-based CLI presenter as the human-facing output path
+- table/panel-based task, run, checkpoint, and skill views
+- hierarchical help:
+  - `/help`
+  - `/help task`
+  - `/help skill`
+  - `/task help`
+  - `/skill help`
+- removal of the old plain-string CLI rendering path from `src/main.py`
 
 ### Phase 6: Safer Cybersecurity Skill Expansion
+
+This is now the next implementation focus.
 
 Recommended order:
 
@@ -197,13 +213,14 @@ Future regression coverage should focus on:
 - safety audit logging
 - run inspection and diagnostics
 - failure classification
-- richer task/run CLI inspection
+- checkpoint inspection, pruning, and deletion behavior
+- richer task/run/task-selection CLI inspection
 
 ## Documentation Policy
 
 Rules:
 
-1. do not leave completed phases described as “next”
+1. do not leave completed phases described as "next"
 2. keep skill behavior documented as explicit and on-demand
-3. update docs whenever task/run inspection or safety logging changes
+3. update docs whenever task/run/checkpoint inspection changes
 4. prefer rewriting stale docs over accumulating historical notes

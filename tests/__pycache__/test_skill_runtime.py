@@ -196,6 +196,27 @@ def test_assemble_system_prompt_supports_legacy_extra_prompt():
     assert "legacy summary" in prompt
 
 
+def test_system_prompt_contains_new_sections_and_no_legacy_corruption():
+    prompt = asyncio.run(assemble_system_prompt())
+
+    assert "# Identity and Role" in prompt
+    assert "# Primary Objectives" in prompt
+    assert "# Operating Rules" in prompt
+    assert "# Tool Use Rules" in prompt
+    assert "# Safety and Permission Rules" in prompt
+    assert "# Task and Skill Awareness" in prompt
+    assert "# Response Behavior" in prompt
+    assert "# Editing Discipline" in prompt
+    assert "# Failure and Recovery Behavior" in prompt
+    assert "# Hard Constraints" in prompt
+    assert "You are `mini-claude-code`" in prompt
+    assert "Reply in English by default." in prompt
+    assert "user's" in prompt
+    assert "???" not in prompt
+    assert "??????" not in prompt
+    assert "?" not in prompt
+
+
 def test_handle_skill_commands_and_task_create_with_default_skill(tmp_path):
     settings = build_settings(tmp_path)
     task_service = TaskService.from_settings(settings)

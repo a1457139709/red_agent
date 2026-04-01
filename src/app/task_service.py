@@ -49,8 +49,25 @@ class TaskService:
             raise ValueError(f"Task not found: {task_id}")
         return task
 
-    def list_tasks(self, *, status: TaskStatus | None = None, limit: int | None = 50) -> list[Task]:
-        return self.repository.list(status=status, limit=limit)
+    def list_tasks(
+        self,
+        *,
+        status: TaskStatus | None = None,
+        title_query: str | None = None,
+        limit: int | None = 50,
+    ) -> list[Task]:
+        return self.repository.list(status=status, title_query=title_query, limit=limit)
+
+    def get_latest_task(
+        self,
+        *,
+        status: TaskStatus | None = None,
+        title_query: str | None = None,
+    ) -> Task | None:
+        tasks = self.repository.list(status=status, title_query=title_query, limit=1)
+        if not tasks:
+            return None
+        return tasks[0]
 
     def save_task(self, task: Task) -> Task:
         return self.repository.update(task)

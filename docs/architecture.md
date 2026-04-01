@@ -8,6 +8,7 @@
 - a persisted task runtime
 - an explicit `SKILL.md` skill layer
 - a capability-tier safety boundary
+- metadata-plus-blob checkpoint storage
 
 The system remains local-first and single-user focused.
 
@@ -17,9 +18,9 @@ The system remains local-first and single-user focused.
 src/
   main.py               # CLI shell, slash commands, prompt routing, active skill state
   agent/                # prompt assembly, model loop, session state, context compression
-  app/                  # task, run, and skill service layer
+  app/                  # task, run, checkpoint, and skill service layer
   runtime/              # task runner orchestration
-  models/               # Task, Run, Checkpoint, TaskLogEntry, SkillManifest
+  models/               # Task, Run, CheckpointRecord, CheckpointSummary, TaskLogEntry, SkillManifest
   skills/               # SKILL.md loader, registry, and built-in skills
   storage/              # SQLite repositories
   tools/                # tools, safety policy, and executor
@@ -34,13 +35,22 @@ src/
 
 - the interactive shell
 - slash command handling
+- hierarchical help routing:
+  - `/help`
+  - `/help task`
+  - `/help skill`
+  - `/task help`
+  - `/skill help`
 - active task binding
 - active session skill binding
 - prompt routing
-- `/task ...` commands
+- `/task ...` commands, including search, recent-task shortcuts, and compact status views
 - `/skill ...` commands
 - `/skill reload`
 - `/skill-name <prompt>` one-shot skill shorthand
+
+The human-facing CLI output is rendered through the Rich presenter in `src/cli/ui.py`.
+`src/main.py` no longer owns a separate plain-string render path for task/run/checkpoint/skill views.
 
 ### 2. Agent Runtime Layer
 
@@ -66,7 +76,9 @@ This layer is responsible for one conversational turn at a time.
 - `task_service.py`
   Task CRUD and task status updates.
 - `run_service.py`
-  Run lifecycle, checkpoints, and task log operations.
+  Run lifecycle and task log operations.
+- `checkpoint_service.py`
+  Checkpoint save/load/list/delete/prune behavior across SQLite metadata and filesystem blobs.
 - `skill_service.py`
   Skill discovery plus runtime config building for:
   - base mode
@@ -114,11 +126,17 @@ If a local skill and a built-in skill share the same name, the local skill wins.
 - `tasks.py`
   `tasks` table repository.
 - `runs.py`
-  `runs`, `checkpoints`, and `task_logs` table repository.
+  `runs` and `task_logs` table repository.
+- `checkpoints.py`
+  `checkpoints` metadata repository and checkpoint schema validation.
 
 The current source of truth for persisted runtime state is:
 
 - `.mini-claude-code/agent.db`
+
+Checkpoint blobs live under:
+
+- `.mini-claude-code/checkpoints/`
 
 ### 7. Tool Layer
 
@@ -142,7 +160,7 @@ The current source of truth for persisted runtime state is:
 
 ### 8. Safety Layer
 
-The safety layer is now split across:
+The safety layer is split across:
 
 - `src/tools/policy.py`
 - `src/tools/executor.py`
@@ -181,7 +199,7 @@ Skills can tighten the effective safety policy by limiting visible tools, but th
 1. The user activates a skill with `/skill use <name>`.
 2. Normal prompts route through the selected skill.
 3. The skill body is appended into prompt assembly.
-4. The visible tool set is filtered by the skill’s `allowed-tools`.
+4. The visible tool set is filtered by the skill's `allowed-tools`.
 5. The safety policy is narrowed from the allowed tools.
 6. The result is applied into `SessionState`.
 
@@ -189,7 +207,7 @@ Skills can tighten the effective safety policy by limiting visible tools, but th
 
 1. The user enters `/skill-name <prompt>`.
 2. The skill is resolved for that turn only.
-3. The prompt executes with the skill’s prompt body, filtered tools, and narrowed safety policy.
+3. The prompt executes with the skill's prompt body, filtered tools, and narrowed safety policy.
 4. The shell does not keep that skill active afterward.
 
 ### Bound Task Prompt
@@ -201,8 +219,8 @@ Skills can tighten the effective safety policy by limiting visible tools, but th
 5. A `Run` is created.
 6. The executor is wrapped with the effective safety policy and task-scoped audit logger.
 7. `agent_loop(...)` executes one turn.
-8. The updated `SessionState` is checkpointed.
-9. Task logs are written, including safety events when relevant.
+8. The updated `SessionState` is checkpointed through `CheckpointService`.
+9. Task logs are written, including safety and tool events when relevant.
 10. The task stays bound until detach, complete, reset, or exit.
 
 ## Current Data Model
@@ -239,7 +257,14 @@ It stores:
 
 ### Checkpoint
 
-A `Checkpoint` stores a serialized `SessionState` snapshot for a task, optionally linked to a run.
+Checkpoint persistence is split into:
+
+- `CheckpointRecord`
+  Internal checkpoint metadata used for restore and lifecycle operations.
+- `CheckpointSummary`
+  CLI-safe checkpoint metadata used for listing and inspection.
+
+Checkpoint payloads are stored as gzip-compressed JSON blobs on disk, while SQLite stores only metadata.
 
 ### TaskLogEntry
 
@@ -255,6 +280,7 @@ A `TaskLogEntry` records task-level runtime events such as:
 - safety confirmation required
 - safety operation blocked
 - safety policy denied
+- tool invoked/completed/failed
 
 ## Current Boundaries
 
@@ -263,6 +289,7 @@ The current architecture enforces these boundaries:
 - `main.py` handles shell interaction
 - `SkillService` builds base or skill runtime configs
 - `TaskRunner` handles persisted task orchestration
+- `CheckpointService` handles checkpoint storage and lifecycle
 - `agent_loop` handles one model/tool loop
 - `ToolExecutor` handles safety checks before tool execution
 - repositories handle SQLite reads and writes
@@ -271,8 +298,8 @@ The current architecture enforces these boundaries:
 
 The following are still future work:
 
-- richer run inspection commands
-- run duration and structured diagnostics
-- tool invocation summaries beyond safety events
-- structured failure classification
+- better task ergonomics beyond public IDs
+- richer task filtering and recent-task shortcuts
+- more structured export-friendly diagnostics
 - richer use of optional Claude-compatible skill extensions
+- safe expansion of cybersecurity-oriented skills

@@ -44,6 +44,25 @@ def test_task_service_lists_tasks_by_recent_update(tmp_path):
     assert [task.id for task in tasks] == [second.id, first.id]
 
 
+
+
+def test_task_service_filters_by_status_and_title_and_returns_latest(tmp_path):
+    settings = build_settings(tmp_path)
+    service = TaskService.from_settings(settings)
+
+    first = service.create_task(title="Refactor loop", goal="First goal")
+    second = service.create_task(title="Weather skill", goal="Second goal")
+    service.update_task_status(first.id, TaskStatus.RUNNING)
+
+    running = service.list_tasks(status=TaskStatus.RUNNING)
+    weather = service.list_tasks(title_query="weather")
+    latest_weather = service.get_latest_task(title_query="weather")
+
+    assert [task.id for task in running] == [first.id]
+    assert [task.id for task in weather] == [second.id]
+    assert latest_weather is not None
+    assert latest_weather.id == second.id
+
 def test_task_service_updates_task_status(tmp_path):
     settings = build_settings(tmp_path)
     service = TaskService.from_settings(settings)

@@ -10,9 +10,11 @@ This folder contains the current maintained documentation for the Python codebas
    Persisted task model, run lifecycle, checkpoints, public task IDs, and current safety-aware task flow.
 3. `engineering-development-plan.en.md`
    Current roadmap, completed phases, and the next implementation phase.
-4. `skill-system-standard.md`
+4. `prompt-runtime-contract.md`
+   Runtime prompt contract for the base prompt, skill prompt, and context summary layers.
+5. `skill-system-standard.md`
    Current `SKILL.md` runtime model, built-in plus local skill discovery rules, and compatibility notes.
-5. `checkpoint-storage-evolution.md`
+6. `checkpoint-storage-evolution.md`
    Breaking-change redesign for checkpoint storage: SQLite metadata only, filesystem blobs for full session snapshots.
 
 ## Current Status
@@ -22,6 +24,9 @@ The docs now reflect the current implementation, including:
 - explicit skill activation
 - user-local skill support
 - public task IDs
+- Rich presenter-based CLI output
+- hierarchical help topics for task and skill commands
+- a prescriptive English base runtime prompt with a documented prompt contract
 - capability-tier execution safety
 - task-scoped safety audit logging
 

@@ -12,11 +12,10 @@ from app.checkpoint_service import CheckpointService
 from app.run_service import RunService
 from app.skill_service import SkillService
 from app.task_service import TaskService
-from models.checkpoint import CheckpointSummary
-from models.run import Run, TaskLogEntry
-from models.skill import LoadedSkill
-from models.task import Task
+from models.run import TaskLogEntry
+from models.task import Task, TaskStatus
 from runtime.task_runner import TaskRunner, apply_result_to_session
+from cli.ui import CliPresenter, get_presenter
 from skills.registry import SkillRegistry
 from tools import build_tool_registry
 from tools.executor import ToolExecutor
@@ -87,6 +86,15 @@ def parse_skill_command(command: str) -> tuple[str, list[str]] | None:
     return parts[1], parts[2:]
 
 
+def parse_help_command(command: str) -> list[str] | None:
+    stripped = command.strip()
+    if not stripped.startswith("/help"):
+        return None
+
+    parts = stripped.split()
+    return parts[1:]
+
+
 def parse_skill_shorthand(
     command: str,
     *,
@@ -108,273 +116,203 @@ def parse_skill_shorthand(
     return skill_name, prompt
 
 
-def render_skill_name(skill_name: str | None) -> str:
-    return skill_name or NONE_LABEL
-
-
-def render_task_list(tasks: list[Task]) -> str:
-    if not tasks:
-        return "No tasks found."
-
-    lines = ["TASK     STATUS      UPDATED                  SKILL                 TITLE"]
-    for task in tasks:
-        skill_name = render_skill_name(task.skill_profile)
-        lines.append(
-            f"{task.public_id:8} {task.status.value:11} {task.updated_at:24} {skill_name:21} {task.title}"
-        )
-    return "\n".join(lines)
-
-
-def render_task_detail(task: Task) -> str:
-    return "\n".join(
-        [
-            f"Task ID: {task.public_id}",
-            f"Internal ID: {task.id}",
-            f"Title: {task.title}",
-            f"Goal: {task.goal}",
-            f"Status: {task.status.value}",
-            f"Skill: {render_skill_name(task.skill_profile)}",
-            f"Workspace: {task.workspace}",
-            f"Created At: {task.created_at}",
-            f"Updated At: {task.updated_at}",
-            f"Last Checkpoint: {task.last_checkpoint or '-'}",
-            f"Last Error: {task.last_error or '-'}",
-        ]
+def _build_callback_presenter(
+    *,
+    text_output: OutputFn | None = None,
+    info_output: OutputFn | None = None,
+    error_output: OutputFn | None = None,
+    success_output: OutputFn | None = None,
+) -> CliPresenter:
+    return CliPresenter.for_callbacks(
+        text_output=text_output,
+        info_output=info_output,
+        error_output=error_output,
+        success_output=success_output,
     )
 
 
-def format_duration_ms(duration_ms: int | None) -> str:
-    if duration_ms is None:
-        return "-"
-    if duration_ms < 1000:
-        return f"{duration_ms}ms"
-    return f"{duration_ms / 1000:.2f}s"
-
-
-def format_size_bytes(size_bytes: int) -> str:
-    if size_bytes < 1024:
-        return f"{size_bytes}B"
-    if size_bytes < 1024 * 1024:
-        return f"{size_bytes / 1024:.1f}KB"
-    return f"{size_bytes / (1024 * 1024):.1f}MB"
-
-
-def summarize_log_payload(payload: dict | None) -> str:
-    if not payload:
-        return ""
-    preferred_keys = [
-        "tool_name",
-        "capability",
-        "failure_kind",
-        "skill_name",
-        "args_summary",
-        "result_summary",
-        "error",
-        "reason",
-    ]
-    parts = []
-    for key in preferred_keys:
-        value = payload.get(key)
-        if value in (None, "", []):
-            continue
-        text = str(value)
-        if len(text) > 80:
-            text = text[:77] + "..."
-        parts.append(f"{key}={text}")
-    return " | ".join(parts)
-
-
-def render_task_logs(entries: list[TaskLogEntry], run_labels: dict[str, str] | None = None) -> str:
-    if not entries:
-        return "No task logs found."
-
-    lines = []
-    for entry in entries:
-        run_part = "-"
-        if entry.run_id:
-            run_part = run_labels.get(entry.run_id, entry.run_id[:8]) if run_labels else entry.run_id[:8]
-        payload_summary = summarize_log_payload(entry.payload)
-        suffix = f" {payload_summary}" if payload_summary else ""
-        lines.append(
-            f"{entry.created_at} [{entry.level.value}] run={run_part} {entry.message}{suffix}"
+def _resolve_presenter(
+    presenter: CliPresenter | None = None,
+    *,
+    text_output: OutputFn | None = None,
+    info_output: OutputFn | None = None,
+    error_output: OutputFn | None = None,
+    success_output: OutputFn | None = None,
+) -> CliPresenter:
+    if presenter is not None:
+        return presenter
+    if any(output is not None for output in (text_output, info_output, error_output, success_output)):
+        return _build_callback_presenter(
+            text_output=text_output,
+            info_output=info_output,
+            error_output=error_output,
+            success_output=success_output,
         )
-    return "\n".join(lines)
+    return get_presenter()
 
 
-def render_run_list(runs: list[Run]) -> str:
-    if not runs:
-        return "No runs found."
-
-    lines = ["RUN      STATUS      STARTED                  DURATION   SKILL                 FAILURE"]
-    for run in runs:
-        lines.append(
-            f"{run.public_id:8} {run.status.value:11} {run.started_at:24} "
-            f"{format_duration_ms(run.duration_ms):10} "
-            f"{render_skill_name(run.effective_skill_name):21} {run.failure_kind or '-'}"
-        )
-    return "\n".join(lines)
+def print_help(
+    output: OutputFn | None = None,
+    presenter: CliPresenter | None = None,
+    topic: str | None = None,
+) -> None:
+    ui = _resolve_presenter(presenter, text_output=output)
+    ui.show_help(topic)
 
 
-def render_run_detail(run: Run, task: Task, entries: list[TaskLogEntry]) -> str:
-    task_label = task.public_id or task.id
-    lines = [
-        f"Run ID: {run.public_id}",
-        f"Internal ID: {run.id}",
-        f"Task: {task_label}",
-        f"Task Internal ID: {task.id}",
-        f"Status: {run.status.value}",
-        f"Started At: {run.started_at}",
-        f"Finished At: {run.finished_at or '-'}",
-        f"Duration: {format_duration_ms(run.duration_ms)}",
-        f"Skill: {render_skill_name(run.effective_skill_name)}",
-        f"Tools: {', '.join(run.effective_tools) if run.effective_tools else '-'}",
-        f"Step Count: {run.step_count}",
-        f"Usage: {run.last_usage or {}}",
-        f"Failure Kind: {run.failure_kind or '-'}",
-        f"Last Error: {run.last_error or '-'}",
-        "",
-        "Recent Run Logs:",
-        render_task_logs(entries, {run.id: run.public_id}),
-    ]
-    return "\n".join(lines)
+def handle_help_command(
+    command: str,
+    *,
+    presenter: CliPresenter | None = None,
+    text_output: OutputFn | None = None,
+    error_output: OutputFn | None = None,
+) -> bool:
+    args = parse_help_command(command)
+    if args is None:
+        return False
 
-
-def render_checkpoint_list(
-    summaries: list[CheckpointSummary],
-    task: Task,
-    run_service: RunService,
-) -> str:
-    if not summaries:
-        return f"No checkpoints found for task {task.public_id}."
-
-    lines = [
-        f"Task: {task.public_id}",
-        "CHECKPOINT                             CREATED                  STORAGE      SIZE      MSGS   SUMMARY  RUN",
-    ]
-    for summary in summaries:
-        run_label = "-"
-        if summary.run_id:
-            run = run_service.get_run(summary.run_id)
-            run_label = run.public_id if run is not None and run.public_id else summary.run_id[:8]
-        lines.append(
-            f"{summary.id:36} {summary.created_at:24} {summary.storage_kind:12} "
-            f"{format_size_bytes(summary.payload_size_bytes):9} "
-            f"{summary.history_message_count:6} "
-            f"{'yes' if summary.has_compressed_summary else 'no':8} {run_label}"
-        )
-    return "\n".join(lines)
-
-
-def render_checkpoint_detail(
-    summary: CheckpointSummary,
-    task_service: TaskService,
-    run_service: RunService,
-) -> str:
-    task = task_service.require_task(summary.task_id)
-    run = run_service.get_run(summary.run_id) if summary.run_id else None
-    run_label = run.public_id if run is not None and run.public_id else "-"
-    run_internal_id = run.id if run is not None else (summary.run_id or "-")
-    return "\n".join(
-        [
-            f"Checkpoint ID: {summary.id}",
-            f"Task: {task.public_id}",
-            f"Task Internal ID: {task.id}",
-            f"Run: {run_label}",
-            f"Run Internal ID: {run_internal_id}",
-            f"Created At: {summary.created_at}",
-            f"Storage: {summary.storage_kind}",
-            f"Payload Size: {format_size_bytes(summary.payload_size_bytes)}",
-            f"History Message Count: {summary.history_message_count}",
-            f"History Text Bytes: {summary.history_text_bytes}",
-            f"Compressed Summary: {'yes' if summary.has_compressed_summary else 'no'}",
-        ]
+    ui = _resolve_presenter(
+        presenter,
+        text_output=text_output,
+        error_output=error_output,
     )
+    if not args:
+        ui.show_help()
+        return True
+    if len(args) != 1:
+        ui.show_error("Usage: /help [task|skill]")
+        return True
+
+    topic = args[0].lower()
+    if topic not in {"task", "skill"}:
+        ui.show_error(f"Unknown help topic: {args[0]}. Available topics: task, skill")
+        return True
+    ui.show_help(topic)
+    return True
 
 
-def render_skill_list(skills: list[LoadedSkill]) -> str:
-    if not skills:
-        return "No skills found."
+def handle_skill_command(
+    command: str,
+    *,
+    shell_state: ShellState | None = None,
+    skill_service: SkillService | None = None,
+    presenter: CliPresenter | None = None,
+    text_output: OutputFn | None = None,
+    info_output: OutputFn | None = None,
+    error_output: OutputFn | None = None,
+    success_output: OutputFn | None = None,
+) -> bool:
+    parsed = parse_skill_command(command)
+    if parsed is None:
+        return False
 
-    lines = ["NAME                 SOURCE     DESCRIPTION"]
-    for skill in skills:
-        lines.append(f"{skill.manifest.name:20} {skill.source:10} {skill.manifest.description}")
-    return "\n".join(lines)
-
-
-def render_skill_detail(skill: LoadedSkill) -> str:
-    metadata = skill.manifest.metadata or {}
-    metadata_lines = (
-        [f"  {key}: {value}" for key, value in sorted(metadata.items())]
-        if metadata
-        else ["  -"]
+    shell_state = shell_state or ShellState()
+    skill_service = skill_service or create_skill_service()
+    ui = _resolve_presenter(
+        presenter,
+        text_output=text_output,
+        info_output=info_output,
+        error_output=error_output,
+        success_output=success_output,
     )
+    action, args = parsed
 
-    return "\n".join(
-        [
-            f"Name: {skill.manifest.name}",
-            f"Description: {skill.manifest.description}",
-            f"License: {skill.manifest.license}",
-            f"Compatibility: {skill.manifest.compatibility}",
-            f"Source: {skill.source}",
-            f"Allowed Tools: {', '.join(skill.manifest.allowed_tools)}",
-            f"Path: {skill.skill_file}",
-            "Metadata:",
-            *metadata_lines,
-        ]
-    )
+    try:
+        if action in {"", "help"}:
+            ui.show_help("skill")
+            return True
 
+        if action == "list":
+            ui.show_skill_list(skill_service.list_skills())
+            return True
 
-def copy_session_state(target: SessionState, source: SessionState) -> None:
-    target.history = list(source.history)
-    target.compressed_summary = source.compressed_summary
-    target.last_usage = dict(source.last_usage)
+        if action == "show":
+            if len(args) != 1:
+                ui.show_error("Usage: /skill show <name>")
+                return True
+            ui.show_skill_detail(skill_service.require_skill(args[0]))
+            return True
 
+        if action == "use":
+            if len(args) != 1:
+                ui.show_error("Usage: /skill use <name>")
+                return True
+            skill = skill_service.resolve_skill(args[0])
+            shell_state.active_skill_name = skill.manifest.name
+            ui.show_success(f"Activated skill {skill.manifest.name}.")
+            return True
 
-def print_help(output: OutputFn = print) -> None:
-    output(
-        "\n".join(
-            [
-                "mini-claude-code",
-                "",
-                "Base mode:",
-                "Normal chat runs with the base prompt and built-in tools.",
-                "",
-                "Commands:",
-                "/help                 Show help",
-                "/reset                Reset the current in-memory session and clear the active skill",
-                "/exit or /quit        Exit the CLI",
-                "/task create          Create a persisted task",
-                "/task list            List recent tasks",
-                "/task show <id>       Show task details",
-                "/task checkpoints <id> [n] Show recent checkpoints for a task",
-                "/task checkpoint <id> Show one checkpoint in detail",
-                "/task runs <id> [n]   Show recent runs for a task",
-                "/task run <id>        Show one run in detail",
-                "/task logs <id> [n]   Show recent task logs",
-                "/task resume <id>     Resume and bind a task to this shell",
-                "/task detach          Pause and detach the active task",
-                "/task complete        Mark the active task as completed",
-                "/skill list           List built-in and local skills",
-                "/skill show <name>    Show skill details",
-                "/skill use <name>     Activate a skill for this shell",
-                "/skill reload         Reload skills from disk",
-                "/skill clear          Clear the active shell skill",
-                "/skill current        Show the active shell skill",
-                "/skill-name <prompt>  Run one prompt with a skill without activating it",
-            ]
-        )
-    )
+        if action == "clear":
+            shell_state.active_skill_name = None
+            ui.show_success("Cleared active skill.")
+            return True
 
+        if action == "current":
+            current_skill = shell_state.active_skill_name or NONE_LABEL
+            ui.show_info(f"Current skill: {current_skill}")
+            return True
 
-def _default_text_output(text: str) -> None:
-    print(text)
+        if action == "reload":
+            previous_skill = shell_state.active_skill_name
+            skill_service.reload()
+            ui.show_success("Reloaded skills from disk.")
+            if previous_skill and skill_service.get_skill(previous_skill) is None:
+                shell_state.active_skill_name = None
+                ui.show_success(f"cleared missing active skill {previous_skill}")
+            return True
+
+        ui.show_error(f"Unknown skill command: {action}")
+        return True
+    except Exception as exc:
+        ui.show_error(str(exc))
+        return True
 
 
 def _parse_limit(raw: str) -> int:
-    limit = int(raw)
+    try:
+        limit = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"Invalid limit: {raw}") from exc
     if limit <= 0:
-        raise ValueError("Limit must be greater than 0")
+        raise ValueError("Limit must be greater than 0.")
     return limit
+
+
+def _parse_task_list_args(args: list[str]) -> tuple[TaskStatus | None, int]:
+    if not args:
+        return None, 20
+    if len(args) == 1:
+        try:
+            return TaskStatus(args[0].lower()), 20
+        except ValueError:
+            return None, _parse_limit(args[0])
+    if len(args) == 2:
+        return TaskStatus(args[0].lower()), _parse_limit(args[1])
+    raise ValueError("Usage: /task list [status] [limit]")
+
+
+def _parse_task_recent_args(args: list[str]) -> int:
+    if not args:
+        return 20
+    if len(args) == 1:
+        return _parse_limit(args[0])
+    raise ValueError("Usage: /task recent [limit]")
+
+
+def _parse_task_find_args(args: list[str]) -> tuple[str, int]:
+    if not args:
+        raise ValueError("Usage: /task find <query> [limit]")
+    if len(args) == 1:
+        return args[0], 20
+    if len(args) == 2:
+        return args[0], _parse_limit(args[1])
+    raise ValueError("Usage: /task find <query> [limit]")
+
+
+def _resolve_task_reference(task_service: TaskService, task_ref: str) -> Task | None:
+    if task_ref in {"latest", "last"}:
+        return task_service.get_latest_task()
+    return task_service.get_task(task_ref)
 
 
 def _build_run_label_map(entries: list[TaskLogEntry], run_service: RunService) -> dict[str, str]:
@@ -387,16 +325,10 @@ def _build_run_label_map(entries: list[TaskLogEntry], run_service: RunService) -
     return labels
 
 
-def _select_visible_executor(
-    tool_executor: ToolExecutor,
-    allowed_tools: list[str],
-) -> ToolExecutor:
-    try:
-        return tool_executor.restricted_to(allowed_tools)
-    except ValueError:
-        if tool_executor.tool_names.isdisjoint(allowed_tools):
-            return tool_executor
-        raise
+def copy_session_state(target: SessionState, source: SessionState) -> None:
+    target.history = list(source.history)
+    target.compressed_summary = source.compressed_summary
+    target.last_usage = dict(source.last_usage)
 
 
 async def run_prompt_with_runtime(
@@ -406,19 +338,33 @@ async def run_prompt_with_runtime(
     session_state: SessionState,
     tool_executor: ToolExecutor,
     settings: Settings,
-    on_info: OutputFn,
-    on_error: OutputFn,
+    on_info: OutputFn | None = None,
+    on_error: OutputFn | None = None,
 ) -> dict:
-    visible_executor = _select_visible_executor(tool_executor, runtime_config.allowed_tools)
+    try:
+        visible_executor = tool_executor.restricted_to(runtime_config.allowed_tools)
+    except ValueError:
+        if tool_executor.tool_names.isdisjoint(runtime_config.allowed_tools):
+            visible_executor = tool_executor
+        else:
+            raise
+
     runtime_executor = visible_executor.with_safety_policy(runtime_config.safety_policy)
-    result = await agent_loop(
-        question,
-        session_state,
-        runtime_executor,
-        settings,
-        system_prompt=runtime_config.system_prompt,
-        tools=runtime_executor.get_tools(),
-    )
+
+    try:
+        result = await agent_loop(
+            question,
+            session_state,
+            runtime_executor,
+            settings,
+            system_prompt=runtime_config.system_prompt,
+            tools=runtime_executor.get_tools(),
+        )
+    except TypeError as exc:
+        if "unexpected keyword argument 'system_prompt'" not in str(exc):
+            raise
+        result = await agent_loop(question, session_state, runtime_executor, settings)
+
     await apply_result_to_session(
         question=question,
         result=result,
@@ -428,96 +374,6 @@ async def run_prompt_with_runtime(
         on_error=on_error,
     )
     return result
-
-
-def handle_skill_command(
-    command: str,
-    *,
-    shell_state: ShellState | None = None,
-    skill_service: SkillService | None = None,
-    text_output: OutputFn = _default_text_output,
-    error_output: OutputFn = ColoredOutput.print_error,
-    success_output: OutputFn = ColoredOutput.print_success,
-) -> bool:
-    parsed = parse_skill_command(command)
-    if parsed is None:
-        return False
-
-    shell_state = shell_state or ShellState()
-    skill_service = skill_service or create_skill_service()
-    action, args = parsed
-
-    try:
-        if action in {"", "help"}:
-            text_output(
-                "\n".join(
-                    [
-                        "Skill commands:",
-                        "/skill list",
-                        "/skill show <name>",
-                        "/skill use <name>",
-                        "/skill reload",
-                        "/skill clear",
-                        "/skill current",
-                    ]
-                )
-            )
-            return True
-
-        if action == "list":
-            text_output(render_skill_list(skill_service.list_skills()))
-            return True
-
-        if action == "show":
-            if len(args) != 1:
-                error_output("Usage: /skill show <name>")
-                return True
-            skill = skill_service.get_skill(args[0])
-            if skill is None:
-                error_output(f"Skill not found: {args[0]}")
-                return True
-            text_output(render_skill_detail(skill))
-            return True
-
-        if action == "use":
-            if len(args) != 1:
-                error_output("Usage: /skill use <name>")
-                return True
-            skill_service.resolve_skill(args[0])
-            shell_state.active_skill_name = args[0]
-            success_output(f"Activated skill {args[0]}.")
-            return True
-
-        if action == "reload":
-            if args:
-                error_output("Usage: /skill reload")
-                return True
-            skill_service.reload()
-            if (
-                shell_state.active_skill_name is not None
-                and skill_service.get_skill(shell_state.active_skill_name) is None
-            ):
-                cleared = shell_state.active_skill_name
-                shell_state.active_skill_name = None
-                success_output(f"Reloaded skills and cleared missing active skill {cleared}.")
-                return True
-            success_output("Reloaded skills from disk.")
-            return True
-
-        if action == "clear":
-            shell_state.active_skill_name = None
-            success_output("Cleared active skill.")
-            return True
-
-        if action == "current":
-            text_output(f"Current skill: {render_skill_name(shell_state.active_skill_name)}")
-            return True
-
-        error_output(f"Unknown skill command: {action}")
-        return True
-    except Exception as exc:
-        error_output(f"Skill command failed: {exc}")
-        return True
 
 
 def handle_task_command(
@@ -530,10 +386,11 @@ def handle_task_command(
     checkpoint_service: CheckpointService | None = None,
     task_runner: TaskRunner,
     skill_service: SkillService | None = None,
-    text_output: OutputFn = _default_text_output,
-    info_output: OutputFn = ColoredOutput.print_info,
-    error_output: OutputFn = ColoredOutput.print_error,
-    success_output: OutputFn = ColoredOutput.print_success,
+    presenter: CliPresenter | None = None,
+    text_output: OutputFn | None = None,
+    info_output: OutputFn | None = None,
+    error_output: OutputFn | None = None,
+    success_output: OutputFn | None = None,
     input_func: InputFn = input,
 ) -> bool:
     parsed = parse_task_command(command)
@@ -542,28 +399,18 @@ def handle_task_command(
 
     checkpoint_service = checkpoint_service or task_runner.checkpoint_service
     skill_service = skill_service or create_skill_service()
+    ui = _resolve_presenter(
+        presenter,
+        text_output=text_output,
+        info_output=info_output,
+        error_output=error_output,
+        success_output=success_output,
+    )
     action, args = parsed
 
     try:
         if action in {"", "help"}:
-            text_output(
-                "\n".join(
-                    [
-                        "Task commands:",
-                        "/task create",
-                        "/task list",
-                        "/task show <id>",
-                        "/task checkpoints <id> [limit]",
-                        "/task checkpoint <id>",
-                        "/task runs <id> [limit]",
-                        "/task run <id>",
-                        "/task logs <id> [limit]",
-                        "/task resume <id>",
-                        "/task detach",
-                        "/task complete",
-                    ]
-                )
-            )
+            ui.show_help("task")
             return True
 
         if action == "create":
@@ -575,125 +422,166 @@ def handle_task_command(
                 skill_raw = ""
             skill_name = skill_raw or skill_service.default_task_skill_name
             if not title or not goal:
-                error_output("Task title and goal are required.")
+                ui.show_error("Task title and goal are required.")
                 return True
             if skill_name is not None:
                 skill_service.resolve_skill(skill_name)
             task = task_service.create_task(title=title, goal=goal, skill_profile=skill_name)
-            success_output(f"Created task {task.public_id} ({task.id})")
+            ui.show_success(f"Created task {task.public_id} ({task.id})")
             return True
 
         if action == "list":
-            tasks = task_service.list_tasks()
-            text_output(render_task_list(tasks))
+            status, limit = _parse_task_list_args(args)
+            tasks = task_service.list_tasks(status=status, limit=limit)
+            filter_label = f"Tasks (status: {status.value})" if status is not None else "Tasks"
+            ui.show_task_list(tasks, filter_label=filter_label)
+            return True
+
+        if action == "recent":
+            limit = _parse_task_recent_args(args)
+            tasks = task_service.list_tasks(limit=limit)
+            ui.show_task_list(tasks, filter_label=f"Recent Tasks ({limit})")
+            return True
+
+        if action == "find":
+            query, limit = _parse_task_find_args(args)
+            tasks = task_service.list_tasks(title_query=query, limit=limit)
+            ui.show_task_list(tasks, filter_label=f"Task Search: {query}")
             return True
 
         if action == "show":
             if len(args) != 1:
-                error_output("Usage: /task show <task_id>")
+                ui.show_error("Usage: /task show <task_id>")
                 return True
-            task = task_service.get_task(args[0])
+            task = _resolve_task_reference(task_service, args[0])
             if task is None:
-                error_output(f"Task not found: {args[0]}")
+                ui.show_error(f"Task not found: {args[0]}")
                 return True
-            text_output(render_task_detail(task))
+            ui.show_task_detail(task)
+            return True
+
+        if action == "status":
+            if len(args) != 1:
+                ui.show_error("Usage: /task status <task_id>")
+                return True
+            task = _resolve_task_reference(task_service, args[0])
+            if task is None:
+                ui.show_error(f"Task not found: {args[0]}")
+                return True
+            ui.show_task_status(task)
             return True
 
         if action == "checkpoints":
             if not args or len(args) > 2:
-                error_output("Usage: /task checkpoints <task_id> [limit]")
+                ui.show_error("Usage: /task checkpoints <task_id> [limit]")
                 return True
-            task = task_service.get_task(args[0])
+            task = _resolve_task_reference(task_service, args[0])
             if task is None:
-                error_output(f"Task not found: {args[0]}")
+                ui.show_error(f"Task not found: {args[0]}")
                 return True
             limit = 20 if len(args) == 1 else _parse_limit(args[1])
             summaries = checkpoint_service.list_checkpoints(task.id, limit=limit)
-            text_output(render_checkpoint_list(summaries, task, run_service))
+            run_labels = {}
+            for summary in summaries:
+                if not summary.run_id or summary.run_id in run_labels:
+                    continue
+                run = run_service.get_run(summary.run_id)
+                run_labels[summary.run_id] = run.public_id if run is not None and run.public_id else summary.run_id[:8]
+            ui.show_checkpoint_list(summaries, task, run_labels)
             return True
 
         if action == "checkpoint":
             if len(args) != 1:
-                error_output("Usage: /task checkpoint <checkpoint_id>")
+                ui.show_error("Usage: /task checkpoint <checkpoint_id>")
                 return True
             summary = checkpoint_service.require_checkpoint_summary(args[0])
-            text_output(render_checkpoint_detail(summary, task_service, run_service))
+            task = task_service.require_task(summary.task_id)
+            run = run_service.get_run(summary.run_id) if summary.run_id else None
+            run_label = run.public_id if run is not None and run.public_id else None
+            ui.show_checkpoint_detail(summary, task, run_label)
             return True
 
         if action == "runs":
             if not args or len(args) > 2:
-                error_output("Usage: /task runs <task_id> [limit]")
+                ui.show_error("Usage: /task runs <task_id> [limit]")
                 return True
-            task = task_service.get_task(args[0])
+            task = _resolve_task_reference(task_service, args[0])
             if task is None:
-                error_output(f"Task not found: {args[0]}")
+                ui.show_error(f"Task not found: {args[0]}")
                 return True
             limit = 20 if len(args) == 1 else _parse_limit(args[1])
             runs = run_service.list_runs(task.id, limit=limit)
-            text_output(render_run_list(runs))
+            ui.show_run_list(runs, task=task)
             return True
 
         if action == "run":
             if len(args) != 1:
-                error_output("Usage: /task run <run_id>")
+                ui.show_error("Usage: /task run <run_id>")
                 return True
             run = run_service.require_run(args[0])
             task = task_service.require_task(run.task_id)
             entries = run_service.list_run_logs(run.id, limit=20)
-            text_output(render_run_detail(run, task, entries))
+            ui.show_run_detail(run, task, entries)
             return True
 
         if action == "logs":
             if not args or len(args) > 2:
-                error_output("Usage: /task logs <task_id> [limit]")
+                ui.show_error("Usage: /task logs <task_id> [limit]")
                 return True
-            task = task_service.get_task(args[0])
+            task = _resolve_task_reference(task_service, args[0])
             if task is None:
-                error_output(f"Task not found: {args[0]}")
+                ui.show_error(f"Task not found: {args[0]}")
                 return True
             limit = 20 if len(args) == 1 else _parse_limit(args[1])
             entries = run_service.list_logs(task.id, limit=limit)
-            text_output(render_task_logs(entries, _build_run_label_map(entries, run_service)))
+            ui.show_task_logs(entries, _build_run_label_map(entries, run_service))
             return True
 
         if action == "resume":
             if len(args) != 1:
-                error_output("Usage: /task resume <task_id>")
+                ui.show_error("Usage: /task resume <task_id>")
                 return True
-            task, restored = task_runner.resume_task(args[0])
+            task_ref = args[0]
+            if task_ref in {"latest", "last"}:
+                latest_task = task_service.get_latest_task()
+                if latest_task is None:
+                    ui.show_error(f"Task not found: {task_ref}")
+                    return True
+                task_ref = latest_task.id
+            task, restored = task_runner.resume_task(task_ref)
             copy_session_state(session_state, restored)
             shell_state.active_task_id = task.id
             shell_state.active_task_public_id = task.public_id
-            success_output(f"Resumed task {task.public_id}: {task.title}")
+            ui.show_success(f"Resumed task {task.public_id}: {task.title}")
             return True
 
         if action == "detach":
             if shell_state.active_task_id is None:
-                error_output("No active task is bound to this shell.")
+                ui.show_error("No active task is bound to this shell.")
                 return True
             task = task_runner.detach_task(shell_state.active_task_id, session_state)
             shell_state.active_task_id = None
             shell_state.active_task_public_id = None
-            success_output(f"Detached task {task.public_id} and saved a checkpoint.")
+            ui.show_success(f"Detached task {task.public_id} and saved a checkpoint.")
             return True
 
         if action == "complete":
             if shell_state.active_task_id is None:
-                error_output("No active task is bound to this shell.")
+                ui.show_error("No active task is bound to this shell.")
                 return True
             task = task_runner.complete_task(shell_state.active_task_id, session_state)
             shell_state.active_task_id = None
             shell_state.active_task_public_id = None
-            success_output(f"Completed task {task.public_id}.")
+            ui.show_success(f"Completed task {task.public_id}.")
             return True
 
-        error_output(f"Unknown task command: {action}")
+        ui.show_error(f"Unknown task command: {action}")
         return True
     except ValueError as exc:
-        error_output(str(exc))
+        ui.show_error(str(exc))
         return True
     except Exception as exc:
-        error_output(f"Task command failed: {exc}")
+        ui.show_error(f"Task command failed: {exc}")
         return True
 
 
@@ -762,8 +650,7 @@ async def run_interactive_shell(
             ColoredOutput.print_header("Session reset")
             continue
 
-        if question == "/help":
-            print_help()
+        if handle_help_command(question):
             continue
 
         if handle_skill_command(

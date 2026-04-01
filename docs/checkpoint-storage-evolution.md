@@ -75,6 +75,8 @@ A dedicated `CheckpointService` owns:
 - writing metadata
 - loading `SessionState`
 - exposing CLI-safe summaries
+- deleting checkpoints
+- pruning older checkpoints
 
 The rest of the application should not know whether checkpoints are stored inline, in files, or in a future blob backend.
 
@@ -307,6 +309,13 @@ All checkpoint operations should go through `CheckpointService`.
 
 Add CLI checkpoint inspection commands based on summary data only.
 
+Status:
+
+- implemented
+- `/task checkpoints <task_id>`
+- `/task checkpoint <checkpoint_id>`
+- checkpoint deletion and pruning service APIs are also implemented
+
 ## 11. Non-Goals
 
 This redesign does not include:
@@ -316,6 +325,7 @@ This redesign does not include:
 - diff-based checkpoints
 - remote blob storage
 - checkpoint content search
+- automatic protection against deleting a task's currently referenced `last_checkpoint`
 
 Those may be considered later, but they should not shape the new foundation.
 

@@ -100,3 +100,55 @@ def test_checkpoint_service_rejects_legacy_inline_schema(tmp_path):
 
     with pytest.raises(ValueError, match="older checkpoint schema"):
         CheckpointService.from_settings(settings)
+
+
+
+def test_checkpoint_service_deletes_checkpoint_metadata_and_blob(tmp_path):
+    settings = build_settings(tmp_path)
+    task_service = TaskService.from_settings(settings)
+    checkpoint_service = CheckpointService.from_settings(settings)
+    task = task_service.create_task(title="Task", goal="Goal")
+
+    state = SessionState()
+    state.append_user_message("hello")
+    checkpoint = checkpoint_service.save_checkpoint(task_id=task.id, session_state=state)
+    blob_path = settings.app_data_dir / checkpoint.blob_path
+
+    checkpoint_service.delete_checkpoint(checkpoint.id)
+
+    assert checkpoint_service.get_checkpoint_record(checkpoint.id) is None
+    assert checkpoint_service.get_checkpoint_summary(checkpoint.id) is None
+    assert not blob_path.exists()
+
+
+
+def test_checkpoint_service_prunes_older_checkpoints(tmp_path):
+    settings = build_settings(tmp_path)
+    task_service = TaskService.from_settings(settings)
+    checkpoint_service = CheckpointService.from_settings(settings)
+    task = task_service.create_task(title="Task", goal="Goal")
+
+    created = []
+    for index in range(3):
+        state = SessionState()
+        state.append_user_message(f"hello-{index}")
+        created.append(checkpoint_service.save_checkpoint(task_id=task.id, session_state=state))
+
+    deleted_count = checkpoint_service.prune_checkpoints(task.id, keep_last=1)
+    remaining = checkpoint_service.list_checkpoints(task.id)
+
+    assert deleted_count == 2
+    assert len(remaining) == 1
+    assert remaining[0].id == created[-1].id
+    assert checkpoint_service.get_checkpoint_record(created[0].id) is None
+    assert checkpoint_service.get_checkpoint_record(created[1].id) is None
+    assert checkpoint_service.get_checkpoint_record(created[2].id) is not None
+
+
+
+def test_checkpoint_service_prune_validates_keep_last(tmp_path):
+    settings = build_settings(tmp_path)
+    checkpoint_service = CheckpointService.from_settings(settings)
+
+    with pytest.raises(ValueError, match="keep_last"):
+        checkpoint_service.prune_checkpoints("task-id", keep_last=-1)

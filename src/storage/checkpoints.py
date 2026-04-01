@@ -91,6 +91,32 @@ class CheckpointRepository:
             ).fetchall()
         return [StoredCheckpoint.from_row(dict(row)).to_summary() for row in rows]
 
+    def list_records(self, task_id: str, *, limit: int | None = None) -> list[CheckpointRecord]:
+        sql = """
+            SELECT *
+            FROM checkpoints
+            WHERE task_id = ?
+            ORDER BY created_at DESC
+        """
+        parameters: tuple[object, ...]
+        if limit is None:
+            parameters = (task_id,)
+        else:
+            sql += "\nLIMIT ?"
+            parameters = (task_id, limit)
+        with self.storage.connect() as connection:
+            rows = connection.execute(sql, parameters).fetchall()
+        return [StoredCheckpoint.from_row(dict(row)).to_record() for row in rows]
+
+    def delete(self, checkpoint_id: str) -> bool:
+        with self.storage.connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM checkpoints WHERE id = ?",
+                (checkpoint_id,),
+            )
+            connection.commit()
+        return cursor.rowcount > 0
+
     def _ensure_schema(self) -> None:
         with self.storage.connect() as connection:
             self._fail_if_legacy_checkpoint_schema(connection)

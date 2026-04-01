@@ -61,15 +61,15 @@ def test_task_checkpoint_commands_render_metadata_and_help(tmp_path):
     )
 
     help_lines = []
-    print_help(help_lines.append)
+    print_help(help_lines.append, topic="task")
 
-    assert any("CHECKPOINT" in message for message in outputs)
+    assert any("Checkpoints for" in message for message in outputs)
     assert any(checkpoint.id in message for message in outputs)
     assert any("Payload Size:" in message for message in outputs)
     assert any("History Message Count:" in message for message in outputs)
     assert all("blob_path" not in message for message in outputs)
     assert all("payload_digest" not in message for message in outputs)
-    assert any("/task checkpoints <id> [n]" in message for message in help_lines)
+    assert any("/task checkpoints <id> [limit]" in message for message in help_lines)
     assert any("/task checkpoint <id>" in message for message in help_lines)
     assert not errors
 
@@ -125,11 +125,6 @@ def test_task_checkpoint_commands_handle_limit_and_missing_objects(tmp_path):
         error_output=errors.append,
     )
 
-    checkpoint_rows = [
-        line
-        for line in outputs[0].splitlines()
-        if line.strip() and not line.startswith("Task:") and not line.startswith("CHECKPOINT")
-    ]
-    assert len(checkpoint_rows) == 2
+    assert outputs[0].count("file_blob") == 2
     assert any("Task not found: missing-task" in message for message in errors)
     assert any("Checkpoint not found: missing-checkpoint" in message for message in errors)

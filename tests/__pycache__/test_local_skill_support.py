@@ -199,5 +199,5 @@ def test_skill_list_and_show_include_local_source(tmp_path):
     )
 
     assert any("local-demo" in message and "local" in message for message in outputs)
-    assert any("Source: local" in message for message in outputs)
+    assert any("Source:" in message and "local" in message for message in outputs)
     assert not errors

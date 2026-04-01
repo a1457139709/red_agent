@@ -58,13 +58,27 @@ class TaskRepository:
             row = self._get_row_by_identifier(connection, task_id)
         return Task.from_row(dict(row)) if row else None
 
-    def list(self, *, status: TaskStatus | None = None, limit: int | None = None) -> list[Task]:
+    def list(
+        self,
+        *,
+        status: TaskStatus | None = None,
+        title_query: str | None = None,
+        limit: int | None = None,
+    ) -> list[Task]:
         query = "SELECT * FROM tasks"
         params: list = []
+        conditions: list[str] = []
 
         if status is not None:
-            query += " WHERE status = ?"
+            conditions.append("status = ?")
             params.append(status.value)
+
+        if title_query:
+            conditions.append("LOWER(title) LIKE ?")
+            params.append(f"%{title_query.lower()}%")
+
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
 
         query += " ORDER BY updated_at DESC"
 

@@ -83,6 +83,30 @@ class CheckpointService:
     def list_checkpoints(self, task_id: str, *, limit: int = 20) -> list[CheckpointSummary]:
         return self.repository.list_summaries(task_id, limit=limit)
 
+    def delete_checkpoint(self, checkpoint_id: str) -> None:
+        checkpoint = self.repository.get(checkpoint_id)
+        if checkpoint is None:
+            raise ValueError(f"Checkpoint not found: {checkpoint_id}")
+
+        blob_path = self._resolve_blob_path(checkpoint.blob_path)
+        deleted = self.repository.delete(checkpoint_id)
+        if not deleted:
+            raise ValueError(f"Checkpoint not found: {checkpoint_id}")
+
+        if blob_path.exists():
+            blob_path.unlink()
+            self._cleanup_empty_blob_parents(blob_path.parent)
+
+    def prune_checkpoints(self, task_id: str, *, keep_last: int) -> int:
+        if keep_last < 0:
+            raise ValueError("keep_last must be greater than or equal to 0")
+
+        checkpoints = self.repository.list_records(task_id)
+        to_delete = checkpoints[keep_last:]
+        for checkpoint in to_delete:
+            self.delete_checkpoint(checkpoint.id)
+        return len(to_delete)
+
     def load_checkpoint_state(self, checkpoint_id: str) -> SessionState:
         checkpoint = self.repository.get(checkpoint_id)
         if checkpoint is None:
@@ -129,3 +153,13 @@ class CheckpointService:
         temp_path = blob_path.with_name(blob_path.name + ".tmp")
         temp_path.write_bytes(payload)
         os.replace(temp_path, blob_path)
+
+    def _cleanup_empty_blob_parents(self, path: Path) -> None:
+        checkpoints_root = self.settings.checkpoints_dir.resolve()
+        current = path.resolve()
+        while current != checkpoints_root:
+            try:
+                current.rmdir()
+            except OSError:
+                break
+            current = current.parent

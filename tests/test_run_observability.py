@@ -274,6 +274,6 @@ def test_task_cli_renders_runs_run_detail_and_task_logs(monkeypatch, tmp_path):
     )
 
     assert any("R0001" in message for message in outputs)
-    assert any("Failure Kind: -" in message for message in outputs)
+    assert any("Failure Kind:" in message and "-" in message for message in outputs)
     assert any("tool_name=read_file" in message for message in outputs)
     assert not errors
