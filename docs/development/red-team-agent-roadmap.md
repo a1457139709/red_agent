@@ -1,0 +1,402 @@
+# Red-Team Agent Roadmap
+
+## Purpose
+
+This roadmap translates the red-team agent requirements into a phased implementation plan grounded in the current repository layout.
+
+The plan assumes:
+
+- the existing task runtime remains temporarily available as legacy behavior
+- the new security-oriented runtime is introduced beside it
+- correctness, scope control, and observability are more important than backward compatibility
+
+## Current Repository Anchors
+
+The current codebase already has strong extension points:
+
+- `src/main.py`
+- `src/cli/ui.py`
+- `src/app/skill_service.py`
+- `src/runtime/task_runner.py`
+- `src/tools/executor.py`
+- `src/tools/policy.py`
+- `src/storage/`
+- `src/models/`
+
+The main architectural limitation today is that the runtime is still centered on:
+
+- one shell
+- one active task
+- one foreground prompt loop
+- one conversational checkpoint stream
+
+The new runtime must shift toward:
+
+- one operation
+- many jobs
+- typed tools
+- structured evidence
+- structured findings
+- scope-aware orchestration
+
+## Phase 0: Baseline Freeze and Runtime Partition
+
+### Goal
+
+Protect the current coding-agent runtime while creating space for a red-team-oriented runtime.
+
+### Work Items
+
+- keep the current `Task` and `Run` runtime available as legacy behavior
+- define a new runtime family for security operations
+- introduce a separate SQLite database file for the new runtime
+- define the new command namespace and CLI entry points
+
+### Target Modules
+
+- `src/main.py`
+- `src/storage/sqlite.py`
+- `src/runtime/`
+- `src/cli/ui.py`
+
+### Deliverables
+
+- runtime-family split documented in code and docs
+- new database path, such as `.red-code/agent-v2.db`
+- reserved CLI command groups for the new runtime
+
+## Phase 1: New Domain Model and Persistence
+
+### Goal
+
+Introduce the core entities required by the new runtime.
+
+### Work Items
+
+- add `Operation`
+- add `ScopePolicy`
+- add `Job`
+- add `Evidence`
+- add `Finding`
+- add `MemoryEntry`
+- add new repositories and schema initialization
+
+### Proposed Module Additions
+
+- `src/models/operation.py`
+- `src/models/scope_policy.py`
+- `src/models/job.py`
+- `src/models/evidence.py`
+- `src/models/finding.py`
+- `src/models/memory.py`
+
+- `src/storage/repositories/operations.py`
+- `src/storage/repositories/scope_policies.py`
+- `src/storage/repositories/jobs.py`
+- `src/storage/repositories/evidence.py`
+- `src/storage/repositories/findings.py`
+- `src/storage/repositories/memory.py`
+
+### Existing Modules to Leave Stable
+
+- `src/models/task.py`
+- `src/models/run.py`
+- `src/storage/tasks.py`
+- `src/storage/runs.py`
+- `src/storage/checkpoints.py`
+
+### Exit Criteria
+
+- operations can be created and listed
+- scope policies can be persisted and retrieved
+- jobs can be created and queried
+
+## Phase 2: Scope Policy Enforcement
+
+### Goal
+
+Upgrade safety from generic capability tiers to scope-aware admission control.
+
+### Work Items
+
+- define target validation rules
+- define allowed protocol and port checks
+- define rate and concurrency limits
+- enforce confirmation requirements from policy
+- record detailed denial reasons
+
+### Primary Refactor Targets
+
+- `src/tools/executor.py`
+- `src/tools/policy.py`
+
+### Proposed Module Additions
+
+- `src/orchestration/admission.py`
+- `src/orchestration/scope_validator.py`
+- `src/orchestration/rate_limits.py`
+
+### Exit Criteria
+
+- no network-capable tool executes without scope validation
+- out-of-scope requests are hard-blocked
+- denial and confirmation events are persisted
+
+## Phase 3: Typed Security Tool Foundation
+
+### Goal
+
+Replace shell-heavy security execution with typed, auditable tools.
+
+### MVP Tool Set
+
+- `dns_lookup`
+- `http_probe`
+- `tls_inspect`
+- `banner_grab`
+- `port_scan`
+
+### Work Items
+
+- define a shared tool contract
+- implement structured argument validation
+- normalize outputs
+- emit evidence items
+- emit finding candidates
+
+### Proposed Module Additions
+
+- `src/tools/contracts.py`
+- `src/tools/security/dns_lookup.py`
+- `src/tools/security/http_probe.py`
+- `src/tools/security/tls_inspect.py`
+- `src/tools/security/banner_grab.py`
+- `src/tools/security/port_scan.py`
+
+### Existing Modules to Refactor
+
+- `src/tools/__init__.py`
+- `src/tools/registry.py`
+- `src/tools/executor.py`
+
+### Notes
+
+`bash` may remain in the repository, but it should not be the primary red-team execution path.
+
+### Exit Criteria
+
+- typed security tools are callable through the unified executor
+- tool results are structured and inspectable
+- shell is no longer required for the main MVP workflows
+
+## Phase 4: Scheduler and Worker Runtime
+
+### Goal
+
+Move from one prompt equals one foreground run to a background-capable job runtime.
+
+### Work Items
+
+- add job queueing
+- add worker leasing
+- add heartbeat tracking
+- add timeout handling
+- add cancellation
+- add retry policy
+
+### Proposed Module Additions
+
+- `src/orchestration/job_service.py`
+- `src/orchestration/scheduler.py`
+- `src/runtime/worker.py`
+- `src/runtime/leases.py`
+- `src/runtime/timeouts.py`
+
+### Existing Modules to Decouple
+
+- `src/runtime/task_runner.py`
+
+The legacy task runner should not remain the center of security execution once job orchestration exists.
+
+### Exit Criteria
+
+- multiple jobs can run independently
+- worker crashes do not silently lose job state
+- timeouts and cancellations produce explicit terminal job states
+
+## Phase 5: Evidence and Findings Pipeline
+
+### Goal
+
+Promote execution output into durable proof and analyst-friendly conclusions.
+
+### Work Items
+
+- persist evidence metadata
+- write evidence artifacts to managed storage
+- persist finding candidates
+- support finding confirmation and dismissal
+- support evidence-to-finding traceability
+
+### Proposed Module Additions
+
+- `src/app/evidence_service.py`
+- `src/app/finding_service.py`
+- `src/reporting/findings_summary.py`
+- `src/reporting/evidence_export.py`
+
+### Filesystem Layout
+
+- `.red-code/operations/<operation_id>/evidence/`
+- `.red-code/operations/<operation_id>/exports/`
+
+### Exit Criteria
+
+- successful jobs produce evidence
+- findings can be reviewed without transcript replay
+- exports can be generated from structured data
+
+## Phase 6: Skill System Evolution
+
+### Goal
+
+Keep skills as workflow specializers while moving security control into runtime code.
+
+### Work Items
+
+- preserve prompt overlays and tool narrowing
+- add security workflow skills such as `surface-recon` and `web-enum`
+- make `model`, `effort`, `shell`, `user-invocable`, and `disable-model-invocation` affect runtime behavior
+- allow skills to generate bounded job templates instead of only changing prompts
+
+### Primary Refactor Targets
+
+- `src/app/skill_service.py`
+- `src/skills/loader.py`
+- `src/models/skill.py`
+- `src/skills/`
+
+### Exit Criteria
+
+- skills influence planning and tool visibility
+- skills do not bypass scope policy
+- currently parsed extension fields are operationally meaningful
+
+## Phase 7: CLI and Dashboard
+
+### Goal
+
+Expose the new runtime cleanly to the operator.
+
+### Work Items
+
+- add operation commands
+- add job commands
+- add finding commands
+- add evidence commands
+- add dashboard view
+
+### Command Groups
+
+- `/operation create|list|show|pause|resume`
+- `/job list|show|cancel`
+- `/finding list|show|confirm|dismiss`
+- `/evidence list|show`
+- `/dashboard`
+
+### Primary Refactor Targets
+
+- `src/main.py`
+- `src/cli/ui.py`
+
+### Exit Criteria
+
+- operators can inspect live and historical operation state
+- blocked actions and failures are easy to identify
+- the CLI no longer depends on task-only concepts for security workflows
+
+## Phase 8: Structured Memory and Planner Runtime
+
+### Goal
+
+Support higher-level orchestration without reverting to transcript-heavy control.
+
+### Work Items
+
+- add structured memory entries
+- build planner context from memory, evidence, and open findings
+- allow planners to create job proposals
+- keep planners unable to widen scope or bypass typed tools
+
+### Proposed Module Additions
+
+- `src/orchestration/planner_runtime.py`
+- `src/app/memory_service.py`
+
+### Exit Criteria
+
+- planners can propose next steps from stored facts
+- resumed operations do not require transcript replay to recover context
+
+## Recommended Delivery Order
+
+Recommended implementation order:
+
+1. Phase 0
+2. Phase 1
+3. Phase 2
+4. Phase 3
+5. Phase 4
+6. Phase 5
+7. Phase 7
+8. Phase 6
+9. Phase 8
+
+Rationale:
+
+- scope control must arrive before meaningful security execution
+- typed tools must arrive before broad security skills
+- evidence and findings must exist before advanced planning becomes worthwhile
+
+## Testing Strategy by Phase
+
+### Early Phases
+
+- schema initialization tests
+- repository round-trip tests
+- scope validation tests
+- policy denial tests
+
+### Mid Phases
+
+- typed tool contract tests
+- evidence persistence tests
+- finding generation tests
+- scheduler lease and timeout tests
+
+### Late Phases
+
+- CLI inspection tests
+- planner proposal tests
+- end-to-end operation tests
+
+## Migration Notes
+
+- keep the old task runtime available during development
+- do not force `Operation` to masquerade as `Task`
+- do not stretch checkpoint transcripts into the primary memory model for the new runtime
+- prefer a clean v2 runtime family over deep compatibility layers
+
+## First Practical Milestone
+
+The first milestone should deliver:
+
+- `Operation`
+- `ScopePolicy`
+- `Job`
+- at least three typed security tools
+- evidence persistence
+- finding persistence
+- CLI inspection for operation and job state
+
+That milestone is the point where `red-code` starts behaving like a real local security-operation agent rather than a generic coding agent with security-themed prompts.
