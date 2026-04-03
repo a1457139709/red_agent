@@ -136,8 +136,13 @@ Each checkpoint blob stores a versioned payload:
 Rules:
 
 - only `version = 2` is supported in this redesign
-- blobs are stored as `json+gzip`
+- blobs are stored as UTF-8 JSON with `json+gzip` encoding
 - the runtime must validate blob existence and digest before restore
+
+Implementation note:
+
+- checkpoint payloads must be serialized with `ensure_ascii=False` and encoded as UTF-8 before gzip compression so multilingual content restores losslessly
+- user-visible shell output should be decoded with a UTF-8-first strategy plus Windows fallback encodings to avoid mojibake in CLI-visible tool responses
 
 ## 6. Runtime Boundaries
 

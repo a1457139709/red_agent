@@ -1,4 +1,4 @@
-# Skill System Standard
+﻿# Skill System Standard
 
 ## Summary
 
@@ -53,7 +53,15 @@ src/skills/
     SKILL.md
     references/
     scripts/
+  git-auto-commit/
+    SKILL.md
+    references/
+    scripts/
   security-audit/
+    SKILL.md
+    references/
+    scripts/
+  weather-query-example/
     SKILL.md
     references/
     scripts/
@@ -106,19 +114,16 @@ Rules:
 
 ## Optional Claude-Compatible Fields
 
-The runtime preserves these fields for compatibility when present:
+The runtime currently parses and preserves these optional fields when present:
 
 - `argument-hint`
 - `disable-model-invocation`
 - `user-invocable`
 - `model`
 - `effort`
-- `context`
-- `agent`
-- `hooks`
 - `shell`
 
-These fields are not all active yet.
+These fields are not all active yet, but they are part of the normalized manifest shape.
 
 ## Body Requirements
 
@@ -168,7 +173,7 @@ Current safety integration rules:
 - skills may tighten permissions relative to base mode
 - skills do not expand permissions beyond base mode
 
-This means a read-heavy skill such as `security-audit` can reduce available capabilities without bypassing the executor’s policy boundary.
+This means a read-heavy skill such as `security-audit` can reduce available capabilities without bypassing the executor鈥檚 policy boundary.
 
 ## Activation Expectations
 
@@ -188,6 +193,13 @@ Supported interaction patterns:
 - `/skill current`
 - `/skill reload`
 - `/skill-name <prompt>`
+
+Current built-in skills include:
+
+- `development-default`
+- `git-auto-commit`
+- `security-audit`
+- `weather-query-example`
 
 ## Runtime Integration Rules
 
@@ -222,3 +234,4 @@ At minimum, tests should cover:
 - no-skill base runtime behavior
 - missing skill handling
 - prompt assembly with an activated skill
+

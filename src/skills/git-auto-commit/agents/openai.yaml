@@ -1,0 +1,4 @@
+interface:
+  display_name: "Git Auto Commit"
+  short_description: "Summarize local git changes and create a focused commit."
+  default_prompt: "Use $git-auto-commit to review the current repository changes, summarize them, and create a commit."

@@ -4,6 +4,8 @@ from .editFile import edit_file
 from .listDir import list_dir
 from .readFile import read_file
 from .search import search
+from .webFetch import web_fetch
+from .webSearch import web_search
 from .writeFile import write_file
 
 AVAILABLE_TOOLS = [
@@ -13,6 +15,8 @@ AVAILABLE_TOOLS = [
     list_dir,
     read_file,
     search,
+    web_fetch,
+    web_search,
     write_file,
 ]
 

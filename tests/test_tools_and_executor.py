@@ -1,8 +1,9 @@
-import subprocess
+﻿import subprocess
 from pathlib import Path
 
 import tools.bash as bash_module
-
+import tools.webFetch as web_fetch_module
+import tools.webSearch as web_search_module
 from tools import build_tool_registry, get_tools
 from tools.executor import ToolExecutionError, ToolExecutor
 from tools.policy import CapabilityTier
@@ -164,3 +165,93 @@ def test_search_stays_within_workspace(tmp_path, monkeypatch):
 
     assert "sample.txt:1 needle" in found
     assert "Path traversal detected" in escaped
+
+
+class FakeHTTPResponse:
+    def __init__(
+        self,
+        *,
+        body: bytes,
+        url: str,
+        content_type: str = "text/html; charset=utf-8",
+        status: int = 200,
+    ) -> None:
+        self._body = body
+        self._url = url
+        self.status = status
+        self.code = status
+        self.headers = {"Content-Type": content_type}
+
+    def read(self):
+        return self._body
+
+    def geturl(self):
+        return self._url
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+def test_web_fetch_extracts_readable_text(monkeypatch):
+    def fake_urlopen(request, timeout):
+        assert request.full_url == "https://example.com/page"
+        assert timeout == web_fetch_module.DEFAULT_TIMEOUT_SECONDS
+        return FakeHTTPResponse(
+            url="https://example.com/page",
+            body=(
+                b"<html><head><title>Example Page</title><style>.x{}</style></head>"
+                b"<body><h1>Hello</h1><p>World</p><script>alert(1)</script></body></html>"
+            ),
+        )
+
+    monkeypatch.setattr(web_fetch_module, "urlopen", fake_urlopen)
+
+    result = web_fetch_module.web_fetch.invoke({"url": "https://example.com/page"})
+
+    assert 'type="web_fetch"' in result
+    assert "Title: Example Page" in result
+    assert "Hello" in result
+    assert "World" in result
+    assert "alert(1)" not in result
+
+
+def test_web_fetch_rejects_non_http_urls():
+    result = web_fetch_module.web_fetch.invoke({"url": "file:///tmp/demo.txt"})
+
+    assert "only absolute http(s) URLs are supported" in result
+
+
+def test_web_search_formats_duckduckgo_results(monkeypatch):
+    def fake_urlopen(request, timeout):
+        assert "q=example+query" in request.full_url
+        assert timeout == web_search_module.DEFAULT_TIMEOUT_SECONDS
+        return FakeHTTPResponse(
+            url=request.full_url,
+            body=(
+                b'<html><body>'
+                b'<a class="result__a" href="https://example.com/a">Result A</a>'
+                b'<div class="result__snippet">Snippet A</div>'
+                b'<a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fb">'
+                b'Result B</a>'
+                b'<div class="result__snippet">Snippet B</div>'
+                b'</body></html>'
+            ),
+        )
+
+    monkeypatch.setattr(web_search_module, "urlopen", fake_urlopen)
+
+    result = web_search_module.web_search.invoke(
+        {"query": "example query", "max_results": 2}
+    )
+
+    assert 'type="web_search"' in result
+    assert "1. Result A" in result
+    assert "URL: https://example.com/a" in result
+    assert "Snippet: Snippet A" in result
+    assert "2. Result B" in result
+    assert "URL: https://example.com/b" in result
+
+

@@ -10,6 +10,8 @@ allowed-tools:
   - list_dir
   - read_file
   - search
+  - web_fetch
+  - web_search
   - write_file
 metadata:
   category: development

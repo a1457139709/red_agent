@@ -1,3 +1,5 @@
+import gzip
+import json
 import sqlite3
 
 import pytest
@@ -152,3 +154,28 @@ def test_checkpoint_service_prune_validates_keep_last(tmp_path):
 
     with pytest.raises(ValueError, match="keep_last"):
         checkpoint_service.prune_checkpoints("task-id", keep_last=-1)
+
+
+def test_checkpoint_service_round_trips_unicode_through_gzip_blob(tmp_path):
+    settings = build_settings(tmp_path)
+    task_service = TaskService.from_settings(settings)
+    checkpoint_service = CheckpointService.from_settings(settings)
+    task = task_service.create_task(title="Task", goal="Goal")
+
+    state = SessionState()
+    state.append_user_message("你好，世界")
+    state.compressed_summary = "摘要：保留中文"
+    state.set_usage({"total_tokens": 34})
+
+    checkpoint = checkpoint_service.save_checkpoint(task_id=task.id, session_state=state)
+    blob_path = settings.app_data_dir / checkpoint.blob_path
+
+    raw_payload = gzip.decompress(blob_path.read_bytes()).decode("utf-8")
+    decoded_payload = json.loads(raw_payload)
+    restored = checkpoint_service.load_checkpoint_state(checkpoint.id)
+
+    assert decoded_payload["session_state"]["history"][0]["content"] == "你好，世界"
+    assert decoded_payload["session_state"]["compressed_summary"] == "摘要：保留中文"
+    assert restored.history[0].content == "你好，世界"
+    assert restored.context_summary == "摘要：保留中文"
+    assert restored.last_usage == {"total_tokens": 34}

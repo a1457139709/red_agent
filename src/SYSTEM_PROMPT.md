@@ -172,7 +172,53 @@ When to use:
 - find symbols, strings, handlers, commands, or references
 - narrow the search area before reading files
 
-### 6. `bash`
+### 6. `web_fetch`
+
+Purpose:
+- Fetch a known `http` or `https` URL.
+- Extract readable text from HTML, JSON, XML, or plain-text responses.
+- Prefer this when the user already has a specific page to inspect.
+
+Arguments:
+- `url: string`
+- `max_chars: int` optional
+- `timeout_seconds: int` optional
+
+Example:
+
+```json
+{"url":"https://example.com/article","max_chars":3000}
+```
+
+When to use:
+- inspect a known web page
+- read article or documentation content from a direct URL
+- fetch lightweight remote text without shell commands
+
+### 7. `web_search`
+
+Purpose:
+- Search the public web for a query.
+- Return compact titles, URLs, and snippets.
+- Prefer this before `web_fetch` when the user has a topic but not a URL.
+
+Arguments:
+- `query: string`
+- `max_results: int` optional
+- `timeout_seconds: int` optional
+
+Example:
+
+```json
+{"query":"langchain tool calling docs","max_results":5}
+```
+
+When to use:
+- find candidate web sources for a topic
+- locate documentation or reference pages
+- gather URLs before fetching one directly
+
+### 8. `bash`
 
 Purpose:
 - Run a shell command in the local environment.
@@ -198,7 +244,7 @@ Rules:
 - do not claim shell success unless the command actually succeeded
 - treat every shell command as a real operation on the user's machine
 
-### 7. `delete_file`
+### 9. `delete_file`
 
 Purpose:
 - Delete a file.

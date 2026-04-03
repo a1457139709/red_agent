@@ -17,6 +17,7 @@ The project is intended for local single-user development work. It is not a SaaS
 - built-in and user-local `SKILL.md` skills
 - explicit skill activation and one-shot skill invocation
 - file tools: read, write, edit, list, search, delete
+- web tools: `web_fetch` and `web_search`
 - shell command execution with safety checks
 - capability-tier tool safety
 - session state and context compression
@@ -54,6 +55,7 @@ python src/main.py
 - `/task help`
 
 Use `latest` or `last` in task-facing commands to target the most recently updated task.
+
 - `/skill list`
 - `/skill show <name>`
 - `/skill use <name>`
@@ -75,12 +77,12 @@ Built-in skills live under:
 
 User-local skills live under:
 
-- `.mini-claude-code/skills/`
+- `.red-code/skills/`
 
 Example:
 
 ```text
-.mini-claude-code/
+.red-code/
   skills/
     my-skill/
       SKILL.md
@@ -106,12 +108,12 @@ Core source areas:
 
 Current docs:
 
-- `docs/architecture.md`
-- `docs/task-runtime.md`
-- `docs/engineering-development-plan.en.md`
-- `docs/prompt-runtime-contract.md`
-- `docs/skill-system-standard.md`
-- `docs/checkpoint-storage-evolution.md`
+- `docs/architecture/architecture.md`
+- `docs/architecture/task-runtime.md`
+- `docs/architecture/prompt-runtime-contract.md`
+- `docs/architecture/skill-system-standard.md`
+- `docs/architecture/checkpoint-storage-evolution.md`
+- `docs/development/engineering-development-plan.en.md`
 
 The docs index is at `docs/README.md`.
 
@@ -121,6 +123,7 @@ The current built-in skills are:
 
 - `development-default`
 - `security-audit`
+- `weather-query-example`
 
 ## Tests
 

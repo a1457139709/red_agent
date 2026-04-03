@@ -113,6 +113,10 @@ def test_parse_skill_shorthand_requires_known_skill():
         "/security-audit inspect the configs",
         skill_service=skill_service,
     ) == ("security-audit", "inspect the configs")
+    assert parse_skill_shorthand(
+        "/git-auto-commit summarize and commit the current changes",
+        skill_service=skill_service,
+    ) == ("git-auto-commit", "summarize and commit the current changes")
     assert parse_skill_shorthand("/task list", skill_service=skill_service) is None
     assert parse_skill_shorthand("/unknown-skill demo", skill_service=skill_service) is None
 
@@ -328,4 +332,3 @@ def test_run_interactive_shell_clear_preserves_active_skill_and_clears_screen(
     assert captured["clears"] == 1
     assert shell_state.active_skill_name == "security-audit"
     assert build_prompt(shell_state) == "\nskill:security-audit > "
-

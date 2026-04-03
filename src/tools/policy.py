@@ -16,6 +16,8 @@ TOOL_CAPABILITIES: dict[str, CapabilityTier] = {
     "list_dir": CapabilityTier.READ,
     "read_file": CapabilityTier.READ,
     "search": CapabilityTier.READ,
+    "web_fetch": CapabilityTier.READ,
+    "web_search": CapabilityTier.READ,
     "write_file": CapabilityTier.WRITE,
     "edit_file": CapabilityTier.WRITE,
     "bash": CapabilityTier.EXECUTE,
