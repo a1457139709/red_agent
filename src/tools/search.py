@@ -1,25 +1,34 @@
 from pathlib import *
+
 from langchain.tools import tool
-from .registry import register_tool
+
 from utils.safety import resolve_safe_path
+
+from .registry import register_tool
+
 
 tool_schema = {
     "type": "object",
     "properties": {
         "query": {
             "type": "string",
-            "description":"要搜索的内容"
+            "description": "Text to search for",
         },
         "file_path": {
             "type": "string",
-            "description":"文件路径（相对于当前工作目录）"
+            "description": "File or directory path relative to the current working directory",
         }
     },
-    "required": ["query", "file_path"]
+    "required": ["query", "file_path"],
 }
 
+
 @register_tool
-@tool("search", description="在文件中搜索内容，返回存在要搜索的内容的完整行",args_schema=tool_schema)
+@tool(
+    "search",
+    description="Search file contents and return complete matching lines.",
+    args_schema=tool_schema,
+)
 def search(query: str, file_path: str = "."):
     try:
         safe_path = resolve_safe_path(file_path)
@@ -29,7 +38,7 @@ def search(query: str, file_path: str = "."):
     results = []
 
     if not safe_path.exists():
-        return f"Error: 路径 {file_path} 不存在"
+        return f"Error: path does not exist - {file_path}"
 
     if safe_path.is_file():
         candidates = [safe_path]
@@ -37,23 +46,18 @@ def search(query: str, file_path: str = "."):
         candidates = safe_path.rglob("*")
 
     for f in candidates:
-
         if not f.is_file():
             continue
 
         try:
             with f.open(errors="ignore") as fh:
                 for i, line in enumerate(fh, 1):
-
                     if query in line:
-                        results.append(
-                            f"{f}:{i} {line.strip()}"
-                        )
+                        results.append(f"{f}:{i} {line.strip()}")
 
                         if len(results) > 30:
                             return "\n".join(results)
-
-        except:
+        except Exception:
             pass
 
     return "\n".join(results)

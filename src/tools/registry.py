@@ -1,8 +1,10 @@
 from langchain.tools import BaseTool
 
+
 def register_tool(tool: BaseTool):
     """
-    兼容旧的工具定义方式。
-    当前项目改为在 tools/__init__.py 中显式装配工具，装饰器仅做透传。
+    Compatibility shim for the legacy tool declaration style.
+    The project now assembles tools explicitly in tools/__init__.py,
+    so this decorator only passes the tool object through unchanged.
     """
     return tool
