@@ -116,11 +116,7 @@ class ToolExecutor:
         )
 
     def execute(self, tool_name: str, args: dict) -> str:
-        tool = self._tools[tool_name]
-        try:
-            capability = get_tool_capability(tool_name)
-        except ValueError:
-            capability = CapabilityTier.READ
+        capability = self._resolve_capability(tool_name)
         target_path = self._resolve_target_path(args)
         target = self._summarize_target(tool_name, args, target_path)
         args_summary = self._summarize_args(args)
@@ -137,6 +133,25 @@ class ToolExecutor:
             capability=capability,
             args_summary=args_summary,
         )
+
+        tool = self._tools.get(tool_name)
+        if tool is None:
+            error = f"Unknown tool requested: {tool_name}"
+            self._emit_tool_event(
+                event_type="tool_failed",
+                tool_name=tool_name,
+                capability=capability,
+                args_summary=args_summary,
+                error=error,
+            )
+            self._emit_audit(
+                event_type="operation_failed",
+                tool_name=tool_name,
+                capability=capability,
+                reason="unknown_tool",
+                target=target,
+            )
+            raise ToolExecutionError(tool_name, capability, error)
 
         denial = self._enforce_policy(context)
         if denial is not None:
@@ -256,7 +271,7 @@ class ToolExecutor:
                 target=command,
                 command_risk=safety_level,
             )
-            return f"Blocked shell command (拒绝执行): classified as high risk.\nCommand: {command}"
+            return f"Blocked shell command: classified as high risk.\nCommand: {command}"
 
         if safety_level == "CONFIRM":
             return self._require_confirmation(
@@ -305,7 +320,7 @@ class ToolExecutor:
                 command_risk=command_risk,
             )
             return (
-                f"Blocked {context.tool_name} (拒绝执行): confirmation is required for this "
+                f"Blocked {context.tool_name}: confirmation is required for this "
                 f"{context.capability.value} operation but no confirmation handler is available."
             )
 
@@ -318,7 +333,7 @@ class ToolExecutor:
                 target=effective_target,
                 command_risk=command_risk,
             )
-            return f"Blocked {context.tool_name}: user declined confirmation. (用户拒绝)"
+            return f"Blocked {context.tool_name}: user declined confirmation."
 
         self._emit_audit(
             event_type="operation_confirmed",
@@ -340,6 +355,12 @@ class ToolExecutor:
             except ValueError:
                 return None
         return None
+
+    def _resolve_capability(self, tool_name: str) -> CapabilityTier:
+        try:
+            return get_tool_capability(tool_name)
+        except ValueError:
+            return CapabilityTier.READ
 
     def _summarize_target(self, tool_name: str, args: dict, target_path: Path | None) -> str | None:
         if target_path is not None:
