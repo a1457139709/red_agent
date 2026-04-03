@@ -13,8 +13,11 @@ from rich.table import Table
 from rich.text import Text
 
 from models.checkpoint import CheckpointSummary
+from models.job import Job
+from models.operation import Operation
 from models.run import Run, TaskLogEntry
 from models.skill import LoadedSkill
+from models.scope_policy import ScopePolicy
 from models.task import Task
 
 
@@ -110,9 +113,14 @@ class CliPresenter:
 
     def _status_text(self, status: str) -> Text:
         style_map = {
+            "draft": "bright_black",
             "pending": "yellow",
+            "queued": "yellow",
+            "ready": "blue",
             "running": "green",
+            "succeeded": "bold green",
             "paused": "cyan",
+            "blocked": "bold yellow",
             "failed": "bold red",
             "completed": "bold green",
             "cancelled": "magenta",
@@ -188,14 +196,38 @@ class CliPresenter:
         topics = Table(box=ASCII_BOX, expand=True, header_style="bold")
         topics.add_column("Topic", style="bold cyan", no_wrap=True)
         topics.add_column("Purpose", style="white")
+        topics.add_row("operation", "Red-team operations and scope policy inspection")
+        topics.add_row("job", "Operation jobs and execution details")
         topics.add_row("task", "Task lifecycle, runs, checkpoints, and logs")
         topics.add_row("skill", "Skill activation, inspection, reload, and shorthand usage")
         return Group(
             Text("Base mode uses the default prompt and full built-in tool set.", style="dim"),
             Rule(style="grey50", characters="-"),
             Panel(topics, title="Help Topics", border_style="bright_blue", box=ASCII_BOX),
-            Text("Drill down with /help task or /help skill.", style="dim"),
+            Text("Drill down with /help operation, /help job, /help task, or /help skill.", style="dim"),
             Text("Session shortcuts: /clear, /reset, /exit, /quit", style="dim"),
+        )
+
+    def _help_operation(self) -> Group:
+        return Group(
+            Text("Operation help", style="dim"),
+            Rule(style="grey50", characters="-"),
+            self._command_panel("Operation Commands", [
+                ("/operation create", "Create an operation and its scope policy"),
+                ("/operation list [status] [limit]", "List recent operations"),
+                ("/operation show <id>", "Show operation details and scope policy"),
+            ], border_style="cyan"),
+        )
+
+    def _help_job(self) -> Group:
+        return Group(
+            Text("Job help", style="dim"),
+            Rule(style="grey50", characters="-"),
+            self._command_panel("Job Commands", [
+                ("/job create <operation_id>", "Create a job inside an operation"),
+                ("/job list <operation_id> [status] [limit]", "List jobs for an operation"),
+                ("/job show <job_id>", "Show job details"),
+            ], border_style="magenta"),
         )
 
     def _help_task(self) -> Group:
@@ -244,6 +276,12 @@ class CliPresenter:
         if topic is None:
             body = self._help_overview()
             title = "red-code"
+        elif topic == "operation":
+            body = self._help_operation()
+            title = "Help: operation"
+        elif topic == "job":
+            body = self._help_job()
+            title = "Help: job"
         elif topic == "task":
             body = self._help_task()
             title = "Help: task"
@@ -288,6 +326,115 @@ class CliPresenter:
                 task.title,
             )
         self._emit(table)
+
+    def show_operation_list(self, operations: list[Operation], *, filter_label: str | None = None) -> None:
+        if not operations:
+            self._emit(
+                Panel(Text("No operations found.", style="dim"), title="Operations", border_style="yellow", box=ASCII_BOX)
+            )
+            return
+        table = Table(title=filter_label or "Operations", box=ASCII_BOX, expand=True, header_style="bold")
+        table.add_column("Operation", style="cyan", no_wrap=True)
+        table.add_column("Status", no_wrap=True)
+        table.add_column("Updated", style="dim", no_wrap=True)
+        table.add_column("Title", overflow="fold")
+        table.add_column("Objective", overflow="fold")
+        for operation in operations:
+            table.add_row(
+                operation.public_id,
+                self._status_text(operation.status.value),
+                self._format_timestamp_compact(operation.updated_at),
+                operation.title,
+                operation.objective,
+            )
+        self._emit(table)
+
+    def show_operation_detail(self, operation: Operation, policy: ScopePolicy) -> None:
+        summary = Panel(
+            self._detail_table([
+                ("Operation ID", operation.public_id),
+                ("Internal ID", operation.id),
+                ("Title", operation.title),
+                ("Objective", operation.objective),
+                ("Status", operation.status.value),
+                ("Workspace", operation.workspace),
+                ("Scope Policy ID", policy.id),
+                ("Created At", operation.created_at),
+                ("Updated At", operation.updated_at),
+                ("Closed At", operation.closed_at or "-"),
+                ("Last Error", operation.last_error or "-"),
+            ]),
+            title="Operation",
+            border_style="cyan",
+            box=ASCII_BOX,
+        )
+        policy_panel = Panel(
+            self._detail_table([
+                ("Allowed Hosts", ", ".join(policy.allowed_hosts) or "-"),
+                ("Allowed Domains", ", ".join(policy.allowed_domains) or "-"),
+                ("Allowed CIDRs", ", ".join(policy.allowed_cidrs) or "-"),
+                ("Allowed Ports", ", ".join(str(port) for port in policy.allowed_ports) or "-"),
+                ("Allowed Protocols", ", ".join(policy.allowed_protocols) or "-"),
+                ("Denied Targets", ", ".join(policy.denied_targets) or "-"),
+                ("Tool Categories", ", ".join(policy.allowed_tool_categories) or "-"),
+                ("Max Concurrency", str(policy.max_concurrency)),
+                ("Rate Limit", str(policy.rate_limit_per_minute) if policy.rate_limit_per_minute is not None else "-"),
+                ("Confirmation Actions", ", ".join(policy.confirmation_required_actions) or "-"),
+            ]),
+            title="Scope Policy",
+            border_style="magenta",
+            box=ASCII_BOX,
+        )
+        self._emit(Group(summary, policy_panel))
+
+    def show_job_list(self, jobs: list[Job], *, operation_label: str | None = None) -> None:
+        if not jobs:
+            self._emit(Panel(Text("No jobs found.", style="dim"), title="Jobs", border_style="yellow", box=ASCII_BOX))
+            return
+        title = f"Jobs for {operation_label}" if operation_label else "Jobs"
+        table = Table(title=title, box=ASCII_BOX, expand=True, header_style="bold")
+        table.add_column("Job", style="cyan", no_wrap=True)
+        table.add_column("Status", no_wrap=True)
+        table.add_column("Type", no_wrap=True)
+        table.add_column("Target", overflow="fold")
+        table.add_column("Updated", style="dim", no_wrap=True)
+        for job in jobs:
+            table.add_row(
+                job.public_id,
+                self._status_text(job.status.value),
+                job.job_type,
+                job.target_ref,
+                self._format_timestamp_compact(job.updated_at),
+            )
+        self._emit(table)
+
+    def show_job_detail(self, job: Job) -> None:
+        self._emit(
+            Panel(
+                self._detail_table([
+                    ("Job ID", job.public_id),
+                    ("Internal ID", job.id),
+                    ("Operation ID", job.operation_id),
+                    ("Type", job.job_type),
+                    ("Target", job.target_ref),
+                    ("Status", job.status.value),
+                    ("Arguments", str(job.arguments or {})),
+                    ("Dependencies", ", ".join(job.dependency_job_ids) or "-"),
+                    ("Timeout Seconds", str(job.timeout_seconds) if job.timeout_seconds is not None else "-"),
+                    ("Retry Limit", str(job.retry_limit)),
+                    ("Retry Count", str(job.retry_count)),
+                    ("Queued At", job.queued_at or "-"),
+                    ("Started At", job.started_at or "-"),
+                    ("Finished At", job.finished_at or "-"),
+                    ("Created At", job.created_at),
+                    ("Updated At", job.updated_at),
+                    ("Last Error", job.last_error or "-"),
+                ]),
+                title="Job",
+                border_style="magenta",
+                box=ASCII_BOX,
+            )
+        )
 
     def show_task_detail(self, task: Task) -> None:
         identity = Panel(

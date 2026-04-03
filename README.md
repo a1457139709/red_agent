@@ -9,6 +9,11 @@
 
 The project is intended for local single-user development work. It is not a SaaS agent platform or a multi-user service.
 
+The repository now contains two parallel runtime families:
+
+- v1 `Task` / `Run` for the existing coding-agent workflow
+- v2 `Operation` / `Job` foundations for the red-team-oriented runtime
+
 ## Current Capabilities
 
 - interactive local CLI
@@ -24,20 +29,30 @@ The project is intended for local single-user development work. It is not a SaaS
 - persisted tasks, runs, checkpoints, and task logs
 - task-scoped safety audit logging
 - blob-backed checkpoint storage with metadata-only SQLite indexing
+- persisted operations, scope policies, jobs, evidence, findings, and memory entries
+- minimal red-team CLI inspection for operations and jobs
 
 ## Run
 
-```bash
-pip install -r requirements.txt
-python src/main.py
+```powershell
+.venv\Scripts\python -m pip install -r requirements.txt
+.venv\Scripts\python src/main.py
 ```
 
 ## Current CLI Commands
 
 - `/help`
+- `/help operation`
+- `/help job`
 - `/help task`
 - `/help skill`
 - `/clear`
+- `/operation create`
+- `/operation list [status] [limit]`
+- `/operation show <operation_id>`
+- `/job create <operation_id>`
+- `/job list <operation_id> [status] [limit]`
+- `/job show <job_id>`
 - `/task create`
 - `/task list [status] [limit]`
 - `/task recent [limit]`
@@ -66,8 +81,25 @@ Use `latest` or `last` in task-facing commands to target the most recently updat
 - `/skill-name <prompt>`
 
 `/help` now shows only top-level topics.
-Use `/help task` and `/help skill` for detailed command help.
+Use `/help operation`, `/help job`, `/help task`, and `/help skill` for detailed command help.
 `/clear` resets only the in-memory context and clears the screen while preserving any active task binding or active shell skill.
+
+## Red-Team Phase 1 Scope
+
+Phase 1 currently delivers:
+
+- `Operation`, `ScopePolicy`, `Job`, `Evidence`, `Finding`, and `MemoryEntry` domain models
+- SQLite-backed repositories and services for the v2 red-team runtime
+- atomic operation plus scope-policy creation
+- minimal `/operation` and `/job` CLI inspection flows
+
+Phase 1 intentionally does not yet deliver:
+
+- runtime scope enforcement
+- typed security tool execution
+- a background scheduler or worker runtime
+- managed evidence artifact export
+- automatic finding generation
 
 ## Skill Locations
 
@@ -127,6 +159,6 @@ The current built-in skills are:
 
 ## Tests
 
-```bash
-pytest
+```powershell
+.venv\Scripts\python -m pytest
 ```

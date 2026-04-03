@@ -71,6 +71,15 @@ Protect the current coding-agent runtime while creating space for a red-team-ori
 
 Introduce the core entities required by the new runtime.
 
+### Current Implementation Note
+
+The current repository implements this phase in a same-database coexistence mode:
+
+- new v2 tables live beside legacy `tasks`, `runs`, and `checkpoints`
+- legacy runtime behavior remains unchanged
+- minimal `/operation` and `/job` CLI inspection is included to satisfy the phase exit criteria
+- a dedicated `agent-v2.db` split is deferred to a later partitioning pass
+
 ### Work Items
 
 - add `Operation`

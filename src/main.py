@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from typing import Callable
 
@@ -9,9 +10,13 @@ from agent.loop import agent_loop
 from agent.settings import Settings, get_settings
 from agent.state import SessionState
 from app.checkpoint_service import CheckpointService
+from app.job_service import JobService
+from app.operation_service import OperationService
 from app.run_service import RunService
 from app.skill_service import SkillService
 from app.task_service import TaskService
+from models.job import JobStatus
+from models.operation import OperationStatus
 from models.run import TaskLogEntry
 from models.task import Task, TaskStatus
 from runtime.task_runner import TaskRunner, apply_result_to_session
@@ -86,6 +91,28 @@ def parse_skill_command(command: str) -> tuple[str, list[str]] | None:
     return parts[1], parts[2:]
 
 
+def parse_operation_command(command: str) -> tuple[str, list[str]] | None:
+    stripped = command.strip()
+    if not stripped.startswith("/operation"):
+        return None
+
+    parts = stripped.split()
+    if len(parts) == 1:
+        return "", []
+    return parts[1], parts[2:]
+
+
+def parse_job_command(command: str) -> tuple[str, list[str]] | None:
+    stripped = command.strip()
+    if not stripped.startswith("/job"):
+        return None
+
+    parts = stripped.split()
+    if len(parts) == 1:
+        return "", []
+    return parts[1], parts[2:]
+
+
 def parse_help_command(command: str) -> list[str] | None:
     stripped = command.strip()
     if not stripped.startswith("/help"):
@@ -101,7 +128,13 @@ def parse_skill_shorthand(
     skill_service: SkillService,
 ) -> tuple[str, str] | None:
     stripped = command.strip()
-    if not stripped.startswith("/") or stripped.startswith("/skill") or stripped.startswith("/task"):
+    if (
+        not stripped.startswith("/")
+        or stripped.startswith("/skill")
+        or stripped.startswith("/task")
+        or stripped.startswith("/operation")
+        or stripped.startswith("/job")
+    ):
         return None
 
     raw_parts = stripped[1:].split(maxsplit=1)
@@ -180,12 +213,12 @@ def handle_help_command(
         ui.show_help()
         return True
     if len(args) != 1:
-        ui.show_error("Usage: /help [task|skill]")
+        ui.show_error("Usage: /help [task|skill|operation|job]")
         return True
 
     topic = args[0].lower()
-    if topic not in {"task", "skill"}:
-        ui.show_error(f"Unknown help topic: {args[0]}. Available topics: task, skill")
+    if topic not in {"operation", "job", "task", "skill"}:
+        ui.show_error(f"Unknown help topic: {args[0]}. Available topics: task, skill, operation, job")
         return True
     ui.show_help(topic)
     return True
@@ -308,6 +341,71 @@ def _parse_limit(raw: str) -> int:
     return limit
 
 
+def _parse_optional_positive_int(raw: str, *, field_name: str) -> int | None:
+    if not raw.strip():
+        return None
+    value = _parse_limit(raw)
+    return value
+
+
+def _parse_non_negative_int(raw: str, *, field_name: str) -> int:
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"Invalid {field_name}: {raw}") from exc
+    if value < 0:
+        raise ValueError(f"{field_name} must be greater than or equal to 0.")
+    return value
+
+
+def _parse_csv_list(raw: str) -> list[str]:
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _parse_ports(raw: str) -> list[int]:
+    values: list[int] = []
+    for item in _parse_csv_list(raw):
+        values.append(_parse_limit(item))
+    return values
+
+
+def _parse_json_dict(raw: str) -> dict:
+    text = raw.strip() or "{}"
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON arguments: {exc.msg}") from exc
+    if not isinstance(value, dict):
+        raise ValueError("Arguments JSON must decode to an object.")
+    return value
+
+
+def _parse_operation_list_args(args: list[str]) -> tuple[OperationStatus | None, int]:
+    if not args:
+        return None, 20
+    if len(args) == 1:
+        try:
+            return OperationStatus(args[0].lower()), 20
+        except ValueError:
+            return None, _parse_limit(args[0])
+    if len(args) == 2:
+        return OperationStatus(args[0].lower()), _parse_limit(args[1])
+    raise ValueError("Usage: /operation list [status] [limit]")
+
+
+def _parse_job_list_args(args: list[str]) -> tuple[JobStatus | None, int]:
+    if not args:
+        return None, 20
+    if len(args) == 1:
+        try:
+            return JobStatus(args[0].lower()), 20
+        except ValueError:
+            return None, _parse_limit(args[0])
+    if len(args) == 2:
+        return JobStatus(args[0].lower()), _parse_limit(args[1])
+    raise ValueError("Usage: /job list <operation_id> [status] [limit]")
+
+
 def _parse_task_list_args(args: list[str]) -> tuple[TaskStatus | None, int]:
     if not args:
         return None, 20
@@ -343,6 +441,10 @@ def _resolve_task_reference(task_service: TaskService, task_ref: str) -> Task | 
     if task_ref in {"latest", "last"}:
         return task_service.get_latest_task()
     return task_service.get_task(task_ref)
+
+
+def _resolve_operation_reference(operation_service: OperationService, operation_ref: str):
+    return operation_service.get_operation(operation_ref)
 
 
 def _build_run_label_map(entries: list[TaskLogEntry], run_service: RunService) -> dict[str, str]:
@@ -615,6 +717,209 @@ def handle_task_command(
         return True
 
 
+def handle_operation_command(
+    command: str,
+    *,
+    operation_service: OperationService,
+    presenter: CliPresenter | None = None,
+    text_output: OutputFn | None = None,
+    info_output: OutputFn | None = None,
+    error_output: OutputFn | None = None,
+    success_output: OutputFn | None = None,
+    input_func: InputFn = input,
+) -> bool:
+    parsed = parse_operation_command(command)
+    if parsed is None:
+        return False
+
+    ui = _resolve_presenter(
+        presenter,
+        text_output=text_output,
+        info_output=info_output,
+        error_output=error_output,
+        success_output=success_output,
+    )
+    action, args = parsed
+
+    try:
+        if action in {"", "help"}:
+            ui.show_help("operation")
+            return True
+
+        if action == "create":
+            title = input_func("Title: ").strip()
+            objective = input_func("Objective: ").strip()
+            allowed_hosts = _parse_csv_list(input_func("Allowed hosts: ").strip())
+            allowed_domains = _parse_csv_list(input_func("Allowed domains: ").strip())
+            allowed_cidrs = _parse_csv_list(input_func("Allowed CIDRs: ").strip())
+            allowed_ports = _parse_ports(input_func("Allowed ports: ").strip())
+            allowed_protocols = _parse_csv_list(input_func("Allowed protocols: ").strip())
+            denied_targets = _parse_csv_list(input_func("Denied targets: ").strip())
+            allowed_tool_categories = _parse_csv_list(input_func("Allowed tool categories: ").strip())
+            max_concurrency_raw = input_func("Max concurrency [1]: ").strip()
+            max_concurrency = 1 if not max_concurrency_raw else _parse_limit(max_concurrency_raw)
+            rate_limit_raw = input_func("Rate limit per minute [blank=none]: ").strip()
+            rate_limit_per_minute = _parse_optional_positive_int(
+                rate_limit_raw,
+                field_name="rate_limit_per_minute",
+            )
+            confirmation_required_actions = _parse_csv_list(
+                input_func("Confirmation-required actions: ").strip()
+            )
+
+            if not title or not objective:
+                ui.show_error("Operation title and objective are required.")
+                return True
+
+            operation = operation_service.create_operation(
+                title=title,
+                objective=objective,
+                allowed_hosts=allowed_hosts,
+                allowed_domains=allowed_domains,
+                allowed_cidrs=allowed_cidrs,
+                allowed_ports=allowed_ports,
+                allowed_protocols=allowed_protocols,
+                denied_targets=denied_targets,
+                allowed_tool_categories=allowed_tool_categories,
+                max_concurrency=max_concurrency,
+                rate_limit_per_minute=rate_limit_per_minute,
+                confirmation_required_actions=confirmation_required_actions,
+            )
+            ui.show_success(f"Created operation {operation.public_id} ({operation.id})")
+            return True
+
+        if action == "list":
+            status, limit = _parse_operation_list_args(args)
+            operations = operation_service.list_operations(status=status, limit=limit)
+            filter_label = f"Operations (status: {status.value})" if status is not None else "Operations"
+            ui.show_operation_list(operations, filter_label=filter_label)
+            return True
+
+        if action == "show":
+            if len(args) != 1:
+                ui.show_error("Usage: /operation show <operation_id>")
+                return True
+            operation = _resolve_operation_reference(operation_service, args[0])
+            if operation is None:
+                ui.show_error(f"Operation not found: {args[0]}")
+                return True
+            policy = operation_service.require_scope_policy(operation.id)
+            ui.show_operation_detail(operation, policy)
+            return True
+
+        ui.show_error(f"Unknown operation command: {action}")
+        return True
+    except ValueError as exc:
+        ui.show_error(str(exc))
+        return True
+    except Exception as exc:
+        ui.show_error(f"Operation command failed: {exc}")
+        return True
+
+
+def handle_job_command(
+    command: str,
+    *,
+    job_service: JobService,
+    operation_service: OperationService,
+    presenter: CliPresenter | None = None,
+    text_output: OutputFn | None = None,
+    info_output: OutputFn | None = None,
+    error_output: OutputFn | None = None,
+    success_output: OutputFn | None = None,
+    input_func: InputFn = input,
+) -> bool:
+    parsed = parse_job_command(command)
+    if parsed is None:
+        return False
+
+    ui = _resolve_presenter(
+        presenter,
+        text_output=text_output,
+        info_output=info_output,
+        error_output=error_output,
+        success_output=success_output,
+    )
+    action, args = parsed
+
+    try:
+        if action in {"", "help"}:
+            ui.show_help("job")
+            return True
+
+        if action == "create":
+            if len(args) != 1:
+                ui.show_error("Usage: /job create <operation_id>")
+                return True
+            operation = operation_service.get_operation(args[0])
+            if operation is None:
+                ui.show_error(f"Operation not found: {args[0]}")
+                return True
+
+            job_type = input_func("Job type: ").strip()
+            target_ref = input_func("Target ref: ").strip()
+            arguments = _parse_json_dict(input_func("Arguments JSON [{}]: ").strip())
+            dependency_job_ids = _parse_csv_list(input_func("Dependency job ids: ").strip())
+            timeout_seconds = _parse_optional_positive_int(
+                input_func("Timeout seconds [blank=none]: ").strip(),
+                field_name="timeout_seconds",
+            )
+            retry_limit_raw = input_func("Retry limit [0]: ").strip()
+            retry_limit = 0 if not retry_limit_raw else _parse_non_negative_int(
+                retry_limit_raw,
+                field_name="retry_limit",
+            )
+
+            if not job_type or not target_ref:
+                ui.show_error("Job type and target ref are required.")
+                return True
+
+            job = job_service.create_job(
+                operation_identifier=operation.id,
+                job_type=job_type,
+                target_ref=target_ref,
+                arguments=arguments,
+                dependency_job_ids=dependency_job_ids,
+                timeout_seconds=timeout_seconds,
+                retry_limit=retry_limit,
+            )
+            ui.show_success(f"Created job {job.public_id} ({job.id})")
+            return True
+
+        if action == "list":
+            if not args or len(args) > 3:
+                ui.show_error("Usage: /job list <operation_id> [status] [limit]")
+                return True
+            operation = operation_service.get_operation(args[0])
+            if operation is None:
+                ui.show_error(f"Operation not found: {args[0]}")
+                return True
+            status, limit = _parse_job_list_args(args[1:])
+            jobs = job_service.list_jobs(operation.id, status=status, limit=limit)
+            ui.show_job_list(jobs, operation_label=operation.public_id or operation.id)
+            return True
+
+        if action == "show":
+            if len(args) != 1:
+                ui.show_error("Usage: /job show <job_id>")
+                return True
+            job = job_service.get_job(args[0])
+            if job is None:
+                ui.show_error(f"Job not found: {args[0]}")
+                return True
+            ui.show_job_detail(job)
+            return True
+
+        ui.show_error(f"Unknown job command: {action}")
+        return True
+    except ValueError as exc:
+        ui.show_error(str(exc))
+        return True
+    except Exception as exc:
+        ui.show_error(f"Job command failed: {exc}")
+        return True
+
+
 def pause_active_task_if_needed(
     *,
     shell_state: ShellState,
@@ -641,6 +946,8 @@ async def run_interactive_shell(
     session_state: SessionState,
     shell_state: ShellState,
     tool_executor: ToolExecutor,
+    operation_service: OperationService | None = None,
+    job_service: JobService | None = None,
     task_service: TaskService,
     run_service: RunService,
     checkpoint_service: CheckpointService | None = None,
@@ -649,6 +956,8 @@ async def run_interactive_shell(
     input_func: InputFn = input,
 ) -> None:
     checkpoint_service = checkpoint_service or task_runner.checkpoint_service
+    operation_service = operation_service or OperationService.from_settings(settings)
+    job_service = job_service or JobService.from_settings(settings)
     while True:
         try:
             question = input_func(build_prompt(shell_state)).strip()
@@ -694,6 +1003,21 @@ async def run_interactive_shell(
             question,
             shell_state=shell_state,
             skill_service=skill_service,
+        ):
+            continue
+
+        if handle_operation_command(
+            question,
+            operation_service=operation_service,
+            input_func=input_func,
+        ):
+            continue
+
+        if handle_job_command(
+            question,
+            job_service=job_service,
+            operation_service=operation_service,
+            input_func=input_func,
         ):
             continue
 
@@ -790,6 +1114,8 @@ async def main() -> None:
     settings = get_settings()
     session_state = SessionState()
     shell_state = ShellState()
+    operation_service = OperationService.from_settings(settings)
+    job_service = JobService.from_settings(settings)
     task_service = TaskService.from_settings(settings)
     run_service = RunService.from_settings(settings)
     checkpoint_service = CheckpointService.from_settings(settings)
@@ -811,6 +1137,8 @@ async def main() -> None:
         session_state=session_state,
         shell_state=shell_state,
         tool_executor=tool_executor,
+        operation_service=operation_service,
+        job_service=job_service,
         task_service=task_service,
         run_service=run_service,
         checkpoint_service=checkpoint_service,

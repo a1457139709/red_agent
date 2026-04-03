@@ -12,4 +12,6 @@ class SQLiteStorage:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row
+        # SQLite does not enforce declared foreign keys unless enabled per connection.
+        connection.execute("PRAGMA foreign_keys = ON")
         return connection
