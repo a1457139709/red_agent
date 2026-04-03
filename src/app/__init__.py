@@ -4,6 +4,7 @@ from .finding_service import FindingService
 from .job_service import JobService
 from .memory_service import MemoryService
 from .operation_service import OperationService
+from .operation_event_service import OperationEventService
 from .run_service import RunService
 from .scope_policy_service import ScopePolicyService
 from .task_service import TaskService
@@ -15,6 +16,7 @@ __all__ = [
     "JobService",
     "MemoryService",
     "OperationService",
+    "OperationEventService",
     "RunService",
     "ScopePolicyService",
     "TaskService",

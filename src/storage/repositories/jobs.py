@@ -122,6 +122,18 @@ class JobRepository:
             ).fetchall()
         return [JobLogEntry.from_row(dict(row)) for row in rows]
 
+    def count_running(self, operation_id: str) -> int:
+        with self.storage.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM jobs
+                WHERE operation_id = ? AND status = ?
+                """,
+                (operation_id, JobStatus.RUNNING.value),
+            ).fetchone()
+        return int(row["count"]) if row is not None else 0
+
     def _create_with_connection(self, connection, job: Job) -> Job:
         job.public_id = allocate_public_id(connection, table_name="jobs", prefix="J")
         connection.execute(

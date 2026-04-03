@@ -12,7 +12,7 @@ The project is intended for local single-user development work. It is not a SaaS
 The repository now contains two parallel runtime families:
 
 - v1 `Task` / `Run` for the existing coding-agent workflow
-- v2 `Operation` / `Job` foundations for the red-team-oriented runtime
+- v2 `Operation` / `Job` foundations plus scope-aware admission for the red-team-oriented runtime
 
 ## Current Capabilities
 
@@ -30,6 +30,9 @@ The repository now contains two parallel runtime families:
 - task-scoped safety audit logging
 - blob-backed checkpoint storage with metadata-only SQLite indexing
 - persisted operations, scope policies, jobs, evidence, findings, and memory entries
+- persisted operation-level admission and execution events
+- scope-aware target validation for the v2 red-team runtime
+- a synchronous scoped execution boundary for future typed security tools
 - minimal red-team CLI inspection for operations and jobs
 
 ## Run
@@ -84,18 +87,20 @@ Use `latest` or `last` in task-facing commands to target the most recently updat
 Use `/help operation`, `/help job`, `/help task`, and `/help skill` for detailed command help.
 `/clear` resets only the in-memory context and clears the screen while preserving any active task binding or active shell skill.
 
-## Red-Team Phase 1 Scope
+## Red-Team Phase 2 Scope
 
-Phase 1 currently delivers:
+Phase 2 currently delivers:
 
 - `Operation`, `ScopePolicy`, `Job`, `Evidence`, `Finding`, and `MemoryEntry` domain models
 - SQLite-backed repositories and services for the v2 red-team runtime
 - atomic operation plus scope-policy creation
 - minimal `/operation` and `/job` CLI inspection flows
+- operation-level admission and execution event persistence
+- scope-aware target, protocol, port, rate-limit, and confirmation checks
+- a v2-only scoped execution service that hard-blocks out-of-scope work before execution
 
-Phase 1 intentionally does not yet deliver:
+Phase 2 intentionally does not yet deliver:
 
-- runtime scope enforcement
 - typed security tool execution
 - a background scheduler or worker runtime
 - managed evidence artifact export

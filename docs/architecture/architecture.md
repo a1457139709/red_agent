@@ -9,6 +9,8 @@
 - persisted task execution
 - safety-gated local tool access
 
+The repository also contains a parallel v2 red-team runtime layer centered on persisted operations, jobs, scope-aware admission, and operation-level audit events.
+
 The implementation is local-first. State lives under `.red-code/`, the agent talks to an OpenAI-compatible chat model through LangChain, and there is no server, daemon, or background scheduler in the current design.
 
 One naming detail is worth calling out: the product is branded as `red-code`, but the Python package name in `pyproject.toml` is still `mini-claude-code`.
@@ -20,7 +22,8 @@ src/
   main.py                # shell loop, slash commands, prompt routing, active task/skill state
   cli/ui.py              # Rich presenter for help, task, run, checkpoint, and skill output
   agent/                 # model provider, prompt assembly, session state, context compression
-  app/                   # task, run, checkpoint, and skill services
+  app/                   # task, run, checkpoint, skill, and v2 execution services
+  orchestration/         # v2 scope validation, admission, and rate limiting
   runtime/task_runner.py # bound-task orchestration and observability
   models/                # domain entities and serialization helpers
   skills/                # built-in SKILL.md files, parser, and registry
@@ -120,7 +123,20 @@ The callable tool set exposed by `src/tools/__init__.py` is currently:
 
 Skills may narrow tool visibility and therefore narrow the effective capability set, but they do not bypass the executor and do not expand base permissions.
 
-### 5. Task Runtime
+### 5. V2 Operation Admission Runtime
+
+The v2 red-team runtime does not reuse `ToolExecutor` as its primary network safety boundary.
+
+Instead it uses:
+
+- `ScopeValidator` to normalize targets and enforce host/domain/CIDR/protocol/port/tool-category rules
+- `OperationAdmissionService` to load `Operation`, `ScopePolicy`, and optional `Job` context and persist admission denials
+- `ScopedExecutionService` to handle confirmation, transition job status, and emit operation-level execution events
+- `OperationEventService` to persist admission, confirmation, and execution facts to SQLite
+
+This split keeps the legacy task runtime stable while making future typed security tools pass through an explicit scope-aware boundary.
+
+### 6. Task Runtime
 
 `src/runtime/task_runner.py` is the orchestration layer for persisted work. It turns one bound user prompt into one persisted `Run`.
 
@@ -136,7 +152,7 @@ Its responsibilities are:
 
 The task runtime is only active when a shell has resumed a task with `/task resume <id>`.
 
-### 6. Persistence
+### 7. Persistence
 
 Persistence is split between SQLite metadata and filesystem blobs.
 
@@ -157,6 +173,7 @@ Repository ownership is split as follows:
 - `storage/tasks.py` manages the `tasks` table and public task IDs such as `T0001`.
 - `storage/runs.py` manages `runs`, `task_logs`, and public run IDs such as `R0001`.
 - `storage/checkpoints.py` manages checkpoint metadata and schema-version validation.
+- `storage/repositories/operation_events.py` manages v2 admission and execution audit rows.
 - `app/checkpoint_service.py` owns blob serialization, digest validation, restore, delete, and prune behavior.
 
 ## Data Model
@@ -228,6 +245,15 @@ Checkpoint blobs are always serialized as UTF-8 JSON before gzip compression so 
 - tool invoked/completed/failed events
 - failure diagnostics
 
+### OperationEvent
+
+`OperationEvent` is the runtime audit stream for v2 red-team execution. It records:
+
+- admission requests and denials
+- confirmation-required, approved, and denied events
+- execution started, succeeded, and failed events
+- tool, category, target, reason code, and payload details
+
 ## Main Execution Flows
 
 ### Base Prompt Flow
@@ -260,6 +286,16 @@ Checkpoint blobs are always serialized as UTF-8 JSON before gzip compression so 
 8. Task status, run status, and task logs are updated.
 9. The task remains bound until detach, complete, reset, exit, or quit.
 
+### Scoped V2 Execution Flow
+
+1. A v2 caller builds an `AdmissionRequest` for an operation, optional job, tool name, tool category, and target.
+2. `OperationAdmissionService` loads the operation context and writes `admission_requested`.
+3. `ScopeValidator` normalizes the target and enforces scope policy rules.
+4. Concurrency and per-minute execution limits are checked against persisted state.
+5. If confirmation is required, `ScopedExecutionService` records the confirmation events and waits for approval.
+6. If admitted, the bound job is marked `running`, `execution_started` is written, and the injected callable executes.
+7. Success or failure updates the job terminal state and writes the matching `operation_events` row.
+
 ## Architectural Rules
 
 The current codebase follows these rules:
@@ -270,6 +306,7 @@ The current codebase follows these rules:
 - `CheckpointService` owns checkpoint serialization and restore behavior.
 - repositories own SQLite reads and writes.
 - `ToolExecutor` is the only place where model-issued tool calls cross into local execution.
+- the v2 red-team runtime uses `ScopedExecutionService` rather than `ToolExecutor` for scope-aware execution admission.
 - skills specialize prompts and visible tools, but never bypass the safety boundary.
 
 ## Current Constraints

@@ -126,6 +126,15 @@ The current repository implements this phase in a same-database coexistence mode
 
 Upgrade safety from generic capability tiers to scope-aware admission control.
 
+### Current Implementation Note
+
+The current repository now implements this phase as a v2-only execution boundary:
+
+- legacy task and chat flows still use the existing capability-tier `ToolExecutor`
+- v2 red-team execution uses `ScopeValidator`, `OperationAdmissionService`, and `ScopedExecutionService`
+- denial, confirmation, and execution audit facts are persisted in `operation_events`
+- `bash` is not part of the v2 scoped execution path
+
 ### Work Items
 
 - define target validation rules
@@ -134,13 +143,12 @@ Upgrade safety from generic capability tiers to scope-aware admission control.
 - enforce confirmation requirements from policy
 - record detailed denial reasons
 
-### Primary Refactor Targets
-
-- `src/tools/executor.py`
-- `src/tools/policy.py`
-
 ### Proposed Module Additions
 
+- `src/models/operation_event.py`
+- `src/storage/repositories/operation_events.py`
+- `src/app/operation_event_service.py`
+- `src/app/scoped_execution_service.py`
 - `src/orchestration/admission.py`
 - `src/orchestration/scope_validator.py`
 - `src/orchestration/rate_limits.py`
@@ -150,6 +158,10 @@ Upgrade safety from generic capability tiers to scope-aware admission control.
 - no network-capable tool executes without scope validation
 - out-of-scope requests are hard-blocked
 - denial and confirmation events are persisted
+
+### Status
+
+Implemented for the v2 runtime family.
 
 ## Phase 3: Typed Security Tool Foundation
 

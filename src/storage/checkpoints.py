@@ -7,7 +7,9 @@ from models.checkpoint import (
     StoredCheckpoint,
 )
 
+from .runs import RunRepository
 from .sqlite import SQLiteStorage
+from .tasks import TaskRepository
 
 
 METADATA_SCHEMA = f"""
@@ -118,6 +120,9 @@ class CheckpointRepository:
         return cursor.rowcount > 0
 
     def _ensure_schema(self) -> None:
+        # Checkpoints reference both tasks and runs, so ensure those schemas exist first.
+        TaskRepository(self.storage)
+        RunRepository(self.storage)
         with self.storage.connect() as connection:
             self._fail_if_legacy_checkpoint_schema(connection)
             connection.executescript(METADATA_SCHEMA)
