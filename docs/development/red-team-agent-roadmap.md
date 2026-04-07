@@ -21,7 +21,7 @@ Current phase status based on the repository implementation:
 - Phase 4: partially implemented
 - Phase 5: implemented
 - Phase 6: implemented
-- Phase 7: partially implemented
+- Phase 7: implemented
 - Phase 8: partially implemented
 
 ## Current Repository Anchors
@@ -427,21 +427,17 @@ Expose the new runtime cleanly to the operator.
 
 ### Status
 
-Partially implemented.
+Implemented.
 
 The repository currently provides:
 
-- `/operation create|list|show`
-- `/job create|list|show`
-- help text and Rich presentation for those minimal v2 inspection flows
-
-Still missing from this phase:
-
-- `/finding`
-- `/evidence`
+- `/operation create|list|show|pause|resume`
+- `/job create|list|show|cancel`
+- `/finding list|show|confirm|dismiss`
+- `/evidence list|show`
 - `/dashboard`
-- v2 lifecycle commands such as pause, resume, and cancel
-- the deferred hard timeout cut-off follow-up from Phase 4, which should land before the runtime is treated as a full background-capable operator workflow
+- Rich help text and presentation for the expanded v2 operator flows
+- subprocess-isolated typed-tool execution so timed-out or cancelled work can be terminated cleanly
 
 ### Work Items
 

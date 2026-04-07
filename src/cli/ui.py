@@ -12,9 +12,13 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
+from app.dashboard_service import OperationDashboard
 from models.checkpoint import CheckpointSummary
+from models.evidence import Evidence
+from models.finding import Finding
 from models.job import Job
 from models.operation import Operation
+from models.operation_event import OperationEvent
 from models.run import Run, TaskLogEntry
 from models.skill import LoadedSkill
 from models.scope_policy import ScopePolicy
@@ -122,8 +126,14 @@ class CliPresenter:
             "paused": "cyan",
             "blocked": "bold yellow",
             "failed": "bold red",
+            "timed_out": "bold red",
             "completed": "bold green",
             "cancelled": "magenta",
+            "open": "yellow",
+            "confirmed": "bold green",
+            "dismissed": "bright_black",
+            "duplicate": "magenta",
+            "fixed": "cyan",
         }
         return Text(status, style=style_map.get(status.lower(), "white"))
 
@@ -198,13 +208,20 @@ class CliPresenter:
         topics.add_column("Purpose", style="white")
         topics.add_row("operation", "Red-team operations and scope policy inspection")
         topics.add_row("job", "Operation jobs and execution details")
+        topics.add_row("finding", "Finding review and triage")
+        topics.add_row("evidence", "Evidence inspection and traceability")
+        topics.add_row("dashboard", "Operation summary, failures, and recent events")
         topics.add_row("task", "Task lifecycle, runs, checkpoints, and logs")
         topics.add_row("skill", "Skill activation, inspection, reload, and shorthand usage")
         return Group(
             Text("Base mode uses the default prompt and full built-in tool set.", style="dim"),
             Rule(style="grey50", characters="-"),
             Panel(topics, title="Help Topics", border_style="bright_blue", box=ASCII_BOX),
-            Text("Drill down with /help operation, /help job, /help task, or /help skill.", style="dim"),
+            Text(
+                "Drill down with /help operation, /help job, /help finding, /help evidence, "
+                "/help dashboard, /help task, /help skill.",
+                style="dim",
+            ),
             Text("Session shortcuts: /clear, /reset, /exit, /quit", style="dim"),
         )
 
@@ -216,6 +233,8 @@ class CliPresenter:
                 ("/operation create", "Create an operation and its scope policy"),
                 ("/operation list [status] [limit]", "List recent operations"),
                 ("/operation show <id>", "Show operation details and scope policy"),
+                ("/operation pause <id>", "Pause an operation so new jobs stop being scheduled"),
+                ("/operation resume <id>", "Resume a draft, paused, or blocked operation into ready"),
             ], border_style="cyan"),
         )
 
@@ -227,7 +246,40 @@ class CliPresenter:
                 ("/job create <operation_id>", "Create a job inside an operation"),
                 ("/job list <operation_id> [status] [limit]", "List jobs for an operation"),
                 ("/job show <job_id>", "Show job details"),
+                ("/job cancel <job_id>", "Request cancellation for a queued or running job"),
             ], border_style="magenta"),
+        )
+
+    def _help_finding(self) -> Group:
+        return Group(
+            Text("Finding help", style="dim"),
+            Rule(style="grey50", characters="-"),
+            self._command_panel("Finding Commands", [
+                ("/finding list <operation_id> [limit]", "List findings for an operation"),
+                ("/finding show <finding_id>", "Show finding details and linked evidence"),
+                ("/finding confirm <finding_id>", "Mark a finding as confirmed"),
+                ("/finding dismiss <finding_id>", "Dismiss a finding with an optional reason"),
+            ], border_style="yellow"),
+        )
+
+    def _help_evidence(self) -> Group:
+        return Group(
+            Text("Evidence help", style="dim"),
+            Rule(style="grey50", characters="-"),
+            self._command_panel("Evidence Commands", [
+                ("/evidence list <operation_id> [limit]", "List evidence for an operation"),
+                ("/evidence show <evidence_id>", "Show evidence details and linked findings"),
+            ], border_style="green"),
+        )
+
+    def _help_dashboard(self) -> Group:
+        return Group(
+            Text("Dashboard help", style="dim"),
+            Rule(style="grey50", characters="-"),
+            self._command_panel("Dashboard Commands", [
+                ("/dashboard", "Show the most recently updated operation dashboard"),
+                ("/dashboard <operation_id>", "Show the dashboard for one operation"),
+            ], border_style="bright_blue"),
         )
 
     def _help_task(self) -> Group:
@@ -284,6 +336,15 @@ class CliPresenter:
         elif topic == "job":
             body = self._help_job()
             title = "Help: job"
+        elif topic == "finding":
+            body = self._help_finding()
+            title = "Help: finding"
+        elif topic == "evidence":
+            body = self._help_evidence()
+            title = "Help: evidence"
+        elif topic == "dashboard":
+            body = self._help_dashboard()
+            title = "Help: dashboard"
         elif topic == "task":
             body = self._help_task()
             title = "Help: task"
@@ -430,6 +491,11 @@ class CliPresenter:
                     ("Finished At", job.finished_at or "-"),
                     ("Created At", job.created_at),
                     ("Updated At", job.updated_at),
+                    ("Lease Owner", job.lease_owner or "-"),
+                    ("Lease Expires At", job.lease_expires_at or "-"),
+                    ("Last Heartbeat At", job.last_heartbeat_at or "-"),
+                    ("Cancel Requested At", job.cancel_requested_at or "-"),
+                    ("Cancel Reason", job.cancel_reason or "-"),
                     ("Last Error", job.last_error or "-"),
                 ]),
                 title="Job",
@@ -437,6 +503,237 @@ class CliPresenter:
                 box=ASCII_BOX,
             )
         )
+
+    def show_finding_list(self, findings: list[Finding], *, operation_label: str | None = None) -> None:
+        if not findings:
+            self._emit(
+                Panel(Text("No findings found.", style="dim"), title="Findings", border_style="yellow", box=ASCII_BOX)
+            )
+            return
+        title = f"Findings for {operation_label}" if operation_label else "Findings"
+        table = Table(title=title, box=ASCII_BOX, expand=True, header_style="bold")
+        table.add_column("Finding", style="cyan", no_wrap=True)
+        table.add_column("Status", no_wrap=True)
+        table.add_column("Severity", no_wrap=True)
+        table.add_column("Confidence", no_wrap=True)
+        table.add_column("Target", overflow="fold")
+        table.add_column("Title", overflow="fold")
+        for finding in findings:
+            table.add_row(
+                finding.public_id,
+                self._status_text(finding.status.value),
+                finding.severity,
+                finding.confidence,
+                finding.target_ref,
+                finding.title,
+            )
+        self._emit(table)
+
+    def show_finding_detail(self, finding: Finding, *, linked_evidence_ids: list[str]) -> None:
+        self._emit(
+            Panel(
+                self._detail_table([
+                    ("Finding ID", finding.public_id),
+                    ("Internal ID", finding.id),
+                    ("Operation ID", finding.operation_id),
+                    ("Source Job ID", finding.source_job_id or "-"),
+                    ("Type", finding.finding_type),
+                    ("Title", finding.title),
+                    ("Target", finding.target_ref),
+                    ("Severity", finding.severity),
+                    ("Confidence", finding.confidence),
+                    ("Status", finding.status.value),
+                    ("Summary", finding.summary or "-"),
+                    ("Impact", finding.impact or "-"),
+                    ("Reproduction Notes", finding.reproduction_notes or "-"),
+                    ("Next Action", finding.next_action or "-"),
+                    ("Linked Evidence IDs", ", ".join(linked_evidence_ids) or "-"),
+                    ("Created At", finding.created_at),
+                    ("Updated At", finding.updated_at),
+                ]),
+                title="Finding",
+                border_style="yellow",
+                box=ASCII_BOX,
+            )
+        )
+
+    def show_evidence_list(self, evidence_items: list[Evidence], *, operation_label: str | None = None) -> None:
+        if not evidence_items:
+            self._emit(
+                Panel(Text("No evidence found.", style="dim"), title="Evidence", border_style="yellow", box=ASCII_BOX)
+            )
+            return
+        title = f"Evidence for {operation_label}" if operation_label else "Evidence"
+        table = Table(title=title, box=ASCII_BOX, expand=True, header_style="bold")
+        table.add_column("Evidence", style="cyan", no_wrap=True)
+        table.add_column("Type", no_wrap=True)
+        table.add_column("Target", overflow="fold")
+        table.add_column("Captured", style="dim", no_wrap=True)
+        table.add_column("Title", overflow="fold")
+        for evidence in evidence_items:
+            table.add_row(
+                evidence.public_id,
+                evidence.evidence_type,
+                evidence.target_ref,
+                self._format_timestamp_compact(evidence.captured_at),
+                evidence.title,
+            )
+        self._emit(table)
+
+    def show_evidence_detail(self, evidence: Evidence, *, linked_finding_ids: list[str]) -> None:
+        self._emit(
+            Panel(
+                self._detail_table([
+                    ("Evidence ID", evidence.public_id),
+                    ("Internal ID", evidence.id),
+                    ("Operation ID", evidence.operation_id),
+                    ("Job ID", evidence.job_id or "-"),
+                    ("Type", evidence.evidence_type),
+                    ("Target", evidence.target_ref),
+                    ("Title", evidence.title),
+                    ("Summary", evidence.summary),
+                    ("Artifact Path", evidence.artifact_path or "-"),
+                    ("Content Type", evidence.content_type or "-"),
+                    ("Hash Digest", evidence.hash_digest or "-"),
+                    ("Linked Finding IDs", ", ".join(linked_finding_ids) or "-"),
+                    ("Captured At", evidence.captured_at),
+                ]),
+                title="Evidence",
+                border_style="green",
+                box=ASCII_BOX,
+            )
+        )
+
+    def show_dashboard(self, dashboard: OperationDashboard) -> None:
+        summary = Panel(
+            self._detail_table([
+                ("Operation ID", dashboard.operation.public_id),
+                ("Title", dashboard.operation.title),
+                ("Objective", dashboard.operation.objective),
+                ("Status", dashboard.operation.status.value),
+                ("Workspace", dashboard.operation.workspace),
+                ("Allowed Hosts", ", ".join(dashboard.policy.allowed_hosts) or "-"),
+                ("Allowed Domains", ", ".join(dashboard.policy.allowed_domains) or "-"),
+                ("Allowed Ports", ", ".join(str(port) for port in dashboard.policy.allowed_ports) or "-"),
+                ("Allowed Protocols", ", ".join(dashboard.policy.allowed_protocols) or "-"),
+                ("Evidence Total", str(dashboard.evidence_count)),
+                ("Admission Denied Events", str(dashboard.event_counts.get("admission_denied", 0))),
+                ("Confirmation Denied Events", str(dashboard.event_counts.get("confirmation_denied", 0))),
+                ("Execution Failed Events", str(dashboard.event_counts.get("execution_failed", 0))),
+            ]),
+            title="Dashboard Summary",
+            border_style="bright_blue",
+            box=ASCII_BOX,
+        )
+
+        job_counts = Table(title="Job Status Counts", box=ASCII_BOX, expand=True, header_style="bold")
+        job_counts.add_column("Status", style="cyan", no_wrap=True)
+        job_counts.add_column("Count", justify="right", no_wrap=True)
+        for status, count in sorted(dashboard.job_counts.items()):
+            job_counts.add_row(self._status_text(status), str(count))
+
+        finding_counts = Table(title="Finding Status Counts", box=ASCII_BOX, expand=True, header_style="bold")
+        finding_counts.add_column("Status", style="cyan", no_wrap=True)
+        finding_counts.add_column("Count", justify="right", no_wrap=True)
+        for status, count in sorted(dashboard.finding_counts.items()):
+            finding_counts.add_row(self._status_text(status), str(count))
+
+        flagged_jobs: RenderableType
+        if dashboard.flagged_jobs:
+            flagged_jobs = Table(title="Recent Failed / Timed-Out / Blocked Jobs", box=ASCII_BOX, expand=True, header_style="bold")
+            flagged_jobs.add_column("Job", style="cyan", no_wrap=True)
+            flagged_jobs.add_column("Status", no_wrap=True)
+            flagged_jobs.add_column("Type", no_wrap=True)
+            flagged_jobs.add_column("Target", overflow="fold")
+            flagged_jobs.add_column("Last Error", overflow="fold")
+            for job in dashboard.flagged_jobs:
+                flagged_jobs.add_row(
+                    job.public_id,
+                    self._status_text(job.status.value),
+                    job.job_type,
+                    job.target_ref,
+                    job.last_error or "-",
+                )
+        else:
+            flagged_jobs = Panel(
+                Text("No failed, timed-out, or blocked jobs.", style="dim"),
+                title="Recent Failed / Timed-Out / Blocked Jobs",
+                border_style="green",
+                box=ASCII_BOX,
+            )
+
+        recent_findings: RenderableType
+        if dashboard.recent_findings:
+            recent_findings = Table(title="Recent Findings", box=ASCII_BOX, expand=True, header_style="bold")
+            recent_findings.add_column("Finding", style="cyan", no_wrap=True)
+            recent_findings.add_column("Status", no_wrap=True)
+            recent_findings.add_column("Severity", no_wrap=True)
+            recent_findings.add_column("Target", overflow="fold")
+            recent_findings.add_column("Title", overflow="fold")
+            for finding in dashboard.recent_findings:
+                recent_findings.add_row(
+                    finding.public_id,
+                    self._status_text(finding.status.value),
+                    finding.severity,
+                    finding.target_ref,
+                    finding.title,
+                )
+        else:
+            recent_findings = Panel(
+                Text("No findings found.", style="dim"),
+                title="Recent Findings",
+                border_style="yellow",
+                box=ASCII_BOX,
+            )
+
+        recent_evidence: RenderableType
+        if dashboard.recent_evidence:
+            recent_evidence = Table(title=f"Recent Evidence ({dashboard.evidence_count} total)", box=ASCII_BOX, expand=True, header_style="bold")
+            recent_evidence.add_column("Evidence", style="cyan", no_wrap=True)
+            recent_evidence.add_column("Type", no_wrap=True)
+            recent_evidence.add_column("Target", overflow="fold")
+            recent_evidence.add_column("Captured", style="dim", no_wrap=True)
+            for evidence in dashboard.recent_evidence:
+                recent_evidence.add_row(
+                    evidence.public_id,
+                    evidence.evidence_type,
+                    evidence.target_ref,
+                    self._format_timestamp_compact(evidence.captured_at),
+                )
+        else:
+            recent_evidence = Panel(
+                Text("No evidence found.", style="dim"),
+                title=f"Recent Evidence ({dashboard.evidence_count} total)",
+                border_style="yellow",
+                box=ASCII_BOX,
+            )
+
+        recent_events: RenderableType
+        if dashboard.recent_events:
+            recent_events = Table(title="Recent Operation Events", box=ASCII_BOX, expand=True, header_style="bold")
+            recent_events.add_column("Created", style="dim", no_wrap=True)
+            recent_events.add_column("Event", no_wrap=True)
+            recent_events.add_column("Target", overflow="fold")
+            recent_events.add_column("Message", overflow="fold")
+            for event in dashboard.recent_events:
+                event_label = event.event_type.value
+                if event.event_type.value in dashboard.event_counts and dashboard.event_counts[event.event_type.value] > 0:
+                    event_label = f"{event_label} ({dashboard.event_counts[event.event_type.value]})"
+                recent_events.add_row(
+                    self._format_timestamp_compact(event.created_at),
+                    event_label,
+                    event.target_ref,
+                    event.message,
+                )
+        else:
+            recent_events = Panel(
+                Text("No operation events found.", style="dim"),
+                title="Recent Operation Events",
+                border_style="yellow",
+                box=ASCII_BOX,
+            )
+
+        self._emit(Group(summary, job_counts, finding_counts, flagged_jobs, recent_findings, recent_evidence, recent_events))
 
     def show_task_detail(self, task: Task) -> None:
         identity = Panel(

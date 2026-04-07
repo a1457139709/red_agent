@@ -118,6 +118,10 @@ class WorkerRuntime:
             execution_result = self.execution_service.execute_job(
                 job_identifier=job.id,
                 confirm=confirm,
+                cancel_requested=lambda: self._is_cancellation_requested(
+                    job_identifier=job.id,
+                    lease_token=job.lease_token,
+                ),
             )
         finally:
             stop_heartbeat.set()
@@ -205,6 +209,14 @@ class WorkerRuntime:
 
     def _heartbeat_interval_seconds(self) -> float:
         return max(0.1, self.lease_seconds / 3)
+
+    def _is_cancellation_requested(self, *, job_identifier: str, lease_token: str) -> bool:
+        job = self.job_service.job_service.require_job(job_identifier)
+        return (
+            job.status == JobStatus.RUNNING
+            and job.lease_token == lease_token
+            and job.cancel_requested_at is not None
+        )
 
 
 def _resolution_status(status: JobStatus, *, requeued: bool) -> str:

@@ -329,7 +329,10 @@ def test_help_command_renders_overview_topics_and_topic_help(tmp_path):
     assert handle_help_command("/help skill", text_output=outputs.append, error_output=errors.append)
     assert handle_help_command("/help unknown", text_output=outputs.append, error_output=errors.append)
 
-    assert any("Help Topics" in message and "/help task" in message for message in outputs)
+    assert any("Help Topics" in message and "/help dashboard" in message for message in outputs)
     assert any("Task Commands" in message and "Runs and Checkpoints" in message for message in outputs)
     assert any("Skill Commands" in message and "/skill-name <prompt>" in message for message in outputs)
-    assert any("Unknown help topic: unknown" in message and "Available topics: task, skill" in message for message in errors)
+    assert any(
+        "Unknown help topic: unknown" in message and "finding, evidence, dashboard" in message
+        for message in errors
+    )

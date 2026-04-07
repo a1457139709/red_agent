@@ -4,8 +4,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 from threading import Thread
-import time
 
+import app.security_tool_execution_service as security_tool_execution_module
 from app.evidence_service import EvidenceService
 from app.finding_service import FindingService
 from agent.settings import Settings
@@ -14,6 +14,7 @@ from app.operation_service import OperationService
 from app.security_tool_execution_service import SecurityToolExecutionService
 from models.job import JobStatus
 from models.operation import OperationStatus
+from runtime.timeouts import ExecutionTimedOutError
 from tools.contracts import EvidenceCandidate, FindingCandidate, SecurityToolResult
 
 
@@ -213,16 +214,13 @@ def test_security_tool_execution_service_reports_timeouts(tmp_path, monkeypatch)
         timeout_seconds=1,
     )
 
-    def slow_execute(*args, **kwargs):
-        time.sleep(1.2)
-        return SecurityToolResult(
-            tool_name="http_probe",
-            target="http://127.0.0.1/slow",
-            summary="slow",
-            payload={},
-        )
-
-    monkeypatch.setattr(execution_service.security_tool_executor, "execute", slow_execute)
+    monkeypatch.setattr(
+        security_tool_execution_module,
+        "execute_security_tool_in_subprocess",
+        lambda **kwargs: (_ for _ in ()).throw(
+            ExecutionTimedOutError("Execution timed out after 1 seconds.")
+        ),
+    )
 
     result = execution_service.execute_job(job_identifier=job.public_id)
 
@@ -270,9 +268,9 @@ def test_security_tool_execution_service_enforces_job_timeout_over_argument_time
 
     monkeypatch.setattr(execution_service.security_tool_executor, "validate", wrapped_validate)
     monkeypatch.setattr(
-        execution_service.security_tool_executor,
-        "execute",
-        lambda *args, **kwargs: SecurityToolResult(
+        security_tool_execution_module,
+        "execute_security_tool_in_subprocess",
+        lambda **kwargs: SecurityToolResult(
             tool_name="http_probe",
             target="https://example.com",
             summary="ok",
@@ -311,8 +309,9 @@ def test_security_tool_execution_service_persists_findings_and_traceability_for_
         target_ref="example.com:443",
     )
 
-    def fake_execute(tool_name: str, *, invocation, target):
-        assert tool_name == "tls_inspect"
+    def fake_execute(**kwargs):
+        assert kwargs["tool_name"] == "tls_inspect"
+        target = kwargs["target"]
         return SecurityToolResult(
             tool_name="tls_inspect",
             target=target.normalized_target,
@@ -343,7 +342,11 @@ def test_security_tool_execution_service_persists_findings_and_traceability_for_
             ],
         )
 
-    monkeypatch.setattr(execution_service.security_tool_executor, "execute", fake_execute)
+    monkeypatch.setattr(
+        security_tool_execution_module,
+        "execute_security_tool_in_subprocess",
+        fake_execute,
+    )
 
     result = execution_service.execute_job(job_identifier=job.public_id)
     findings = finding_service.list_findings(operation.public_id, limit=None)

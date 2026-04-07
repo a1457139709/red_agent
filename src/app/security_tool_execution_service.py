@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from agent.settings import Settings, get_settings
 from models.job import JobLogLevel
-from runtime.timeouts import run_with_timeout
+from runtime.isolation import execute_security_tool_in_subprocess
 from tools import build_security_tool_registry
 from tools.contracts import SecurityToolResult
 from tools.executor import SecurityToolExecutionError, SecurityToolExecutor
@@ -48,6 +48,7 @@ class SecurityToolExecutionService:
         *,
         job_identifier: str,
         confirm: ConfirmCallback = None,
+        cancel_requested=None,
     ) -> ScopedExecutionResult:
         job = self.job_service.require_job(job_identifier)
         operation = self.operation_service.require_operation(job.operation_id)
@@ -78,13 +79,12 @@ class SecurityToolExecutionService:
 
         result = self.scoped_execution_service.execute(
             request=request,
-            executor=lambda _request, target: run_with_timeout(
-                lambda: self.security_tool_executor.execute(
-                    tool.name,
-                    invocation=invocation,
-                    target=target,
-                ),
+            executor=lambda _request, target: execute_security_tool_in_subprocess(
+                tool_name=tool.name,
+                invocation=invocation,
+                target=target,
                 timeout_seconds=invocation.timeout_seconds,
+                cancel_requested=cancel_requested,
             ),
             confirm=confirm,
         )

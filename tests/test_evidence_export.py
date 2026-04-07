@@ -1,5 +1,6 @@
 import json
 
+import app.security_tool_execution_service as security_tool_execution_module
 from agent.settings import Settings
 from app.job_service import JobService
 from app.operation_service import OperationService
@@ -41,17 +42,17 @@ def test_generate_operation_export_writes_json_summaries_with_traceability(tmp_p
     )
 
     monkeypatch.setattr(
-        execution_service.security_tool_executor,
-        "execute",
-        lambda tool_name, *, invocation, target: SecurityToolResult(
-            tool_name=tool_name,
-            target=target.normalized_target,
+        security_tool_execution_module,
+        "execute_security_tool_in_subprocess",
+        lambda **kwargs: SecurityToolResult(
+            tool_name=kwargs["tool_name"],
+            target=kwargs["target"].normalized_target,
             summary="TLS inspection summary",
             payload={"tls_version": "TLSv1.3"},
             evidence_candidates=[
                 EvidenceCandidate(
                     evidence_type="tls_certificate",
-                    target_ref=target.normalized_target,
+                    target_ref=kwargs["target"].normalized_target,
                     title="TLS inspection",
                     summary="Captured certificate details.",
                     content_type="application/json",
@@ -62,7 +63,7 @@ def test_generate_operation_export_writes_json_summaries_with_traceability(tmp_p
                 FindingCandidate(
                     finding_type="tls_hostname_mismatch",
                     title="TLS certificate hostname mismatch",
-                    target_ref=target.normalized_target,
+                    target_ref=kwargs["target"].normalized_target,
                     severity="medium",
                     confidence="high",
                     summary="Hostname mismatch observed.",

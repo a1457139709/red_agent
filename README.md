@@ -39,7 +39,8 @@ The repository now contains two parallel runtime families:
 - automatic persistence of typed-tool evidence artifacts and finding records
 - evidence-to-finding traceability links for structured review and export
 - JSON export generation for operation summaries, findings, and evidence indexes
-- minimal red-team CLI inspection for operations and jobs
+- Phase 7 red-team CLI coverage for operations, jobs, findings, evidence, and dashboards
+- isolated subprocess execution for typed security tools so timed-out or cancelled jobs can be terminated cleanly
 
 ## Run
 
@@ -53,15 +54,28 @@ The repository now contains two parallel runtime families:
 - `/help`
 - `/help operation`
 - `/help job`
+- `/help finding`
+- `/help evidence`
+- `/help dashboard`
 - `/help task`
 - `/help skill`
 - `/clear`
 - `/operation create`
 - `/operation list [status] [limit]`
 - `/operation show <operation_id>`
+- `/operation pause <operation_id>`
+- `/operation resume <operation_id>`
 - `/job create <operation_id>`
 - `/job list <operation_id> [status] [limit]`
 - `/job show <job_id>`
+- `/job cancel <job_id>`
+- `/finding list <operation_id> [limit]`
+- `/finding show <finding_id>`
+- `/finding confirm <finding_id>`
+- `/finding dismiss <finding_id>`
+- `/evidence list <operation_id> [limit]`
+- `/evidence show <evidence_id>`
+- `/dashboard [operation_id]`
 - `/task create`
 - `/task list [status] [limit]`
 - `/task recent [limit]`
@@ -97,7 +111,7 @@ Use `/help operation`, `/help job`, `/help task`, and `/help skill` for detailed
 
 ## Red-Team Runtime Status
 
-Phase 2, Phase 3, Phase 4, and Phase 5 currently deliver:
+Phase 2 through Phase 7 currently deliver:
 
 - `Operation`, `ScopePolicy`, `Job`, `Evidence`, `Finding`, and `MemoryEntry` domain models
 - SQLite-backed repositories and services for the v2 red-team runtime
@@ -108,19 +122,20 @@ Phase 2, Phase 3, Phase 4, and Phase 5 currently deliver:
 - confirmation-gated executions are re-admitted before execution to re-check rate and concurrency limits
 - a v2-only scoped execution service that hard-blocks out-of-scope work before execution
 - a job orchestration layer that queues dependency-ready jobs, recovers stale leases, blocks failed dependency chains, and applies cooperative cancellation
-- a single-process worker runtime with atomic job leasing, heartbeat refresh, retry backoff, timeout handling, and `drain()` support for sequential background-style execution
+- a worker runtime with atomic job leasing, heartbeat refresh, retry backoff, timeout handling, and `drain()` support for sequential background-style execution
 - a dedicated typed-security tool registry separated from the legacy LangChain tool registry
 - pure-Python typed security tools: `dns_lookup`, `http_probe`, `tls_inspect`, `banner_grab`, and `port_scan`
 - `dns_lookup` validates both the resolver egress target and the queried logical name against scope
 - `http_probe` captures only the first HTTP response and does not auto-follow redirects
 - structured typed-tool outputs that expose normalized payloads plus evidence and finding candidates
+- isolated subprocess execution for typed security tools so timed-out or cancelled jobs do not continue uncontrolled in the background
 - automatic persistence of successful typed-job evidence into `.red-code/operations/<operation_public_id>/evidence/`
 - automatic persistence of finding candidates plus finding-to-evidence traceability links
 - JSON export generation under `.red-code/operations/<operation_public_id>/exports/<export_name>/`
+- CLI inspection and lifecycle flows for `/operation`, `/job`, `/finding`, `/evidence`, and `/dashboard`
 
 The current runtime still intentionally does not yet deliver:
 
-- `/finding`, `/evidence`, and `/dashboard` CLI command groups
 - CLI-triggered export flows
 - planner-driven use of the structured evidence and finding store
 

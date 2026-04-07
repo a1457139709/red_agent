@@ -1,4 +1,5 @@
 from .checkpoint_service import CheckpointService
+from .dashboard_service import DashboardService
 from .evidence_service import EvidenceService
 from .finding_service import FindingService
 from .job_service import JobService
@@ -11,6 +12,7 @@ from .task_service import TaskService
 
 __all__ = [
     "CheckpointService",
+    "DashboardService",
     "EvidenceService",
     "FindingService",
     "JobService",

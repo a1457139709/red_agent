@@ -3,6 +3,7 @@ from __future__ import annotations
 from agent.settings import Settings, get_settings
 from models.operation import Operation, OperationStatus
 from models.scope_policy import ScopePolicy
+from models.run import utc_now_iso
 from storage.repositories.operations import OperationRepository
 from storage.repositories.scope_policies import ScopePolicyRepository
 from storage.sqlite import SQLiteStorage
@@ -105,6 +106,43 @@ class OperationService:
         return self.operation_repository.list(status=status, title_query=title_query, limit=limit)
 
     def save_operation(self, operation: Operation) -> Operation:
+        return self.operation_repository.update(operation)
+
+    def pause_operation(self, identifier: str) -> Operation:
+        operation = self.require_operation(identifier)
+        if operation.status not in {
+            OperationStatus.READY,
+            OperationStatus.RUNNING,
+            OperationStatus.BLOCKED,
+        }:
+            raise ValueError(
+                "Operations can only be paused from ready, running, or blocked status."
+            )
+        operation.status = OperationStatus.PAUSED
+        operation.updated_at = utc_now_iso()
+        return self.operation_repository.update(operation)
+
+    def resume_operation(self, identifier: str) -> Operation:
+        operation = self.require_operation(identifier)
+        if operation.status in {
+            OperationStatus.COMPLETED,
+            OperationStatus.CANCELLED,
+            OperationStatus.FAILED,
+        }:
+            raise ValueError(
+                f"Operation {operation.public_id or operation.id} cannot be resumed from status "
+                f"{operation.status.value}."
+            )
+        if operation.status not in {
+            OperationStatus.DRAFT,
+            OperationStatus.PAUSED,
+            OperationStatus.BLOCKED,
+        }:
+            raise ValueError(
+                "Operations can only be resumed from draft, paused, or blocked status."
+            )
+        operation.status = OperationStatus.READY
+        operation.updated_at = utc_now_iso()
         return self.operation_repository.update(operation)
 
     def get_scope_policy(self, operation_identifier: str) -> ScopePolicy | None:

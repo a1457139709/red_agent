@@ -58,3 +58,38 @@ def test_operation_service_lists_recent_operations_and_supports_identifier_looku
     assert service.get_operation(first.public_id) is not None
     assert service.get_operation(first.id[:8]) is not None
     assert service.get_operation(first.id[:8]).id == first.id
+
+
+def test_operation_service_supports_pause_and_resume_transitions(tmp_path):
+    settings = build_settings(tmp_path)
+    service = OperationService.from_settings(settings)
+
+    operation = service.create_operation(
+        title="Pause me",
+        objective="Exercise lifecycle",
+        status=OperationStatus.READY,
+    )
+
+    paused = service.pause_operation(operation.public_id)
+    resumed = service.resume_operation(paused.public_id)
+
+    assert paused.status == OperationStatus.PAUSED
+    assert resumed.status == OperationStatus.READY
+
+
+def test_operation_service_rejects_invalid_resume_state(tmp_path):
+    settings = build_settings(tmp_path)
+    service = OperationService.from_settings(settings)
+
+    operation = service.create_operation(
+        title="Done",
+        objective="No resume",
+        status=OperationStatus.COMPLETED,
+    )
+
+    try:
+        service.resume_operation(operation.public_id)
+    except ValueError as exc:
+        assert "cannot be resumed" in str(exc)
+    else:
+        raise AssertionError("resume_operation should reject completed operations")

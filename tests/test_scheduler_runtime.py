@@ -28,6 +28,8 @@ def build_settings(tmp_path):
 
 class _ProbeHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path.startswith("/slow"):
+            time.sleep(2.0)
         payload = b"runtime ok"
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
@@ -302,7 +304,7 @@ def test_worker_cancellation_wins_over_late_success(tmp_path):
     scheduler = Scheduler.from_settings(settings)
     scheduler.run_once(now="2026-04-07T04:00:00+00:00")
 
-    def fake_execute_job(*, job_identifier: str, confirm=None):
+    def fake_execute_job(*, job_identifier: str, confirm=None, cancel_requested=None):
         worker.job_service.request_cancellation(
             job_identifier,
             reason="operator stop",
@@ -343,7 +345,7 @@ def test_worker_retries_then_times_out_when_budget_is_exhausted(tmp_path):
     )
     Scheduler.from_settings(settings).run_once(now="2026-04-07T05:00:00+00:00")
 
-    def fake_timeout(*, job_identifier: str, confirm=None):
+    def fake_timeout(*, job_identifier: str, confirm=None, cancel_requested=None):
         return ScopedExecutionResult(
             status="timed_out",
             message="Execution timed out after 1 seconds.",
@@ -445,7 +447,7 @@ def test_worker_keeps_lease_alive_during_long_running_execution(tmp_path, monkey
 
     monkeypatch.setattr(worker.job_service, "heartbeat", wrapped_heartbeat)
 
-    def slow_execute_job(*, job_identifier: str, confirm=None):
+    def slow_execute_job(*, job_identifier: str, confirm=None, cancel_requested=None):
         time.sleep(1.25)
         return ScopedExecutionResult(
             status="succeeded",
@@ -462,3 +464,55 @@ def test_worker_keeps_lease_alive_during_long_running_execution(tmp_path, monkey
     assert result.status == "succeeded"
     assert refreshed.status == JobStatus.SUCCEEDED
     assert len(heartbeat_calls) >= 3
+
+
+def test_worker_cancels_real_subprocess_backed_job(tmp_path):
+    settings = build_settings(tmp_path)
+    operation_service = OperationService.from_settings(settings)
+    job_service = JobService.from_settings(settings)
+    worker = WorkerRuntime.from_settings(settings, worker_id="worker-main")
+
+    server, thread = run_http_server()
+    try:
+        port = server.server_address[1]
+        operation = operation_service.create_operation(
+            title="Recon",
+            objective="Cancel a live subprocess job",
+            allowed_hosts=["127.0.0.1"],
+            allowed_protocols=["http"],
+            allowed_ports=[port],
+            allowed_tool_categories=["recon"],
+            status=OperationStatus.READY,
+        )
+        job = job_service.create_job(
+            operation_identifier=operation.public_id,
+            job_type="http_probe",
+            target_ref=f"http://127.0.0.1:{port}/slow",
+            timeout_seconds=5,
+        )
+        Scheduler.from_settings(settings).run_once(now="2026-04-07T07:00:00+00:00")
+
+        result_holder: list = []
+
+        def run_worker():
+            result_holder.append(worker.run_once(now="2026-04-07T07:00:01+00:00"))
+
+        worker_thread = Thread(target=run_worker)
+        worker_thread.start()
+        time.sleep(0.3)
+        worker.job_service.request_cancellation(
+            job.public_id,
+            reason="operator stop",
+            now="2026-04-07T07:00:02+00:00",
+        )
+        worker_thread.join(timeout=10)
+        refreshed = job_service.require_job(job.public_id)
+
+        assert not worker_thread.is_alive()
+        assert result_holder[0].status == "cancelled"
+        assert refreshed.status == JobStatus.CANCELLED
+        assert refreshed.last_error == "operator stop"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
