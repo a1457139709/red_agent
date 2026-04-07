@@ -5,11 +5,10 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from agent.settings import Settings, get_settings
-from models.job import Job, JobStatus
 from models.operation_event import OperationEventLevel, OperationEventType
-from models.run import utc_now_iso
 from orchestration.admission import AdmissionContext, OperationAdmissionService
 from orchestration.scope_validator import AdmissionDecision, AdmissionOutcome, AdmissionRequest, TargetDescriptor
+from runtime.timeouts import ExecutionTimedOutError
 from storage.repositories.jobs import JobRepository
 from storage.sqlite import SQLiteStorage
 
@@ -25,7 +24,7 @@ ScopedExecutor = Callable[[AdmissionRequest, TargetDescriptor], object]
 class ScopedExecutionResult:
     status: str
     message: str
-    decision: AdmissionDecision
+    decision: AdmissionDecision | None
     result: object | None = None
 
 
@@ -33,12 +32,10 @@ class ScopedExecutionService:
     def __init__(
         self,
         admission_service: OperationAdmissionService,
-        job_repository: JobRepository,
         operation_event_service: OperationEventService,
         settings: Settings,
     ) -> None:
         self.admission_service = admission_service
-        self.job_repository = job_repository
         self.operation_event_service = operation_event_service
         self.settings = settings
 
@@ -55,7 +52,6 @@ class ScopedExecutionService:
                 job_repository=job_repository,
                 operation_event_service=operation_event_service,
             ),
-            job_repository=job_repository,
             operation_event_service=operation_event_service,
             settings=settings,
         )
@@ -71,7 +67,6 @@ class ScopedExecutionService:
         decision = context.decision
 
         if decision.outcome == AdmissionOutcome.DENIED:
-            self._block_job(context.job, decision.message)
             return ScopedExecutionResult(
                 status="blocked",
                 message=decision.message,
@@ -85,14 +80,12 @@ class ScopedExecutionService:
             context = self._recheck_after_confirmation(context, request)
             decision = context.decision
             if decision.outcome == AdmissionOutcome.DENIED:
-                self._block_job(context.job, decision.message)
                 return ScopedExecutionResult(
                     status="blocked",
                     message=decision.message,
                     decision=decision,
                 )
 
-        self._mark_job_running(context.job)
         self.operation_event_service.create_event(
             operation_identifier=context.operation.id,
             job_identifier=context.job.id if context.job is not None else None,
@@ -107,9 +100,26 @@ class ScopedExecutionService:
 
         try:
             result = executor(request, context.target)
+        except ExecutionTimedOutError as exc:
+            error = str(exc)
+            self.operation_event_service.create_event(
+                operation_identifier=context.operation.id,
+                job_identifier=context.job.id if context.job is not None else None,
+                event_type=OperationEventType.EXECUTION_FAILED,
+                level=OperationEventLevel.ERROR,
+                tool_name=request.tool_name,
+                tool_category=request.tool_category,
+                target_ref=context.target.normalized_target,
+                message=error,
+                payload={**self._event_payload(request, context.target), "error": error},
+            )
+            return ScopedExecutionResult(
+                status="timed_out",
+                message=error,
+                decision=decision,
+            )
         except Exception as exc:
             error = str(exc)
-            self._fail_job(context.job, error)
             self.operation_event_service.create_event(
                 operation_identifier=context.operation.id,
                 job_identifier=context.job.id if context.job is not None else None,
@@ -127,7 +137,6 @@ class ScopedExecutionService:
                 decision=decision,
             )
 
-        self._succeed_job(context.job)
         self.operation_event_service.create_event(
             operation_identifier=context.operation.id,
             job_identifier=context.job.id if context.job is not None else None,
@@ -174,7 +183,6 @@ class ScopedExecutionService:
                 message="Operator confirmation is required but no confirmation handler is available.",
                 target=context.target,
             )
-            self._block_job(context.job, decision.message)
             self.operation_event_service.create_event(
                 operation_identifier=context.operation.id,
                 job_identifier=context.job.id if context.job is not None else None,
@@ -201,7 +209,6 @@ class ScopedExecutionService:
                 message="Operator declined the required confirmation.",
                 target=context.target,
             )
-            self._block_job(context.job, decision.message)
             self.operation_event_service.create_event(
                 operation_identifier=context.operation.id,
                 job_identifier=context.job.id if context.job is not None else None,
@@ -247,51 +254,6 @@ class ScopedExecutionService:
             target=rechecked_context.target,
             decision=rechecked_context.decision,
         )
-
-    def _mark_job_running(self, job: Job | None) -> None:
-        if job is None:
-            return
-        now = utc_now_iso()
-        job.status = JobStatus.RUNNING
-        job.started_at = now
-        job.finished_at = None
-        job.last_error = None
-        job.updated_at = now
-        self.job_repository.update(job)
-
-    def _block_job(self, job: Job | None, message: str) -> None:
-        if job is None:
-            return
-        now = utc_now_iso()
-        job.status = JobStatus.BLOCKED
-        job.finished_at = now
-        job.last_error = message
-        job.updated_at = now
-        self.job_repository.update(job)
-
-    def _fail_job(self, job: Job | None, message: str) -> None:
-        if job is None:
-            return
-        now = utc_now_iso()
-        if job.started_at is None:
-            job.started_at = now
-        job.status = JobStatus.FAILED
-        job.finished_at = now
-        job.last_error = message
-        job.updated_at = now
-        self.job_repository.update(job)
-
-    def _succeed_job(self, job: Job | None) -> None:
-        if job is None:
-            return
-        now = utc_now_iso()
-        if job.started_at is None:
-            job.started_at = now
-        job.status = JobStatus.SUCCEEDED
-        job.finished_at = now
-        job.last_error = None
-        job.updated_at = now
-        self.job_repository.update(job)
 
     def _event_payload(self, request: AdmissionRequest, target: TargetDescriptor) -> dict[str, Any]:
         return {

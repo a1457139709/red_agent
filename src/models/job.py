@@ -42,6 +42,13 @@ class Job:
     started_at: str | None = None
     finished_at: str | None = None
     last_error: str | None = None
+    lease_owner: str | None = None
+    lease_token: str | None = None
+    lease_expires_at: str | None = None
+    last_heartbeat_at: str | None = None
+    cancel_requested_at: str | None = None
+    cancel_reason: str | None = None
+    retry_after: str | None = None
     created_at: str = field(default_factory=utc_now_iso)
     updated_at: str = field(default_factory=utc_now_iso)
 
@@ -91,6 +98,13 @@ class Job:
             started_at=row["started_at"],
             finished_at=row["finished_at"],
             last_error=row["last_error"],
+            lease_owner=row.get("lease_owner"),
+            lease_token=row.get("lease_token"),
+            lease_expires_at=row.get("lease_expires_at"),
+            last_heartbeat_at=row.get("last_heartbeat_at"),
+            cancel_requested_at=row.get("cancel_requested_at"),
+            cancel_reason=row.get("cancel_reason"),
+            retry_after=row.get("retry_after"),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -112,6 +126,13 @@ class Job:
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "last_error": self.last_error,
+            "lease_owner": self.lease_owner,
+            "lease_token": self.lease_token,
+            "lease_expires_at": self.lease_expires_at,
+            "last_heartbeat_at": self.last_heartbeat_at,
+            "cancel_requested_at": self.cancel_requested_at,
+            "cancel_reason": self.cancel_reason,
+            "retry_after": self.retry_after,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }

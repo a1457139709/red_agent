@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
-
-import pytest
+import time
 
 from agent.settings import Settings
 from app.job_service import JobService
@@ -73,7 +72,7 @@ def test_security_tool_execution_service_runs_job_through_scoped_runtime(tmp_pat
 
         assert result.status == "succeeded"
         assert isinstance(result.result, SecurityToolResult)
-        assert refreshed.status == JobStatus.SUCCEEDED
+        assert refreshed.status == JobStatus.PENDING
         assert logs[0].message == "security_tool_execution_succeeded"
         assert logs[1].message == "security_tool_validation_started"
     finally:
@@ -115,10 +114,10 @@ def test_security_tool_execution_service_blocks_out_of_scope_targets_before_tool
     refreshed = job_service.require_job(job.public_id)
 
     assert result.status == "blocked"
-    assert refreshed.status == JobStatus.BLOCKED
+    assert refreshed.status == JobStatus.PENDING
 
 
-def test_security_tool_execution_service_marks_validation_failures_as_failed(tmp_path):
+def test_security_tool_execution_service_returns_failed_result_for_validation_errors(tmp_path):
     settings = build_settings(tmp_path)
     operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
@@ -139,17 +138,17 @@ def test_security_tool_execution_service_marks_validation_failures_as_failed(tmp
         arguments={"ports": [81]},
     )
 
-    with pytest.raises(ValueError, match="outside the scope policy"):
-        execution_service.execute_job(job_identifier=job.public_id)
-
+    result = execution_service.execute_job(job_identifier=job.public_id)
     refreshed = job_service.require_job(job.public_id)
     logs = job_service.list_logs(job.public_id)
 
-    assert refreshed.status == JobStatus.FAILED
+    assert result.status == "failed"
+    assert "outside the scope policy" in result.message
+    assert refreshed.status == JobStatus.PENDING
     assert logs[0].message == "security_tool_validation_failed"
 
 
-def test_security_tool_execution_service_marks_unknown_job_type_as_failed(tmp_path):
+def test_security_tool_execution_service_returns_failed_result_for_unknown_tool_types(tmp_path):
     settings = build_settings(tmp_path)
     operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
@@ -167,12 +166,106 @@ def test_security_tool_execution_service_marks_unknown_job_type_as_failed(tmp_pa
         target_ref="https://example.com",
     )
 
-    with pytest.raises(ValueError, match="Unknown security tool requested: unknown_tool"):
-        execution_service.execute_job(job_identifier=job.public_id)
-
+    result = execution_service.execute_job(job_identifier=job.public_id)
     refreshed = job_service.require_job(job.public_id)
     logs = job_service.list_logs(job.public_id)
 
-    assert refreshed.status == JobStatus.FAILED
-    assert refreshed.last_error == "Unknown security tool requested: unknown_tool"
+    assert result.status == "failed"
+    assert result.message == "Unknown security tool requested: unknown_tool"
+    assert refreshed.status == JobStatus.PENDING
     assert logs[0].message == "security_tool_validation_failed"
+
+
+def test_security_tool_execution_service_reports_timeouts(tmp_path, monkeypatch):
+    settings = build_settings(tmp_path)
+    operation_service = OperationService.from_settings(settings)
+    job_service = JobService.from_settings(settings)
+    execution_service = SecurityToolExecutionService.from_settings(settings)
+
+    operation = operation_service.create_operation(
+        title="Recon",
+        objective="Timeout slow probes",
+        allowed_hosts=["127.0.0.1"],
+        allowed_protocols=["http"],
+        allowed_ports=[80],
+        allowed_tool_categories=["recon"],
+        status=OperationStatus.READY,
+    )
+    job = job_service.create_job(
+        operation_identifier=operation.public_id,
+        job_type="http_probe",
+        target_ref="http://127.0.0.1/slow",
+        timeout_seconds=1,
+    )
+
+    def slow_execute(*args, **kwargs):
+        time.sleep(1.2)
+        return SecurityToolResult(
+            tool_name="http_probe",
+            target="http://127.0.0.1/slow",
+            summary="slow",
+            payload={},
+        )
+
+    monkeypatch.setattr(execution_service.security_tool_executor, "execute", slow_execute)
+
+    result = execution_service.execute_job(job_identifier=job.public_id)
+
+    assert result.status == "timed_out"
+    assert "timed out" in result.message.lower()
+
+
+def test_security_tool_execution_service_enforces_job_timeout_over_argument_timeout(
+    tmp_path,
+    monkeypatch,
+):
+    settings = build_settings(tmp_path)
+    operation_service = OperationService.from_settings(settings)
+    job_service = JobService.from_settings(settings)
+    execution_service = SecurityToolExecutionService.from_settings(settings)
+
+    operation = operation_service.create_operation(
+        title="Recon",
+        objective="Honor per-job timeout",
+        allowed_domains=["example.com"],
+        allowed_protocols=["https"],
+        allowed_ports=[443],
+        allowed_tool_categories=["recon"],
+        status=OperationStatus.READY,
+    )
+    job = job_service.create_job(
+        operation_identifier=operation.public_id,
+        job_type="http_probe",
+        target_ref="https://example.com",
+        arguments={"timeout_seconds": 5},
+        timeout_seconds=1,
+    )
+
+    captured: dict[str, object] = {}
+    original_validate = execution_service.security_tool_executor.validate
+
+    def wrapped_validate(tool_name: str, *, target: str, arguments: dict, policy):
+        captured.update(arguments)
+        return original_validate(
+            tool_name,
+            target=target,
+            arguments=arguments,
+            policy=policy,
+        )
+
+    monkeypatch.setattr(execution_service.security_tool_executor, "validate", wrapped_validate)
+    monkeypatch.setattr(
+        execution_service.security_tool_executor,
+        "execute",
+        lambda *args, **kwargs: SecurityToolResult(
+            tool_name="http_probe",
+            target="https://example.com",
+            summary="ok",
+            payload={},
+        ),
+    )
+
+    result = execution_service.execute_job(job_identifier=job.public_id)
+
+    assert result.status == "succeeded"
+    assert captured["timeout_seconds"] == 1

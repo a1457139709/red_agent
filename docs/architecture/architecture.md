@@ -11,7 +11,7 @@
 
 The repository also contains a parallel v2 red-team runtime layer centered on persisted operations, jobs, scope-aware admission, and operation-level audit events.
 
-The implementation is local-first. State lives under `.red-code/`, the agent talks to an OpenAI-compatible chat model through LangChain, and there is no server, daemon, or background scheduler in the current design.
+The implementation is local-first. State lives under `.red-code/`, the agent talks to an OpenAI-compatible chat model through LangChain, and there is still no server or daemon in the current design. The v2 runtime now includes an in-process scheduler/worker foundation for durable job execution.
 
 One naming detail is worth calling out: the product is branded as `red-code`, but the Python package name in `pyproject.toml` is still `mini-claude-code`.
 
@@ -23,8 +23,8 @@ src/
   cli/ui.py              # Rich presenter for help, task, run, checkpoint, and skill output
   agent/                 # model provider, prompt assembly, session state, context compression
   app/                   # task, run, checkpoint, skill, and v2 execution services
-  orchestration/         # v2 scope validation, admission, and rate limiting
-  runtime/task_runner.py # bound-task orchestration and observability
+  orchestration/         # v2 scope validation, admission, scheduling, and job orchestration
+  runtime/               # bound-task runner plus v2 lease, timeout, and worker helpers
   models/                # domain entities and serialization helpers
   skills/                # built-in SKILL.md files, parser, and registry
   storage/               # SQLite repositories and schema management
@@ -131,12 +131,38 @@ Instead it uses:
 
 - `ScopeValidator` to normalize targets and enforce host/domain/CIDR/protocol/port/tool-category rules
 - `OperationAdmissionService` to load `Operation`, `ScopePolicy`, and optional `Job` context and persist admission denials
-- `ScopedExecutionService` to handle confirmation, transition job status, and emit operation-level execution events
+- `ScopedExecutionService` to handle confirmation and emit operation-level execution events
+- `JobOrchestrationService` to own queueing, leasing, retries, cancellation, and terminal job transitions
+- `Scheduler` to reclaim stale leases, cancel queued work, block failed dependency chains, and enqueue ready jobs
+- `WorkerRuntime` to atomically lease queued jobs and resolve typed-tool attempts into durable job states
 - `OperationEventService` to persist admission, confirmation, and execution facts to SQLite
 
 This split keeps the legacy task runtime stable while making future typed security tools pass through an explicit scope-aware boundary.
 
-### 6. Task Runtime
+### 6. V2 Job Runtime
+
+The Phase 4 runtime is intentionally single-process and local-first.
+
+`src/orchestration/job_service.py` owns durable job-state transitions for the v2 runtime:
+
+- queue dependency-ready pending jobs
+- persist cancellation requests
+- cancel queued or pending jobs
+- recover stale running leases
+- apply retry backoff and retry exhaustion
+- block dependents when an upstream job fails, times out, is blocked, or is cancelled
+
+`src/runtime/worker.py` provides `WorkerRuntime.run_once()` and `WorkerRuntime.drain()`:
+
+- `run_once()` atomically claims one queued job through a lease token
+- heartbeats refresh the lease before and after an attempt
+- typed-tool execution runs through the existing scoped admission boundary
+- final job state is resolved by the worker, not by the scoped execution layer
+
+`src/runtime/leases.py` contains lease-token and lease-deadline helpers.  
+`src/runtime/timeouts.py` contains the bounded execution helper used to translate long-running typed-tool attempts into timeout outcomes.
+
+### 7. Task Runtime
 
 `src/runtime/task_runner.py` is the orchestration layer for persisted work. It turns one bound user prompt into one persisted `Run`.
 
@@ -152,7 +178,7 @@ Its responsibilities are:
 
 The task runtime is only active when a shell has resumed a task with `/task resume <id>`.
 
-### 7. Persistence
+### 8. Persistence
 
 Persistence is split between SQLite metadata and filesystem blobs.
 
@@ -293,8 +319,9 @@ Checkpoint blobs are always serialized as UTF-8 JSON before gzip compression so 
 3. `ScopeValidator` normalizes the target and enforces scope policy rules.
 4. Concurrency and per-minute execution limits are checked against persisted state.
 5. If confirmation is required, `ScopedExecutionService` records the confirmation events, waits for approval, and then re-runs admission with confirmation disabled to re-check scope, concurrency, and rate limits.
-6. If still admitted, the bound job is marked `running`, `execution_started` is written, and the injected callable executes.
-7. Success or failure updates the job terminal state and writes the matching `operation_events` row.
+6. If still admitted, `execution_started` is written and the injected callable executes.
+7. `ScopedExecutionService` returns a structured attempt outcome and writes matching execution events.
+8. `WorkerRuntime` and `JobOrchestrationService` resolve the durable job state, retry behavior, cancellation precedence, and lease cleanup.
 
 ## Architectural Rules
 
@@ -307,6 +334,7 @@ The current codebase follows these rules:
 - repositories own SQLite reads and writes.
 - `ToolExecutor` is the only place where model-issued tool calls cross into local execution.
 - the v2 red-team runtime uses `ScopedExecutionService` rather than `ToolExecutor` for scope-aware execution admission.
+- the v2 worker runtime, not `ScopedExecutionService`, owns durable `Job` state transitions.
 - skills specialize prompts and visible tools, but never bypass the safety boundary.
 
 ## Current Constraints
@@ -314,7 +342,7 @@ The current codebase follows these rules:
 The architecture intentionally does not implement:
 
 - multi-user or network service deployment
-- background autonomous task workers
+- a long-lived daemon or distributed worker pool
 - remote checkpoint storage
 - plugin/MCP-style external tool protocols
 - sub-agent orchestration

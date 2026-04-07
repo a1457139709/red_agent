@@ -18,7 +18,7 @@ Current phase status based on the repository implementation:
 - Phase 1: implemented
 - Phase 2: implemented
 - Phase 3: implemented
-- Phase 4: not yet implemented
+- Phase 4: implemented
 - Phase 5: partially implemented
 - Phase 6: partially implemented
 - Phase 7: partially implemented
@@ -276,9 +276,21 @@ Move from one prompt equals one foreground run to a background-capable job runti
 
 ### Status
 
-Not yet implemented.
+Implemented.
 
-The repository currently persists `Job` records and job logs, but it does not yet provide the scheduler, worker, lease, heartbeat, timeout, cancellation, or retry orchestration described in this phase.
+The repository now provides:
+
+- durable scheduler fields on `Job` for leases, heartbeats, cancellation requests, and retry backoff
+- `JobOrchestrationService` for queueing, stale-lease recovery, cancellation, retry, and dependency blocking
+- `Scheduler.run_once(...)` for one-pass job orchestration
+- `WorkerRuntime.run_once(...)` and `WorkerRuntime.drain(...)` for in-process job execution
+- timeout-bounded typed-tool execution with worker-owned terminal job transitions
+
+The current implementation still intentionally keeps this phase narrow:
+
+- no daemon or background service is started automatically from the CLI
+- no new `/job run` or `/job cancel` operator commands are added yet
+- operation auto-finalization is still deferred
 
 ### Work Items
 

@@ -67,7 +67,10 @@ class OperationAdmissionService:
         if decision.outcome == "allowed":
             concurrency_denial = self.rate_limiter.check_concurrency(
                 policy=policy,
-                running_jobs=self.job_repository.count_running(operation.id),
+                running_jobs=self.job_repository.count_running(
+                    operation.id,
+                    exclude_job_id=job.id if job is not None else None,
+                ),
                 target=target,
             )
             if concurrency_denial is not None:

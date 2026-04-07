@@ -12,7 +12,7 @@ The project is intended for local single-user development work. It is not a SaaS
 The repository now contains two parallel runtime families:
 
 - v1 `Task` / `Run` for the existing coding-agent workflow
-- v2 `Operation` / `Job` foundations plus scope-aware admission for the red-team-oriented runtime
+- v2 `Operation` / `Job` foundations plus scope-aware admission and a scheduler/worker runtime for the red-team-oriented runtime
 
 ## Current Capabilities
 
@@ -32,7 +32,7 @@ The repository now contains two parallel runtime families:
 - persisted operations, scope policies, jobs, evidence, findings, and memory entries
 - persisted operation-level admission and execution events
 - scope-aware target validation for the v2 red-team runtime
-- a synchronous scoped execution boundary for future typed security tools
+- a durable scheduler/worker runtime with job queueing, leases, heartbeats, retries, and cooperative cancellation
 - pure-Python typed security tools for DNS, HTTP, TLS, banner grabbing, and TCP port scans
 - structured typed-tool results with evidence and finding candidates
 - minimal red-team CLI inspection for operations and jobs
@@ -91,7 +91,7 @@ Use `/help operation`, `/help job`, `/help task`, and `/help skill` for detailed
 
 ## Red-Team Runtime Status
 
-Phase 2 and Phase 3 currently deliver:
+Phase 2, Phase 3, and Phase 4 currently deliver:
 
 - `Operation`, `ScopePolicy`, `Job`, `Evidence`, `Finding`, and `MemoryEntry` domain models
 - SQLite-backed repositories and services for the v2 red-team runtime
@@ -101,6 +101,8 @@ Phase 2 and Phase 3 currently deliver:
 - scope-aware target, protocol, port, rate-limit, and confirmation checks
 - confirmation-gated executions are re-admitted before execution to re-check rate and concurrency limits
 - a v2-only scoped execution service that hard-blocks out-of-scope work before execution
+- a job orchestration layer that queues dependency-ready jobs, recovers stale leases, blocks failed dependency chains, and applies cooperative cancellation
+- a single-process worker runtime with atomic job leasing, heartbeat refresh, retry backoff, timeout handling, and `drain()` support for sequential background-style execution
 - a dedicated typed-security tool registry separated from the legacy LangChain tool registry
 - pure-Python typed security tools: `dns_lookup`, `http_probe`, `tls_inspect`, `banner_grab`, and `port_scan`
 - `dns_lookup` validates both the resolver egress target and the queried logical name against scope
@@ -109,7 +111,6 @@ Phase 2 and Phase 3 currently deliver:
 
 The current runtime still intentionally does not yet deliver:
 
-- a background scheduler or worker runtime
 - automatic persistence of typed-tool evidence candidates
 - automatic persistence of typed-tool finding candidates
 - managed evidence artifact export

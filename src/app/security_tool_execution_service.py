@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from agent.settings import Settings, get_settings
-from models.job import JobLogLevel, JobStatus
-from models.run import utc_now_iso
+from models.job import JobLogLevel
+from runtime.timeouts import run_with_timeout
 from tools import build_security_tool_registry
 from tools.executor import SecurityToolExecutionError, SecurityToolExecutor
 
@@ -58,12 +58,11 @@ class SecurityToolExecutionService:
             invocation = self.security_tool_executor.validate(
                 job.job_type,
                 target=job.target_ref,
-                arguments=job.arguments,
+                arguments=self._effective_arguments(job.arguments, timeout_seconds=job.timeout_seconds),
                 policy=policy,
             )
         except SecurityToolExecutionError as exc:
-            self._mark_validation_failed(job, exc.error)
-            raise ValueError(exc.error) from exc
+            return self._validation_failed(job_identifier=job.id, tool_name=job.job_type, error=exc.error)
 
         request = invocation.to_admission_request(
             operation_id=operation.id,
@@ -74,10 +73,13 @@ class SecurityToolExecutionService:
 
         result = self.scoped_execution_service.execute(
             request=request,
-            executor=lambda _request, target: self.security_tool_executor.execute(
-                tool.name,
-                invocation=invocation,
-                target=target,
+            executor=lambda _request, target: run_with_timeout(
+                lambda: self.security_tool_executor.execute(
+                    tool.name,
+                    invocation=invocation,
+                    target=target,
+                ),
+                timeout_seconds=invocation.timeout_seconds,
             ),
             confirm=confirm,
         )
@@ -92,18 +94,28 @@ class SecurityToolExecutionService:
         )
         return result
 
-    def _mark_validation_failed(self, job, error: str) -> None:
-        now = utc_now_iso()
-        if job.started_at is None:
-            job.started_at = now
-        job.status = JobStatus.FAILED
-        job.finished_at = now
-        job.last_error = error
-        job.updated_at = now
-        self.job_service.save_job(job)
+    def _effective_arguments(self, arguments: dict, *, timeout_seconds: int | None) -> dict:
+        effective_arguments = dict(arguments)
+        if timeout_seconds is not None:
+            effective_arguments["timeout_seconds"] = timeout_seconds
+        return effective_arguments
+
+    def _validation_failed(
+        self,
+        *,
+        job_identifier: str,
+        tool_name: str,
+        error: str,
+    ) -> ScopedExecutionResult:
         self.job_service.write_log(
-            job_identifier=job.id,
+            job_identifier=job_identifier,
             level=JobLogLevel.ERROR,
             message="security_tool_validation_failed",
-            payload={"error": error, "tool_name": job.job_type},
+            payload={"error": error, "tool_name": tool_name},
+        )
+        return ScopedExecutionResult(
+            status="failed",
+            message=error,
+            decision=None,
+            result=None,
         )

@@ -29,7 +29,7 @@ def make_request(*, operation_id: str, job_id: str | None, raw_target: str, tool
     )
 
 
-def test_scoped_execution_service_blocks_out_of_scope_requests_and_updates_job(tmp_path):
+def test_scoped_execution_service_blocks_out_of_scope_requests_without_mutating_job_state(tmp_path):
     settings = build_settings(tmp_path)
     operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
@@ -61,7 +61,7 @@ def test_scoped_execution_service_blocks_out_of_scope_requests_and_updates_job(t
     refreshed = job_service.require_job(job.public_id)
 
     assert result.status == "blocked"
-    assert refreshed.status == JobStatus.BLOCKED
+    assert refreshed.status == JobStatus.PENDING
     assert [event.event_type for event in events] == [
         OperationEventType.ADMISSION_DENIED,
         OperationEventType.ADMISSION_REQUESTED,
@@ -103,7 +103,7 @@ def test_scoped_execution_service_records_full_confirmation_and_success_flow(tmp
 
     assert result.status == "succeeded"
     assert result.result == {"target": "https://example.com"}
-    assert refreshed.status == JobStatus.SUCCEEDED
+    assert refreshed.status == JobStatus.PENDING
     assert [event.event_type for event in events] == [
         OperationEventType.EXECUTION_SUCCEEDED,
         OperationEventType.EXECUTION_STARTED,
@@ -115,7 +115,7 @@ def test_scoped_execution_service_records_full_confirmation_and_success_flow(tmp
     assert events[2].payload["admission_stage"] == "post_confirmation_recheck"
 
 
-def test_scoped_execution_service_marks_job_failed_and_persists_execution_failure(tmp_path):
+def test_scoped_execution_service_records_execution_failure_without_mutating_job_state(tmp_path):
     settings = build_settings(tmp_path)
     operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
@@ -147,7 +147,7 @@ def test_scoped_execution_service_marks_job_failed_and_persists_execution_failur
     refreshed = job_service.require_job(job.public_id)
 
     assert result.status == "failed"
-    assert refreshed.status == JobStatus.FAILED
+    assert refreshed.status == JobStatus.PENDING
     assert events[0].event_type == OperationEventType.EXECUTION_FAILED
     assert events[1].event_type == OperationEventType.EXECUTION_STARTED
 
@@ -194,7 +194,7 @@ def test_scoped_execution_service_enforces_rate_limit_from_recent_execution_even
 
     assert result.status == "blocked"
     assert result.decision.reason_code == "rate_limit_exceeded"
-    assert refreshed.status == JobStatus.BLOCKED
+    assert refreshed.status == JobStatus.PENDING
     assert events[0].event_type == OperationEventType.ADMISSION_DENIED
 
 
@@ -245,7 +245,7 @@ def test_scoped_execution_service_rechecks_rate_limit_after_confirmation(tmp_pat
 
     assert result.status == "blocked"
     assert result.decision.reason_code == "rate_limit_exceeded"
-    assert refreshed.status == JobStatus.BLOCKED
+    assert refreshed.status == JobStatus.PENDING
     assert [event.event_type for event in events] == [
         OperationEventType.ADMISSION_DENIED,
         OperationEventType.ADMISSION_REQUESTED,
@@ -297,7 +297,7 @@ def test_scoped_execution_service_enforces_max_concurrency_before_execution(tmp_
 
     assert result.status == "blocked"
     assert result.decision.reason_code == "max_concurrency_exceeded"
-    assert refreshed.status == JobStatus.BLOCKED
+    assert refreshed.status == JobStatus.PENDING
 
 
 def test_scoped_execution_service_blocks_non_runnable_operation_statuses(tmp_path):
@@ -332,7 +332,7 @@ def test_scoped_execution_service_blocks_non_runnable_operation_statuses(tmp_pat
 
     assert result.status == "blocked"
     assert result.decision.reason_code == "operation_not_runnable"
-    assert refreshed.status == JobStatus.BLOCKED
+    assert refreshed.status == JobStatus.PENDING
     assert [event.event_type for event in events] == [
         OperationEventType.ADMISSION_DENIED,
         OperationEventType.ADMISSION_REQUESTED,
