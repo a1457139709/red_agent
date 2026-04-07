@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from agent.settings import Settings, get_settings
@@ -82,12 +82,15 @@ class ScopedExecutionService:
             confirmation_result = self._handle_confirmation(context, request, confirm)
             if confirmation_result is not None:
                 return confirmation_result
-            decision = AdmissionDecision(
-                outcome=AdmissionOutcome.ALLOWED,
-                reason_code=None,
-                message="Execution permitted after confirmation.",
-                target=context.target,
-            )
+            context = self._recheck_after_confirmation(context, request)
+            decision = context.decision
+            if decision.outcome == AdmissionOutcome.DENIED:
+                self._block_job(context.job, decision.message)
+                return ScopedExecutionResult(
+                    status="blocked",
+                    message=decision.message,
+                    decision=decision,
+                )
 
         self._mark_job_running(context.job)
         self.operation_event_service.create_event(
@@ -226,6 +229,25 @@ class ScopedExecutionService:
         )
         return None
 
+    def _recheck_after_confirmation(
+        self,
+        context: AdmissionContext,
+        request: AdmissionRequest,
+    ) -> AdmissionContext:
+        recheck_request = replace(
+            request,
+            skip_confirmation=True,
+            admission_stage="post_confirmation_recheck",
+        )
+        rechecked_context = self.admission_service.admit(recheck_request)
+        return AdmissionContext(
+            operation=rechecked_context.operation,
+            policy=rechecked_context.policy,
+            job=rechecked_context.job,
+            target=rechecked_context.target,
+            decision=rechecked_context.decision,
+        )
+
     def _mark_job_running(self, job: Job | None) -> None:
         if job is None:
             return
@@ -278,6 +300,17 @@ class ScopedExecutionService:
             "protocol": target.protocol,
             "port": target.port,
             "metadata": request.metadata,
+            "admission_stage": request.admission_stage,
+            "skip_confirmation": request.skip_confirmation,
+            "additional_targets": [
+                {
+                    "raw_target": additional_target.raw_target,
+                    "protocol": additional_target.protocol,
+                    "port": additional_target.port,
+                    "label": additional_target.label,
+                }
+                for additional_target in request.additional_targets
+            ],
         }
 
     def _summarize_result(self, result: object) -> str:

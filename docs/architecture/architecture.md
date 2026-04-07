@@ -292,8 +292,8 @@ Checkpoint blobs are always serialized as UTF-8 JSON before gzip compression so 
 2. `OperationAdmissionService` loads the operation context and writes `admission_requested`.
 3. `ScopeValidator` normalizes the target and enforces scope policy rules.
 4. Concurrency and per-minute execution limits are checked against persisted state.
-5. If confirmation is required, `ScopedExecutionService` records the confirmation events and waits for approval.
-6. If admitted, the bound job is marked `running`, `execution_started` is written, and the injected callable executes.
+5. If confirmation is required, `ScopedExecutionService` records the confirmation events, waits for approval, and then re-runs admission with confirmation disabled to re-check scope, concurrency, and rate limits.
+6. If still admitted, the bound job is marked `running`, `execution_started` is written, and the injected callable executes.
 7. Success or failure updates the job terminal state and writes the matching `operation_events` row.
 
 ## Architectural Rules

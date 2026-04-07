@@ -157,4 +157,15 @@ class OperationAdmissionService:
             "protocol": target.protocol,
             "port": target.port,
             "metadata": request.metadata,
+            "admission_stage": request.admission_stage,
+            "skip_confirmation": request.skip_confirmation,
+            "additional_targets": [
+                {
+                    "raw_target": additional_target.raw_target,
+                    "protocol": additional_target.protocol,
+                    "port": additional_target.port,
+                    "label": additional_target.label,
+                }
+                for additional_target in request.additional_targets
+            ],
         }

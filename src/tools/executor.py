@@ -4,7 +4,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 import json
+from typing import Any
 
+from models.scope_policy import ScopePolicy
+from orchestration.scope_validator import TargetDescriptor
+from tools.contracts import SecurityTool, SecurityToolInvocation, SecurityToolResult
 from tools.policy import CapabilityTier, RuntimeSafetyPolicy, SafetyAuditEvent, get_tool_capability
 from utils.safety import detect_danger, is_sensitive_path, resolve_safe_path
 
@@ -45,6 +49,13 @@ class ToolExecutionError(RuntimeError):
         super().__init__(error)
         self.tool_name = tool_name
         self.capability = capability
+        self.error = error
+
+
+class SecurityToolExecutionError(RuntimeError):
+    def __init__(self, tool_name: str, error: str) -> None:
+        super().__init__(error)
+        self.tool_name = tool_name
         self.error = error
 
 
@@ -437,3 +448,45 @@ class ToolExecutor:
         if len(value) <= limit:
             return value
         return value[: limit - 3] + "..."
+
+
+class SecurityToolExecutor:
+    def __init__(self, tools: dict[str, SecurityTool]) -> None:
+        self._tools = dict(tools)
+
+    @property
+    def tool_names(self) -> set[str]:
+        return set(self._tools)
+
+    def get_tool(self, tool_name: str) -> SecurityTool:
+        tool = self._tools.get(tool_name)
+        if tool is None:
+            raise SecurityToolExecutionError(tool_name, f"Unknown security tool requested: {tool_name}")
+        return tool
+
+    def validate(
+        self,
+        tool_name: str,
+        *,
+        target: str,
+        arguments: dict[str, Any],
+        policy: ScopePolicy,
+    ) -> SecurityToolInvocation:
+        tool = self.get_tool(tool_name)
+        try:
+            return tool.validate_invocation(target=target, arguments=arguments, policy=policy)
+        except Exception as exc:
+            raise SecurityToolExecutionError(tool_name, str(exc)) from exc
+
+    def execute(
+        self,
+        tool_name: str,
+        *,
+        invocation: SecurityToolInvocation,
+        target: TargetDescriptor,
+    ) -> SecurityToolResult:
+        tool = self.get_tool(tool_name)
+        try:
+            return tool.execute(invocation, target)
+        except Exception as exc:
+            raise SecurityToolExecutionError(tool_name, str(exc)) from exc

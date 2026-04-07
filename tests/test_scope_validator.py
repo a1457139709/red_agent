@@ -1,5 +1,10 @@
 from models.scope_policy import ScopePolicy
-from orchestration.scope_validator import AdmissionOutcome, AdmissionRequest, ScopeValidator
+from orchestration.scope_validator import (
+    AdditionalAdmissionTarget,
+    AdmissionOutcome,
+    AdmissionRequest,
+    ScopeValidator,
+)
 
 
 def make_request(
@@ -137,3 +142,37 @@ def test_scope_validator_marks_confirmation_required_for_tool_or_category():
 
     assert by_tool.outcome == AdmissionOutcome.REQUIRES_CONFIRMATION
     assert by_category.outcome == AdmissionOutcome.REQUIRES_CONFIRMATION
+
+
+def test_scope_validator_checks_additional_targets_without_reconfirming():
+    validator = ScopeValidator()
+    policy = make_policy(
+        allowed_domains=["example.com"],
+        allowed_protocols=["dns"],
+        allowed_ports=[53],
+        confirmation_required_actions=["dns_lookup"],
+    )
+    request = AdmissionRequest(
+        operation_id="op-1",
+        job_id="job-1",
+        tool_name="dns_lookup",
+        tool_category="recon",
+        raw_target="8.8.8.8",
+        protocol="dns",
+        port=53,
+        additional_targets=(
+            AdditionalAdmissionTarget(
+                raw_target="outside.example.org",
+                protocol="dns",
+                port=53,
+                label="query_name",
+            ),
+        ),
+        skip_confirmation=True,
+    )
+
+    decision = validator.evaluate(policy, request)
+
+    assert decision.outcome == AdmissionOutcome.DENIED
+    assert decision.reason_code == "domain_out_of_scope"
+    assert decision.message.startswith("query_name:")

@@ -10,6 +10,20 @@ The plan assumes:
 - the new security-oriented runtime is introduced beside it
 - correctness, scope control, and observability are more important than backward compatibility
 
+## Implementation Status Snapshot
+
+Current phase status based on the repository implementation:
+
+- Phase 0: partially implemented
+- Phase 1: implemented
+- Phase 2: implemented
+- Phase 3: implemented
+- Phase 4: not yet implemented
+- Phase 5: partially implemented
+- Phase 6: partially implemented
+- Phase 7: partially implemented
+- Phase 8: partially implemented
+
 ## Current Repository Anchors
 
 The current codebase already has strong extension points:
@@ -45,6 +59,20 @@ The new runtime must shift toward:
 
 Protect the current coding-agent runtime while creating space for a red-team-oriented runtime.
 
+### Status
+
+Partially implemented.
+
+The current repository already provides:
+
+- v1 `Task` / `Run` and v2 `Operation` / `Job` as parallel runtime families
+- reserved `/operation` and `/job` CLI command groups
+
+Still deferred:
+
+- a dedicated v2 database file such as `.red-code/agent-v2.db`
+- a full storage partition between legacy and v2 runtime state
+
 ### Work Items
 
 - keep the current `Task` and `Run` runtime available as legacy behavior
@@ -70,6 +98,10 @@ Protect the current coding-agent runtime while creating space for a red-team-ori
 ### Goal
 
 Introduce the core entities required by the new runtime.
+
+### Status
+
+Implemented.
 
 ### Current Implementation Note
 
@@ -169,6 +201,23 @@ Implemented for the v2 runtime family.
 
 Replace shell-heavy security execution with typed, auditable tools.
 
+### Status
+
+Implemented.
+
+The repository now provides a dedicated typed security tool path beside the legacy LangChain tool registry. The general-purpose tool registry remains available for the v1 coding-agent workflow, while the v2 runtime can execute the typed MVP security tool set through scoped admission.
+
+The legacy tool registry is still centered on general-purpose tools such as:
+
+- `bash`
+- `read_file`
+- `write_file`
+- `edit_file`
+- `list_dir`
+- `search`
+- `web_fetch`
+- `web_search`
+
 ### MVP Tool Set
 
 - `dns_lookup`
@@ -204,6 +253,15 @@ Replace shell-heavy security execution with typed, auditable tools.
 
 `bash` may remain in the repository, but it should not be the primary red-team execution path.
 
+Phase 3 currently stops at structured result generation:
+
+- typed tools emit evidence candidates
+- typed tools emit finding candidates when appropriate
+- confirmation-gated execution is re-admitted before execution so concurrency and rate limits cannot be bypassed
+- `dns_lookup` validates both the queried logical name and the real resolver egress target
+- `http_probe` records only the first HTTP response and does not auto-follow redirects
+- automatic persistence of those candidates remains deferred to Phase 5
+
 ### Exit Criteria
 
 - typed security tools are callable through the unified executor
@@ -215,6 +273,12 @@ Replace shell-heavy security execution with typed, auditable tools.
 ### Goal
 
 Move from one prompt equals one foreground run to a background-capable job runtime.
+
+### Status
+
+Not yet implemented.
+
+The repository currently persists `Job` records and job logs, but it does not yet provide the scheduler, worker, lease, heartbeat, timeout, cancellation, or retry orchestration described in this phase.
 
 ### Work Items
 
@@ -251,6 +315,21 @@ The legacy task runner should not remain the center of security execution once j
 
 Promote execution output into durable proof and analyst-friendly conclusions.
 
+### Status
+
+Partially implemented.
+
+The repository already provides:
+
+- `Evidence`, `Finding`, and `MemoryEntry` models
+- SQLite-backed repositories and services for those entities
+
+Still missing from this phase:
+
+- automatic evidence creation from successful typed jobs
+- automatic finding candidate generation
+- managed evidence artifact storage and export modules
+
 ### Work Items
 
 - persist evidence metadata
@@ -283,6 +362,21 @@ Promote execution output into durable proof and analyst-friendly conclusions.
 
 Keep skills as workflow specializers while moving security control into runtime code.
 
+### Status
+
+Partially implemented.
+
+The repository already:
+
+- preserves prompt overlays and tool narrowing
+- parses extension fields such as `model`, `effort`, `shell`, `user-invocable`, and `disable-model-invocation`
+
+Still missing from this phase:
+
+- operational use of those parsed extension fields in the runtime
+- bounded job-template generation from skills
+- dedicated security workflow skills built around the v2 runtime
+
 ### Work Items
 
 - preserve prompt overlays and tool narrowing
@@ -308,6 +402,23 @@ Keep skills as workflow specializers while moving security control into runtime 
 ### Goal
 
 Expose the new runtime cleanly to the operator.
+
+### Status
+
+Partially implemented.
+
+The repository currently provides:
+
+- `/operation create|list|show`
+- `/job create|list|show`
+- help text and Rich presentation for those minimal v2 inspection flows
+
+Still missing from this phase:
+
+- `/finding`
+- `/evidence`
+- `/dashboard`
+- v2 lifecycle commands such as pause, resume, and cancel
 
 ### Work Items
 
@@ -341,6 +452,12 @@ Expose the new runtime cleanly to the operator.
 ### Goal
 
 Support higher-level orchestration without reverting to transcript-heavy control.
+
+### Status
+
+Partially implemented.
+
+The repository already persists structured memory entries, but it does not yet provide planner runtime orchestration, planner-generated job proposals, or planner context assembly from evidence and open findings.
 
 ### Work Items
 
@@ -419,5 +536,15 @@ The first milestone should deliver:
 - evidence persistence
 - finding persistence
 - CLI inspection for operation and job state
+
+Current milestone status:
+
+- delivered: `Operation`
+- delivered: `ScopePolicy`
+- delivered: `Job`
+- delivered: at least three typed security tools
+- delivered: evidence persistence
+- delivered: finding persistence
+- delivered: CLI inspection for operation and job state
 
 That milestone is the point where `red-code` starts behaving like a real local security-operation agent rather than a generic coding agent with security-themed prompts.

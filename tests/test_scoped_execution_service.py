@@ -107,10 +107,12 @@ def test_scoped_execution_service_records_full_confirmation_and_success_flow(tmp
     assert [event.event_type for event in events] == [
         OperationEventType.EXECUTION_SUCCEEDED,
         OperationEventType.EXECUTION_STARTED,
+        OperationEventType.ADMISSION_REQUESTED,
         OperationEventType.CONFIRMATION_APPROVED,
         OperationEventType.CONFIRMATION_REQUIRED,
         OperationEventType.ADMISSION_REQUESTED,
     ]
+    assert events[2].payload["admission_stage"] == "post_confirmation_recheck"
 
 
 def test_scoped_execution_service_marks_job_failed_and_persists_execution_failure(tmp_path):
@@ -194,6 +196,65 @@ def test_scoped_execution_service_enforces_rate_limit_from_recent_execution_even
     assert result.decision.reason_code == "rate_limit_exceeded"
     assert refreshed.status == JobStatus.BLOCKED
     assert events[0].event_type == OperationEventType.ADMISSION_DENIED
+
+
+def test_scoped_execution_service_rechecks_rate_limit_after_confirmation(tmp_path):
+    settings = build_settings(tmp_path)
+    operation_service = OperationService.from_settings(settings)
+    job_service = JobService.from_settings(settings)
+    event_service = OperationEventService.from_settings(settings)
+    execution_service = ScopedExecutionService.from_settings(settings)
+
+    operation = operation_service.create_operation(
+        title="Recon",
+        objective="Inspect public web surface",
+        allowed_domains=["example.com"],
+        confirmation_required_actions=["http_probe"],
+        rate_limit_per_minute=1,
+        status=OperationStatus.READY,
+    )
+    job = job_service.create_job(
+        operation_identifier=operation.public_id,
+        job_type="http_probe",
+        target_ref="https://example.com",
+    )
+
+    def confirm(_prompt):
+        event_service.create_event(
+            operation_identifier=operation.public_id,
+            event_type=OperationEventType.EXECUTION_STARTED,
+            level=OperationEventLevel.INFO,
+            tool_name="http_probe",
+            tool_category="recon",
+            target_ref="https://example.com",
+        )
+        return True
+
+    result = execution_service.execute(
+        request=make_request(
+            operation_id=operation.public_id,
+            job_id=job.public_id,
+            raw_target="https://example.com",
+        ),
+        executor=lambda _request, _target: {"ok": True},
+        confirm=confirm,
+    )
+
+    refreshed = job_service.require_job(job.public_id)
+    events = event_service.list_events(operation.public_id)
+
+    assert result.status == "blocked"
+    assert result.decision.reason_code == "rate_limit_exceeded"
+    assert refreshed.status == JobStatus.BLOCKED
+    assert [event.event_type for event in events] == [
+        OperationEventType.ADMISSION_DENIED,
+        OperationEventType.ADMISSION_REQUESTED,
+        OperationEventType.CONFIRMATION_APPROVED,
+        OperationEventType.EXECUTION_STARTED,
+        OperationEventType.CONFIRMATION_REQUIRED,
+        OperationEventType.ADMISSION_REQUESTED,
+    ]
+    assert events[1].payload["admission_stage"] == "post_confirmation_recheck"
 
 
 def test_scoped_execution_service_enforces_max_concurrency_before_execution(tmp_path):

@@ -83,6 +83,17 @@ class AdmissionRequest:
     protocol: str | None = None
     port: int | None = None
     metadata: dict[str, object] = field(default_factory=dict)
+    additional_targets: tuple["AdditionalAdmissionTarget", ...] = ()
+    skip_confirmation: bool = False
+    admission_stage: str = "initial"
+
+
+@dataclass(frozen=True, slots=True)
+class AdditionalAdmissionTarget:
+    raw_target: str
+    protocol: str | None = None
+    port: int | None = None
+    label: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +102,12 @@ class AdmissionDecision:
     reason_code: str | None
     message: str
     target: TargetDescriptor
+
+
+@dataclass(frozen=True, slots=True)
+class _TargetEvaluation:
+    target: TargetDescriptor | None
+    decision: AdmissionDecision | None
 
 
 class ScopeValidator:
@@ -157,58 +174,42 @@ class ScopeValidator:
         )
 
     def evaluate(self, policy: ScopePolicy, request: AdmissionRequest) -> AdmissionDecision:
-        try:
-            target = self.describe_target(request)
-        except ValueError as exc:
-            fallback_target = TargetDescriptor(
-                raw_target=request.raw_target,
-                kind="unknown",
-                host=None,
-                ip=None,
-                port=request.port,
-                protocol=_normalize_protocol(request.protocol),
-                normalized_target=request.raw_target.strip() or request.raw_target,
+        primary_evaluation = self._evaluate_target_constraints(
+            policy=policy,
+            request=request,
+            raw_target=request.raw_target,
+            protocol=request.protocol,
+            port=request.port,
+        )
+        if primary_evaluation.decision is not None:
+            return primary_evaluation.decision
+        target = primary_evaluation.target
+        assert target is not None
+
+        for additional_target in request.additional_targets:
+            evaluation = self._evaluate_target_constraints(
+                policy=policy,
+                request=request,
+                raw_target=additional_target.raw_target,
+                protocol=additional_target.protocol,
+                port=additional_target.port,
+                label=additional_target.label,
             )
-            return AdmissionDecision(
-                outcome=AdmissionOutcome.DENIED,
-                reason_code="target_parse_failed",
-                message=f"Target is invalid: {exc}",
-                target=fallback_target,
-            )
-
-        denied_target = self._find_matching_denied_target(policy, target)
-        if denied_target is not None:
-            return AdmissionDecision(
-                outcome=AdmissionOutcome.DENIED,
-                reason_code="target_denied",
-                message=f"Target '{denied_target}' is explicitly denied by the scope policy.",
-                target=target,
-            )
-
-        scope_denial = self._check_scope(policy, target)
-        if scope_denial is not None:
-            return scope_denial
-
-        protocol_denial = self._check_protocol(policy, target)
-        if protocol_denial is not None:
-            return protocol_denial
-
-        port_denial = self._check_port(policy, target)
-        if port_denial is not None:
-            return port_denial
+            if evaluation.decision is not None:
+                return evaluation.decision
 
         tool_category_denial = self._check_tool_category(policy, request, target)
         if tool_category_denial is not None:
             return tool_category_denial
 
-        if request.tool_name in policy.confirmation_required_actions:
+        if not request.skip_confirmation and request.tool_name in policy.confirmation_required_actions:
             return AdmissionDecision(
                 outcome=AdmissionOutcome.REQUIRES_CONFIRMATION,
                 reason_code=None,
                 message=f"Tool '{request.tool_name}' requires operator confirmation.",
                 target=target,
             )
-        if request.tool_category in policy.confirmation_required_actions:
+        if not request.skip_confirmation and request.tool_category in policy.confirmation_required_actions:
             return AdmissionDecision(
                 outcome=AdmissionOutcome.REQUIRES_CONFIRMATION,
                 reason_code=None,
@@ -222,6 +223,87 @@ class ScopeValidator:
             message="Target is within the declared scope policy.",
             target=target,
         )
+
+    def _evaluate_target_constraints(
+        self,
+        *,
+        policy: ScopePolicy,
+        request: AdmissionRequest,
+        raw_target: str,
+        protocol: str | None,
+        port: int | None,
+        label: str | None = None,
+    ) -> _TargetEvaluation:
+        scoped_request = AdmissionRequest(
+            operation_id=request.operation_id,
+            job_id=request.job_id,
+            tool_name=request.tool_name,
+            tool_category=request.tool_category,
+            raw_target=raw_target,
+            protocol=protocol,
+            port=port,
+            metadata=request.metadata,
+            skip_confirmation=True,
+        )
+        try:
+            target = self.describe_target(scoped_request)
+        except ValueError as exc:
+            fallback_target = TargetDescriptor(
+                raw_target=raw_target,
+                kind="unknown",
+                host=None,
+                ip=None,
+                port=port,
+                protocol=_normalize_protocol(protocol),
+                normalized_target=raw_target.strip() or raw_target,
+            )
+            return _TargetEvaluation(
+                target=None,
+                decision=AdmissionDecision(
+                    outcome=AdmissionOutcome.DENIED,
+                    reason_code="target_parse_failed",
+                    message=self._format_target_message(label, f"Target is invalid: {exc}"),
+                    target=fallback_target,
+                ),
+            )
+
+        denied_target = self._find_matching_denied_target(policy, target)
+        if denied_target is not None:
+            return _TargetEvaluation(
+                target=None,
+                decision=AdmissionDecision(
+                    outcome=AdmissionOutcome.DENIED,
+                    reason_code="target_denied",
+                    message=self._format_target_message(
+                        label,
+                        f"Target '{denied_target}' is explicitly denied by the scope policy.",
+                    ),
+                    target=target,
+                ),
+            )
+
+        for denial in (
+            self._check_scope(policy, target),
+            self._check_protocol(policy, target),
+            self._check_port(policy, scoped_request, target),
+        ):
+            if denial is not None:
+                return _TargetEvaluation(
+                    target=None,
+                    decision=AdmissionDecision(
+                        outcome=denial.outcome,
+                        reason_code=denial.reason_code,
+                        message=self._format_target_message(label, denial.message),
+                        target=denial.target,
+                    ),
+                )
+
+        return _TargetEvaluation(target=target, decision=None)
+
+    def _format_target_message(self, label: str | None, message: str) -> str:
+        if not label:
+            return message
+        return f"{label}: {message}"
 
     def _build_descriptor(
         self,
@@ -365,22 +447,40 @@ class ScopeValidator:
             target=target,
         )
 
-    def _check_port(self, policy: ScopePolicy, target: TargetDescriptor) -> AdmissionDecision | None:
+    def _check_port(
+        self,
+        policy: ScopePolicy,
+        request: AdmissionRequest,
+        target: TargetDescriptor,
+    ) -> AdmissionDecision | None:
         if not policy.allowed_ports:
             return None
-        if target.port is None:
+        requested_ports: list[int] = []
+        raw_ports = self._extract_metadata_ports(request)
+        if raw_ports:
+            requested_ports = raw_ports
+        elif target.port is not None:
+            requested_ports = [target.port]
+
+        if not requested_ports:
             return AdmissionDecision(
                 outcome=AdmissionOutcome.DENIED,
                 reason_code="port_not_allowed",
                 message="Target port is unknown and cannot be matched against the scope policy.",
                 target=target,
             )
-        if target.port in policy.allowed_ports:
+        disallowed_ports = [port for port in requested_ports if port not in policy.allowed_ports]
+        if not disallowed_ports:
             return None
+        if len(disallowed_ports) == 1:
+            message = f"Port '{disallowed_ports[0]}' is not allowed by the scope policy."
+        else:
+            ports_text = ", ".join(str(port) for port in disallowed_ports)
+            message = f"Ports '{ports_text}' are not allowed by the scope policy."
         return AdmissionDecision(
             outcome=AdmissionOutcome.DENIED,
             reason_code="port_not_allowed",
-            message=f"Port '{target.port}' is not allowed by the scope policy.",
+            message=message,
             target=target,
         )
 
@@ -430,3 +530,20 @@ class ScopeValidator:
             if target_ip in ip_network(cidr, strict=False):
                 return True
         return False
+
+    def _extract_metadata_ports(
+        self,
+        request: AdmissionRequest,
+    ) -> list[int]:
+        raw_ports = request.metadata.get("ports")
+        if not isinstance(raw_ports, list):
+            return []
+        ports: list[int] = []
+        for raw_port in raw_ports:
+            try:
+                port = int(raw_port)
+            except (TypeError, ValueError):
+                continue
+            if port > 0:
+                ports.append(port)
+        return ports

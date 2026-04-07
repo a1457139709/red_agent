@@ -33,6 +33,8 @@ The repository now contains two parallel runtime families:
 - persisted operation-level admission and execution events
 - scope-aware target validation for the v2 red-team runtime
 - a synchronous scoped execution boundary for future typed security tools
+- pure-Python typed security tools for DNS, HTTP, TLS, banner grabbing, and TCP port scans
+- structured typed-tool results with evidence and finding candidates
 - minimal red-team CLI inspection for operations and jobs
 
 ## Run
@@ -87,9 +89,9 @@ Use `latest` or `last` in task-facing commands to target the most recently updat
 Use `/help operation`, `/help job`, `/help task`, and `/help skill` for detailed command help.
 `/clear` resets only the in-memory context and clears the screen while preserving any active task binding or active shell skill.
 
-## Red-Team Phase 2 Scope
+## Red-Team Runtime Status
 
-Phase 2 currently delivers:
+Phase 2 and Phase 3 currently deliver:
 
 - `Operation`, `ScopePolicy`, `Job`, `Evidence`, `Finding`, and `MemoryEntry` domain models
 - SQLite-backed repositories and services for the v2 red-team runtime
@@ -97,14 +99,20 @@ Phase 2 currently delivers:
 - minimal `/operation` and `/job` CLI inspection flows
 - operation-level admission and execution event persistence
 - scope-aware target, protocol, port, rate-limit, and confirmation checks
+- confirmation-gated executions are re-admitted before execution to re-check rate and concurrency limits
 - a v2-only scoped execution service that hard-blocks out-of-scope work before execution
+- a dedicated typed-security tool registry separated from the legacy LangChain tool registry
+- pure-Python typed security tools: `dns_lookup`, `http_probe`, `tls_inspect`, `banner_grab`, and `port_scan`
+- `dns_lookup` validates both the resolver egress target and the queried logical name against scope
+- `http_probe` captures only the first HTTP response and does not auto-follow redirects
+- structured typed-tool outputs that expose normalized payloads plus evidence and finding candidates
 
-Phase 2 intentionally does not yet deliver:
+The current runtime still intentionally does not yet deliver:
 
-- typed security tool execution
 - a background scheduler or worker runtime
+- automatic persistence of typed-tool evidence candidates
+- automatic persistence of typed-tool finding candidates
 - managed evidence artifact export
-- automatic finding generation
 
 ## Skill Locations
 
@@ -151,6 +159,8 @@ Current docs:
 - `docs/architecture/skill-system-standard.md`
 - `docs/architecture/checkpoint-storage-evolution.md`
 - `docs/development/engineering-development-plan.en.md`
+- `docs/development/red-team-agent-srs.md`
+- `docs/development/red-team-agent-roadmap.md`
 
 The docs index is at `docs/README.md`.
 
