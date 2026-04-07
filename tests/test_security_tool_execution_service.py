@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
+from pathlib import Path
 from threading import Thread
 import time
 
+from app.evidence_service import EvidenceService
+from app.finding_service import FindingService
 from agent.settings import Settings
 from app.job_service import JobService
 from app.operation_service import OperationService
 from app.security_tool_execution_service import SecurityToolExecutionService
 from models.job import JobStatus
 from models.operation import OperationStatus
-from tools.contracts import SecurityToolResult
+from tools.contracts import EvidenceCandidate, FindingCandidate, SecurityToolResult
 
 
 def build_settings(tmp_path):
@@ -69,12 +73,23 @@ def test_security_tool_execution_service_runs_job_through_scoped_runtime(tmp_pat
         result = execution_service.execute_job(job_identifier=job.public_id)
         refreshed = job_service.require_job(job.public_id)
         logs = job_service.list_logs(job.public_id)
+        evidence = EvidenceService.from_settings(settings).list_evidence(operation.public_id, limit=None)
 
         assert result.status == "succeeded"
         assert isinstance(result.result, SecurityToolResult)
         assert refreshed.status == JobStatus.PENDING
-        assert logs[0].message == "security_tool_execution_succeeded"
-        assert logs[1].message == "security_tool_validation_started"
+        assert {entry.message for entry in logs} >= {
+            "security_tool_execution_succeeded",
+            "security_tool_persistence_succeeded",
+            "security_tool_validation_started",
+        }
+        assert len(evidence) == 1
+        assert evidence[0].hash_digest is not None
+        artifact_path = tmp_path / Path(evidence[0].artifact_path)
+        assert artifact_path.exists()
+        artifact_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+        assert artifact_payload["source_tool"] == "http_probe"
+        assert artifact_payload["evidence_type"] == "http_response"
     finally:
         server.shutdown()
         server.server_close()
@@ -269,3 +284,122 @@ def test_security_tool_execution_service_enforces_job_timeout_over_argument_time
 
     assert result.status == "succeeded"
     assert captured["timeout_seconds"] == 1
+
+
+def test_security_tool_execution_service_persists_findings_and_traceability_for_tls_inspect(
+    tmp_path,
+    monkeypatch,
+):
+    settings = build_settings(tmp_path)
+    operation_service = OperationService.from_settings(settings)
+    job_service = JobService.from_settings(settings)
+    execution_service = SecurityToolExecutionService.from_settings(settings)
+    finding_service = FindingService.from_settings(settings)
+
+    operation = operation_service.create_operation(
+        title="Recon",
+        objective="Inspect TLS findings",
+        allowed_domains=["example.com"],
+        allowed_protocols=["tls"],
+        allowed_ports=[443],
+        allowed_tool_categories=["recon"],
+        status=OperationStatus.READY,
+    )
+    job = job_service.create_job(
+        operation_identifier=operation.public_id,
+        job_type="tls_inspect",
+        target_ref="example.com:443",
+    )
+
+    def fake_execute(tool_name: str, *, invocation, target):
+        assert tool_name == "tls_inspect"
+        return SecurityToolResult(
+            tool_name="tls_inspect",
+            target=target.normalized_target,
+            summary="TLS inspection summary",
+            payload={"tls_version": "TLSv1.3"},
+            evidence_candidates=[
+                EvidenceCandidate(
+                    evidence_type="tls_certificate",
+                    target_ref=target.normalized_target,
+                    title="TLS inspection",
+                    summary="Captured certificate details.",
+                    content_type="application/json",
+                    payload={"tls_version": "TLSv1.3"},
+                )
+            ],
+            finding_candidates=[
+                FindingCandidate(
+                    finding_type="tls_hostname_mismatch",
+                    title="TLS certificate hostname mismatch",
+                    target_ref=target.normalized_target,
+                    severity="medium",
+                    confidence="high",
+                    summary="Hostname mismatch observed.",
+                    impact="Clients may reject the certificate.",
+                    reproduction_notes="Run tls_inspect against the endpoint.",
+                    next_action="Confirm SAN coverage.",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(execution_service.security_tool_executor, "execute", fake_execute)
+
+    result = execution_service.execute_job(job_identifier=job.public_id)
+    findings = finding_service.list_findings(operation.public_id, limit=None)
+    links = finding_service.list_links(operation.public_id)
+
+    assert result.status == "succeeded"
+    assert len(findings) == 1
+    assert findings[0].finding_type == "tls_hostname_mismatch"
+    assert len(links) == 1
+    assert links[0].finding_id == findings[0].id
+
+
+def test_security_tool_execution_service_returns_failed_result_when_evidence_pipeline_fails(
+    tmp_path,
+    monkeypatch,
+):
+    settings = build_settings(tmp_path)
+    operation_service = OperationService.from_settings(settings)
+    job_service = JobService.from_settings(settings)
+    execution_service = SecurityToolExecutionService.from_settings(settings)
+
+    server, thread = run_http_server()
+    try:
+        port = server.server_address[1]
+        operation = operation_service.create_operation(
+            title="Recon",
+            objective="Fail artifact persistence",
+            allowed_hosts=["127.0.0.1"],
+            allowed_protocols=["http"],
+            allowed_ports=[port],
+            allowed_tool_categories=["recon"],
+            status=OperationStatus.READY,
+        )
+        job = job_service.create_job(
+            operation_identifier=operation.public_id,
+            job_type="http_probe",
+            target_ref=f"http://127.0.0.1:{port}/health",
+        )
+
+        monkeypatch.setattr(
+            execution_service.evidence_pipeline_service.artifact_manager,
+            "write_artifact",
+            lambda **kwargs: (_ for _ in ()).throw(OSError("disk full")),
+        )
+
+        result = execution_service.execute_job(job_identifier=job.public_id)
+        refreshed = job_service.require_job(job.public_id)
+        logs = job_service.list_logs(job.public_id)
+        evidence = EvidenceService.from_settings(settings).list_evidence(operation.public_id, limit=None)
+
+        assert result.status == "failed"
+        assert "Evidence pipeline failed" in result.message
+        assert refreshed.status == JobStatus.PENDING
+        assert not evidence
+        assert any(entry.message == "security_tool_persistence_failed" for entry in logs)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)

@@ -11,6 +11,7 @@ metadata:
   category: example
   risk_level: low
   mode: local-demo
+user-invocable: true
 ---
 
 # Weather Query Example

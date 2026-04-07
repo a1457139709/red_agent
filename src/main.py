@@ -14,6 +14,7 @@ from app.job_service import JobService
 from app.operation_service import OperationService
 from app.run_service import RunService
 from app.skill_service import SkillService
+from app.skill_workflow_service import SkillWorkflowPlan, SkillWorkflowService
 from app.task_service import TaskService
 from models.job import JobStatus
 from models.operation import OperationStatus
@@ -149,6 +150,39 @@ def parse_skill_shorthand(
     return skill_name, prompt
 
 
+def _confirm_choice(input_func: InputFn, prompt: str) -> bool:
+    response = input_func(prompt).strip().lower()
+    return response in {"y", "yes"}
+
+
+def _workflow_plan_rows(plan: SkillWorkflowPlan) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    planned_rows = [
+        {
+            "type": job.job_type,
+            "target": job.target_ref,
+            "arguments": json.dumps(job.arguments, ensure_ascii=False, sort_keys=True),
+            "timeout": str(job.timeout_seconds) if job.timeout_seconds is not None else "-",
+            "retry": str(job.retry_limit),
+            "notes": (
+                "requires confirmation"
+                if job.requires_confirmation
+                else (job.admission_message or job.summary or "-")
+            ),
+        }
+        for job in plan.planned_jobs
+    ]
+    skipped_rows = [
+        {
+            "type": job.job_type,
+            "target": job.target_ref,
+            "reason": job.reason,
+            "summary": job.summary or "-",
+        }
+        for job in plan.skipped_jobs
+    ]
+    return planned_rows, skipped_rows
+
+
 def _build_callback_presenter(
     *,
     text_output: OutputFn | None = None,
@@ -259,11 +293,15 @@ def handle_skill_command(
     *,
     shell_state: ShellState | None = None,
     skill_service: SkillService | None = None,
+    operation_service: OperationService | None = None,
+    job_service: JobService | None = None,
+    workflow_service: SkillWorkflowService | None = None,
     presenter: CliPresenter | None = None,
     text_output: OutputFn | None = None,
     info_output: OutputFn | None = None,
     error_output: OutputFn | None = None,
     success_output: OutputFn | None = None,
+    input_func: InputFn = input,
 ) -> bool:
     parsed = parse_skill_command(command)
     if parsed is None:
@@ -271,6 +309,9 @@ def handle_skill_command(
 
     shell_state = shell_state or ShellState()
     skill_service = skill_service or create_skill_service()
+    operation_service = operation_service or OperationService.from_settings()
+    job_service = job_service or JobService.from_settings()
+    workflow_service = workflow_service or SkillWorkflowService.from_settings(operation_service.settings)
     ui = _resolve_presenter(
         presenter,
         text_output=text_output,
@@ -300,9 +341,57 @@ def handle_skill_command(
             if len(args) != 1:
                 ui.show_error("Usage: /skill use <name>")
                 return True
-            skill = skill_service.resolve_skill(args[0])
+            skill = skill_service.require_user_invocable_skill(args[0])
             shell_state.active_skill_name = skill.manifest.name
             ui.show_success(f"Activated skill {skill.manifest.name}.")
+            return True
+
+        if action in {"plan", "apply"}:
+            if len(args) != 2:
+                ui.show_error(f"Usage: /skill {action} <name> <operation_id>")
+                return True
+            skill = skill_service.require_workflow_skill(args[0])
+            operation = operation_service.get_operation(args[1])
+            if operation is None:
+                ui.show_error(f"Operation not found: {args[1]}")
+                return True
+
+            primary_target = input_func("Primary target: ").strip()
+            overrides = _parse_json_dict(input_func("Overrides JSON [{}]: ").strip())
+            if not primary_target:
+                ui.show_error("Primary target is required.")
+                return True
+
+            plan = workflow_service.plan_workflow(
+                skill=skill,
+                operation_identifier=operation.id,
+                primary_target=primary_target,
+                overrides=overrides,
+            )
+            planned_rows, skipped_rows = _workflow_plan_rows(plan)
+            ui.show_skill_workflow_plan(
+                skill_name=plan.skill_name,
+                workflow_profile=plan.workflow_profile,
+                operation_label=plan.operation.public_id or plan.operation.id,
+                primary_target=plan.primary_target,
+                planned_rows=planned_rows,
+                skipped_rows=skipped_rows,
+            )
+            if action == "plan":
+                return True
+
+            if not _confirm_choice(
+                input_func,
+                f"Create {len(plan.planned_jobs)} job(s) from skill {plan.skill_name}? [y/N]: ",
+            ):
+                ui.show_info("Cancelled workflow apply.")
+                return True
+            created_jobs = workflow_service.apply_plan(plan)
+            ui.show_success(
+                f"Created {len(created_jobs)} job(s) from skill {plan.skill_name} "
+                f"for {plan.operation.public_id or plan.operation.id}."
+            )
+            ui.show_job_list(created_jobs, operation_label=plan.operation.public_id or plan.operation.id)
             return True
 
         if action == "clear":
@@ -473,6 +562,7 @@ async def run_prompt_with_runtime(
     on_info: OutputFn | None = None,
     on_error: OutputFn | None = None,
 ) -> dict:
+    effective_settings = runtime_config.with_settings(settings)
     try:
         visible_executor = tool_executor.restricted_to(runtime_config.allowed_tools)
     except ValueError:
@@ -488,14 +578,14 @@ async def run_prompt_with_runtime(
             question,
             session_state,
             runtime_executor,
-            settings,
+            effective_settings,
             system_prompt=runtime_config.system_prompt,
             tools=runtime_executor.get_tools(),
         )
     except TypeError as exc:
         if "unexpected keyword argument 'system_prompt'" not in str(exc):
             raise
-        result = await agent_loop(question, session_state, runtime_executor, settings)
+        result = await agent_loop(question, session_state, runtime_executor, effective_settings)
 
     await apply_result_to_session(
         question=question,
@@ -557,7 +647,7 @@ def handle_task_command(
                 ui.show_error("Task title and goal are required.")
                 return True
             if skill_name is not None:
-                skill_service.resolve_skill(skill_name)
+                skill_service.require_direct_prompt_skill(skill_name)
             task = task_service.create_task(title=title, goal=goal, skill_profile=skill_name)
             ui.show_success(f"Created task {task.public_id} ({task.id})")
             return True
@@ -948,6 +1038,7 @@ async def run_interactive_shell(
     tool_executor: ToolExecutor,
     operation_service: OperationService | None = None,
     job_service: JobService | None = None,
+    workflow_service: SkillWorkflowService | None = None,
     task_service: TaskService,
     run_service: RunService,
     checkpoint_service: CheckpointService | None = None,
@@ -958,6 +1049,7 @@ async def run_interactive_shell(
     checkpoint_service = checkpoint_service or task_runner.checkpoint_service
     operation_service = operation_service or OperationService.from_settings(settings)
     job_service = job_service or JobService.from_settings(settings)
+    workflow_service = workflow_service or SkillWorkflowService.from_settings(settings)
     while True:
         try:
             question = input_func(build_prompt(shell_state)).strip()
@@ -1003,6 +1095,10 @@ async def run_interactive_shell(
             question,
             shell_state=shell_state,
             skill_service=skill_service,
+            operation_service=operation_service,
+            job_service=job_service,
+            workflow_service=workflow_service,
+            input_func=input_func,
         ):
             continue
 

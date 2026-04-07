@@ -27,6 +27,15 @@ class SkillManifest:
     model: str | None = None
     effort: str | None = None
     shell: str | None = None
+    workflow_profile: str | None = None
+
+    @property
+    def is_user_invocable(self) -> bool:
+        return self.user_invocable is not False
+
+    @property
+    def allows_model_invocation(self) -> bool:
+        return not bool(self.disable_model_invocation)
 
 
 @dataclass(slots=True)

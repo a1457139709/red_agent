@@ -18,9 +18,9 @@ Current phase status based on the repository implementation:
 - Phase 1: implemented
 - Phase 2: implemented
 - Phase 3: implemented
-- Phase 4: implemented
-- Phase 5: partially implemented
-- Phase 6: partially implemented
+- Phase 4: partially implemented
+- Phase 5: implemented
+- Phase 6: implemented
 - Phase 7: partially implemented
 - Phase 8: partially implemented
 
@@ -101,7 +101,7 @@ Introduce the core entities required by the new runtime.
 
 ### Status
 
-Implemented.
+Partially implemented.
 
 ### Current Implementation Note
 
@@ -284,13 +284,20 @@ The repository now provides:
 - `JobOrchestrationService` for queueing, stale-lease recovery, cancellation, retry, and dependency blocking
 - `Scheduler.run_once(...)` for one-pass job orchestration
 - `WorkerRuntime.run_once(...)` and `WorkerRuntime.drain(...)` for in-process job execution
-- timeout-bounded typed-tool execution with worker-owned terminal job transitions
+- worker-visible timeout handling with worker-owned terminal job transitions
 
 The current implementation still intentionally keeps this phase narrow:
 
 - no daemon or background service is started automatically from the CLI
 - no new `/job run` or `/job cancel` operator commands are added yet
 - operation auto-finalization is still deferred
+- timed-out tool work may still finish in the background after the worker marks the attempt as timed out
+
+The current timeout path is therefore only partially implemented:
+
+- the worker stops waiting and records explicit terminal job state
+- the underlying typed-tool execution is not forcibly terminated yet
+- hard execution cut-off remains deferred to a later isolation-oriented pass
 
 ### Work Items
 
@@ -329,18 +336,17 @@ Promote execution output into durable proof and analyst-friendly conclusions.
 
 ### Status
 
-Partially implemented.
+Implemented.
 
 The repository already provides:
 
 - `Evidence`, `Finding`, and `MemoryEntry` models
 - SQLite-backed repositories and services for those entities
-
-Still missing from this phase:
-
 - automatic evidence creation from successful typed jobs
-- automatic finding candidate generation
-- managed evidence artifact storage and export modules
+- automatic finding candidate generation and persistence
+- finding-to-evidence traceability links
+- managed evidence artifact storage under operation-local directories
+- JSON export generation from structured operation data only
 
 ### Work Items
 
@@ -376,18 +382,22 @@ Keep skills as workflow specializers while moving security control into runtime 
 
 ### Status
 
-Partially implemented.
+Implemented.
 
-The repository already:
+The repository now:
 
-- preserves prompt overlays and tool narrowing
-- parses extension fields such as `model`, `effort`, `shell`, `user-invocable`, and `disable-model-invocation`
+- preserves prompt overlays and tool narrowing for direct prompt skills
+- makes parsed extension fields such as `model` and `effort` affect runtime settings
+- makes `user-invocable`, `disable-model-invocation`, and `shell` affect how skills may be invoked
+- provides workflow-only security skills such as `surface-recon` and `web-enum`
+- allows those workflow skills to generate bounded job templates
+- routes workflow-generated jobs back through v2 scope validation before they are created
 
-Still missing from this phase:
+The current implementation keeps clear boundaries:
 
-- operational use of those parsed extension fields in the runtime
-- bounded job-template generation from skills
-- dedicated security workflow skills built around the v2 runtime
+- workflow skills can preview and apply bounded job plans through `/skill plan` and `/skill apply`
+- direct prompt skills remain available for the legacy prompt-driven runtime
+- scope policy remains enforced in runtime code rather than delegated to prompt text
 
 ### Work Items
 
@@ -431,6 +441,7 @@ Still missing from this phase:
 - `/evidence`
 - `/dashboard`
 - v2 lifecycle commands such as pause, resume, and cancel
+- the deferred hard timeout cut-off follow-up from Phase 4, which should land before the runtime is treated as a full background-capable operator workflow
 
 ### Work Items
 
@@ -439,6 +450,7 @@ Still missing from this phase:
 - add finding commands
 - add evidence commands
 - add dashboard view
+- move timed-out execution into an isolation-capable boundary so overdue tool work can be forcibly terminated instead of only being abandoned by the worker
 
 ### Command Groups
 
@@ -458,6 +470,7 @@ Still missing from this phase:
 - operators can inspect live and historical operation state
 - blocked actions and failures are easy to identify
 - the CLI no longer depends on task-only concepts for security workflows
+- timed-out jobs do not continue uncontrolled in the background once Phase 7 lifecycle and operator controls are in place
 
 ## Phase 8: Structured Memory and Planner Runtime
 

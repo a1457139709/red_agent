@@ -12,6 +12,7 @@ metadata:
   category: security
   risk_level: medium
   mode: audit
+user-invocable: true
 ---
 
 # Security Audit

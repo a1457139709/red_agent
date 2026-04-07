@@ -1,6 +1,7 @@
 from .checkpoint import CheckpointRecord, CheckpointSummary, StoredCheckpoint
 from .evidence import Evidence
 from .finding import Finding, FindingStatus
+from .finding_evidence_link import FindingEvidenceLink
 from .job import Job, JobLogEntry, JobLogLevel, JobStatus
 from .memory import MemoryEntry
 from .operation import Operation, OperationStatus
@@ -14,6 +15,7 @@ __all__ = [
     "CheckpointSummary",
     "Evidence",
     "Finding",
+    "FindingEvidenceLink",
     "FindingStatus",
     "Job",
     "JobLogEntry",

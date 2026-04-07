@@ -1,11 +1,16 @@
 import asyncio
+from pathlib import Path
+import textwrap
 
 from langchain_core.messages import AIMessage
 
 import main as main_module
 from agent.settings import Settings
 from agent.state import SessionState
+from app.job_service import JobService
+from app.operation_service import OperationService
 from app.run_service import RunService
+from app.skill_service import SkillService
 from app.task_service import TaskService
 from main import (
     ShellState,
@@ -17,6 +22,7 @@ from main import (
     parse_skill_shorthand,
     run_interactive_shell,
 )
+from skills.registry import SkillRegistry
 from runtime.task_runner import TaskRunner
 from tools import build_tool_registry
 from tools.executor import ToolExecutor
@@ -29,6 +35,14 @@ def build_settings(tmp_path):
         openai_model="test-model",
         working_directory=tmp_path,
     )
+
+
+def write_skill(root: Path, name: str, content: str) -> Path:
+    skill_dir = root / name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    skill_file = skill_dir / "SKILL.md"
+    skill_file.write_text(textwrap.dedent(content).strip() + "\n", encoding="utf-8")
+    return skill_file
 
 
 def test_base_mode_prompt_and_task_create_blank_skill(tmp_path):
@@ -119,6 +133,45 @@ def test_parse_skill_shorthand_requires_known_skill():
     ) == ("git-auto-commit", "summarize and commit the current changes")
     assert parse_skill_shorthand("/task list", skill_service=skill_service) is None
     assert parse_skill_shorthand("/unknown-skill demo", skill_service=skill_service) is None
+
+
+def test_non_user_invocable_skill_cannot_be_activated(tmp_path):
+    local_root = tmp_path / "skills"
+    write_skill(
+        local_root,
+        "internal-only",
+        """
+        ---
+        name: internal-only
+        description: Internal skill.
+        license: Proprietary
+        compatibility: Agent Skills baseline
+        allowed-tools:
+          - read_file
+        metadata:
+          category: internal
+        user-invocable: false
+        ---
+
+        # Internal Only
+        """,
+    )
+    skill_service = SkillService(
+        SkillRegistry.built_in_and_local(
+            known_tool_names=set(build_tool_registry().keys()),
+            local_root=local_root,
+        )
+    )
+    errors = []
+
+    assert handle_skill_command(
+        "/skill use internal-only",
+        shell_state=ShellState(),
+        skill_service=skill_service,
+        error_output=errors.append,
+    )
+
+    assert any("not user-invocable" in message for message in errors)
 
 
 def test_handle_clear_command_resets_state_without_task_or_skill():
@@ -255,6 +308,132 @@ def test_run_interactive_shell_supports_one_shot_skill_and_reset_clears_active_s
     assert shell_state.active_skill_name is None
     assert session_state.history == []
     assert any("Session reset" in header for header in captured["headers"])
+
+
+def test_run_interactive_shell_blocks_workflow_only_skill_shorthand(monkeypatch, tmp_path):
+    settings = build_settings(tmp_path)
+    session_state = SessionState()
+    shell_state = ShellState()
+    task_service = TaskService.from_settings(settings)
+    run_service = RunService.from_settings(settings)
+    skill_service = create_skill_service(settings)
+    task_runner = TaskRunner(task_service, run_service, skill_service)
+    tool_executor = ToolExecutor(build_tool_registry())
+    captured = {"answers": []}
+    responses = iter([
+        "/surface-recon example.com",
+        "/quit",
+    ])
+
+    def fake_input(_prompt):
+        return next(responses)
+
+    monkeypatch.setattr(main_module.ColoredOutput, "print_final_answer", captured["answers"].append)
+    monkeypatch.setattr(main_module.ColoredOutput, "print_error", captured["answers"].append)
+    monkeypatch.setattr(main_module.ColoredOutput, "print_info", captured["answers"].append)
+    monkeypatch.setattr(main_module.ColoredOutput, "print_success", captured["answers"].append)
+    monkeypatch.setattr(main_module.ColoredOutput, "print_header", lambda _message: None)
+
+    asyncio.run(
+        run_interactive_shell(
+            settings=settings,
+            session_state=session_state,
+            shell_state=shell_state,
+            tool_executor=tool_executor,
+            task_service=task_service,
+            run_service=run_service,
+            task_runner=task_runner,
+            skill_service=skill_service,
+            input_func=fake_input,
+        )
+    )
+
+    assert any("disables direct model invocation" in message for message in captured["answers"])
+
+
+def test_skill_plan_previews_bounded_jobs(tmp_path):
+    settings = build_settings(tmp_path)
+    operation_service = OperationService.from_settings(settings)
+    job_service = JobService.from_settings(settings)
+    skill_service = create_skill_service(settings)
+    outputs = []
+    errors = []
+
+    operation = operation_service.create_operation(
+        title="Recon",
+        objective="Inspect example.com",
+        allowed_hosts=["example.com"],
+        allowed_ports=[443],
+        allowed_protocols=["https", "tls"],
+        allowed_tool_categories=["recon"],
+    )
+    responses = iter([
+        "example.com",
+        "{}",
+    ])
+
+    def fake_input(_prompt):
+        return next(responses)
+
+    assert handle_skill_command(
+        f"/skill plan web-enum {operation.public_id}",
+        shell_state=ShellState(),
+        skill_service=skill_service,
+        operation_service=operation_service,
+        job_service=job_service,
+        text_output=outputs.append,
+        error_output=errors.append,
+        input_func=fake_input,
+    )
+
+    merged = "\n\n".join(outputs)
+    assert "Skill Workflow Plan" in merged
+    assert "web-enum" in merged
+    assert "https://example.com" in merged
+    assert "Skipped Jobs" in merged
+    assert not errors
+
+
+def test_skill_apply_creates_jobs(tmp_path):
+    settings = build_settings(tmp_path)
+    operation_service = OperationService.from_settings(settings)
+    job_service = JobService.from_settings(settings)
+    skill_service = create_skill_service(settings)
+    outputs = []
+    errors = []
+    successes = []
+
+    operation = operation_service.create_operation(
+        title="Recon",
+        objective="Inspect example.com",
+        allowed_hosts=["example.com", "8.8.8.8"],
+        allowed_tool_categories=["recon"],
+    )
+    responses = iter([
+        "example.com",
+        "{}",
+        "yes",
+    ])
+
+    def fake_input(_prompt):
+        return next(responses)
+
+    assert handle_skill_command(
+        f"/skill apply surface-recon {operation.public_id}",
+        shell_state=ShellState(),
+        skill_service=skill_service,
+        operation_service=operation_service,
+        job_service=job_service,
+        text_output=outputs.append,
+        error_output=errors.append,
+        success_output=successes.append,
+        input_func=fake_input,
+    )
+
+    jobs = job_service.list_jobs(operation.id, limit=10)
+    assert len(jobs) == 4
+    assert any("Created 4 job(s) from skill surface-recon" in message for message in successes)
+    assert not errors
 
 
 def test_run_interactive_shell_clear_preserves_active_skill_and_clears_screen(

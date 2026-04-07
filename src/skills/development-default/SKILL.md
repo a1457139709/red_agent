@@ -16,6 +16,7 @@ allowed-tools:
 metadata:
   category: development
   risk_level: medium
+user-invocable: true
 ---
 
 # Development Default

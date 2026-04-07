@@ -263,6 +263,8 @@ class CliPresenter:
                 ("/skill list", "List built-in and local skills"),
                 ("/skill show <name>", "Show skill details"),
                 ("/skill use <name>", "Activate a skill for this shell"),
+                ("/skill plan <name> <operation_id>", "Preview bounded workflow jobs for an operation"),
+                ("/skill apply <name> <operation_id>", "Create bounded workflow jobs for an operation"),
                 ("/skill reload", "Reload skills from disk"),
                 ("/skill clear", "Clear the active shell skill"),
                 ("/skill current", "Show the active shell skill"),
@@ -617,6 +619,7 @@ class CliPresenter:
         metadata_text = "\n".join(
             f"{key}: {value}" for key, value in sorted(metadata.items())
         ) if metadata else "-"
+        invocation_mode = "workflow-only" if skill.manifest.disable_model_invocation else "prompt"
         summary = Panel(
             self._detail_table([
                 ("Name", skill.manifest.name),
@@ -624,6 +627,14 @@ class CliPresenter:
                 ("License", skill.manifest.license),
                 ("Compatibility", skill.manifest.compatibility),
                 ("Source", skill.source),
+                ("Invocation Mode", invocation_mode),
+                ("User Invocable", "yes" if skill.manifest.is_user_invocable else "no"),
+                ("Direct Model Invocation", "yes" if skill.manifest.allows_model_invocation else "no"),
+                ("Shell", skill.manifest.shell or "-"),
+                ("Model", skill.manifest.model or "-"),
+                ("Reasoning Effort", skill.manifest.effort or "-"),
+                ("Workflow Profile", skill.manifest.workflow_profile or "-"),
+                ("Argument Hint", skill.manifest.argument_hint or "-"),
                 ("Allowed Tools", ", ".join(skill.manifest.allowed_tools)),
                 ("Path", str(skill.skill_file)),
             ]),
@@ -633,6 +644,63 @@ class CliPresenter:
         )
         metadata_panel = Panel(Text(metadata_text), title="Metadata", border_style="blue", box=ASCII_BOX)
         self._emit(Group(summary, metadata_panel))
+
+    def show_skill_workflow_plan(
+        self,
+        *,
+        skill_name: str,
+        workflow_profile: str,
+        operation_label: str,
+        primary_target: str,
+        planned_rows: list[dict[str, str]],
+        skipped_rows: list[dict[str, str]],
+    ) -> None:
+        summary = Panel(
+            self._detail_table([
+                ("Skill", skill_name),
+                ("Workflow Profile", workflow_profile),
+                ("Operation", operation_label),
+                ("Primary Target", primary_target),
+                ("Planned Jobs", str(len(planned_rows))),
+                ("Skipped Jobs", str(len(skipped_rows))),
+            ]),
+            title="Skill Workflow Plan",
+            border_style="green",
+            box=ASCII_BOX,
+        )
+        planned_table = Table(title="Planned Jobs", box=ASCII_BOX, expand=True, header_style="bold")
+        planned_table.add_column("Type", style="cyan", no_wrap=True)
+        planned_table.add_column("Target", overflow="fold")
+        planned_table.add_column("Arguments", overflow="fold")
+        planned_table.add_column("Timeout", no_wrap=True)
+        planned_table.add_column("Retry", no_wrap=True)
+        planned_table.add_column("Notes", overflow="fold")
+        for row in planned_rows:
+            planned_table.add_row(
+                row["type"],
+                row["target"],
+                row["arguments"],
+                row["timeout"],
+                row["retry"],
+                row["notes"],
+            )
+
+        renderables: list[RenderableType] = [summary, planned_table]
+        if skipped_rows:
+            skipped_table = Table(title="Skipped Jobs", box=ASCII_BOX, expand=True, header_style="bold")
+            skipped_table.add_column("Type", style="yellow", no_wrap=True)
+            skipped_table.add_column("Target", overflow="fold")
+            skipped_table.add_column("Reason", overflow="fold")
+            skipped_table.add_column("Summary", overflow="fold")
+            for row in skipped_rows:
+                skipped_table.add_row(
+                    row["type"],
+                    row["target"],
+                    row["reason"],
+                    row["summary"],
+                )
+            renderables.append(skipped_table)
+        self._emit(Group(*renderables))
 
     def show_info(self, message: str) -> None:
         self._emit(Panel(Text(message), title="Info", border_style="blue", box=ASCII_BOX), kind="info")

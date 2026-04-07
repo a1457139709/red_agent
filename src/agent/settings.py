@@ -17,6 +17,7 @@ class Settings:
     openai_api_key: str | None
     openai_api_base: str | None
     openai_model: str | None
+    openai_reasoning_effort: str | None = None
     model_temperature: float = DEFAULT_MODEL_TEMPERATURE
     max_agent_steps: int = DEFAULT_MAX_AGENT_STEPS
     context_token_limit: int = DEFAULT_CONTEXT_TOKEN_LIMIT
@@ -47,6 +48,7 @@ class Settings:
             openai_api_key=os.getenv("OPENAI_API_KEY"),
             openai_api_base=os.getenv("OPENAI_API_BASE"),
             openai_model=os.getenv("OPENAI_MODEL"),
+            openai_reasoning_effort=os.getenv("OPENAI_REASONING_EFFORT"),
             model_temperature=float(os.getenv("MODEL_TEMPERATURE", DEFAULT_MODEL_TEMPERATURE)),
             max_agent_steps=int(os.getenv("MAX_AGENT_STEPS", DEFAULT_MAX_AGENT_STEPS)),
             context_token_limit=int(os.getenv("MODEL_CONTEXT_TOKEN_LIMIT", DEFAULT_CONTEXT_TOKEN_LIMIT)),

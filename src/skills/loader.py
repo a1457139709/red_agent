@@ -38,6 +38,7 @@ def load_skill_from_file(skill_file: Path) -> LoadedSkill:
         model=_optional_string(frontmatter, "model"),
         effort=_optional_string(frontmatter, "effort"),
         shell=_optional_string(frontmatter, "shell"),
+        workflow_profile=_resolve_workflow_profile(frontmatter),
     )
     return LoadedSkill(manifest=manifest, root_dir=root_dir, skill_file=skill_file)
 
@@ -188,6 +189,25 @@ def _optional_bool(frontmatter: dict[str, object], key: str) -> bool | None:
     if not isinstance(value, bool):
         raise SkillLoadError(f"Field '{key}' must be a boolean when present")
     return value
+
+
+def _resolve_workflow_profile(frontmatter: dict[str, object]) -> str | None:
+    value = _optional_string(frontmatter, "workflow-profile")
+    if value is not None:
+        normalized = value.strip()
+        return normalized or None
+    metadata = frontmatter.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    for key in ("workflow_profile", "workflow-profile"):
+        metadata_value = metadata.get(key)
+        if metadata_value is None:
+            continue
+        if not isinstance(metadata_value, str):
+            raise SkillLoadError(f"Field 'metadata.{key}' must be a string when present")
+        normalized = metadata_value.strip()
+        return normalized or None
+    return None
 
 
 def _require_string_list(frontmatter: dict[str, object], key: str) -> list[str]:

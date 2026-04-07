@@ -64,6 +64,9 @@ def test_load_skill_parses_required_fields_and_extensions(tmp_path):
           risk_level: low
         user-invocable: true
         shell: powershell
+        model: gpt-test
+        effort: high
+        workflow-profile: demo-flow
         extra-note: keep
         ---
 
@@ -86,6 +89,9 @@ def test_load_skill_parses_required_fields_and_extensions(tmp_path):
     assert loaded.manifest.metadata["category"] == "demo"
     assert loaded.manifest.user_invocable is True
     assert loaded.manifest.shell == "powershell"
+    assert loaded.manifest.model == "gpt-test"
+    assert loaded.manifest.effort == "high"
+    assert loaded.manifest.workflow_profile == "demo-flow"
     assert loaded.manifest.raw_frontmatter["extra-note"] == "keep"
     assert loaded.manifest.references[0].name == "checklist.md"
     assert loaded.manifest.scripts[0].name == "scan.py"
@@ -203,6 +209,16 @@ def test_git_auto_commit_skill_is_discovered_with_expected_runtime_metadata():
     assert "git commit -m" in skill.manifest.body
 
 
+def test_surface_recon_skill_is_workflow_only():
+    skill_service = create_skill_service()
+
+    skill = skill_service.require_skill("surface-recon")
+
+    assert skill.manifest.is_user_invocable is True
+    assert skill.manifest.allows_model_invocation is False
+    assert skill.manifest.workflow_profile == "surface-recon"
+
+
 def test_assemble_system_prompt_supports_legacy_extra_prompt():
     prompt = asyncio.run(assemble_system_prompt("legacy summary"))
 
@@ -315,6 +331,39 @@ def test_handle_task_create_rejects_invalid_skill(tmp_path):
     assert task_service.list_tasks() == []
 
 
+def test_handle_task_create_rejects_workflow_only_skill(tmp_path):
+    settings = build_settings(tmp_path)
+    task_service = TaskService.from_settings(settings)
+    run_service = RunService.from_settings(settings)
+    skill_service = SkillService(
+        SkillRegistry.built_in(known_tool_names=set(build_tool_registry().keys()))
+    )
+    task_runner = TaskRunner(task_service, run_service, skill_service)
+    shell_state = ShellState()
+    session_state = SessionState()
+    errors = []
+    responses = iter(["Task", "Goal", "surface-recon"])
+
+    def fake_input(_prompt):
+        return next(responses)
+
+    assert handle_task_command(
+        "/task create",
+        shell_state=shell_state,
+        session_state=session_state,
+        task_service=task_service,
+        run_service=run_service,
+        task_runner=task_runner,
+        skill_service=skill_service,
+        error_output=errors.append,
+        input_func=fake_input,
+    )
+
+    assert errors
+    assert any("disables direct model invocation" in message for message in errors)
+    assert task_service.list_tasks() == []
+
+
 def test_task_runner_uses_bound_skill_and_marks_missing_skill_failures(monkeypatch, tmp_path):
     settings = build_settings(tmp_path)
     task_service = TaskService.from_settings(settings)
@@ -343,6 +392,7 @@ def test_task_runner_uses_bound_skill_and_marks_missing_skill_failures(monkeypat
     ):
         seen_tool_names.extend(tool.name for tool in tools or [])
         assert "Security Audit" in system_prompt
+        assert current_settings.openai_model == settings.openai_model
         return {
             "status": "completed",
             "response": "done",
@@ -397,3 +447,86 @@ def test_task_runner_uses_bound_skill_and_marks_missing_skill_failures(monkeypat
     assert failed_task.status.value == "failed"
     assert "missing-skill" in failed_task.last_error
     assert any(entry.level == TaskLogLevel.ERROR and entry.message == "run_failed" for entry in logs)
+
+
+def test_task_runner_applies_skill_model_and_effort_overrides(monkeypatch, tmp_path):
+    settings = build_settings(tmp_path)
+    local_root = tmp_path / "skills"
+    write_skill(
+        local_root,
+        "override-skill",
+        """
+        ---
+        name: override-skill
+        description: Override provider config.
+        license: Proprietary
+        compatibility: Agent Skills baseline
+        allowed-tools:
+          - read_file
+        metadata:
+          category: demo
+        user-invocable: true
+        model: override-model
+        effort: high
+        ---
+
+        # Override Skill
+        """,
+    )
+    registry = SkillRegistry.built_in_and_local(
+        known_tool_names=set(build_tool_registry().keys()),
+        local_root=local_root,
+    )
+    skill_service = SkillService(registry)
+    task_service = TaskService.from_settings(settings)
+    run_service = RunService.from_settings(settings)
+    runner = TaskRunner(task_service, run_service, skill_service)
+    task = task_service.create_task(
+        title="Override",
+        goal="Check overrides",
+        skill_profile="override-skill",
+    )
+    task, session_state = runner.resume_task(task.id)
+    executor = ToolExecutor(build_tool_registry())
+
+    async def fake_agent_loop(
+        question,
+        state,
+        tool_executor,
+        current_settings,
+        *,
+        system_prompt=None,
+        tools=None,
+    ):
+        assert current_settings.openai_model == "override-model"
+        assert current_settings.openai_reasoning_effort == "high"
+        return {
+            "status": "completed",
+            "response": "done",
+            "messages": [
+                AIMessage(
+                    content="done",
+                    tool_calls=[],
+                    usage_metadata={
+                        "input_tokens": 4,
+                        "output_tokens": 4,
+                        "total_tokens": 8,
+                    },
+                )
+            ],
+            "usage": {"input_tokens": 4, "output_tokens": 4, "total_tokens": 8},
+        }
+
+    monkeypatch.setattr(task_runner_module, "agent_loop", fake_agent_loop)
+
+    result = asyncio.run(
+        runner.run_prompt(
+            task_id=task.id,
+            question="continue",
+            session_state=session_state,
+            tool_executor=executor,
+            settings=settings,
+        )
+    )
+
+    assert result["status"] == "completed"

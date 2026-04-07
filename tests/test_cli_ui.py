@@ -120,6 +120,8 @@ def test_presenter_detail_views_include_key_fields_without_blob_internals():
             allowed_tools=["read_file", "search"],
             metadata={"category": "security"},
             body="# Security Audit",
+            user_invocable=True,
+            shell="powershell",
         ),
         root_dir=Path("D:/skills/security-audit"),
         skill_file=Path("D:/skills/security-audit/SKILL.md"),
@@ -130,6 +132,30 @@ def test_presenter_detail_views_include_key_fields_without_blob_internals():
     presenter.show_run_detail(run, task, [entry])
     presenter.show_checkpoint_detail(checkpoint, task, run.public_id)
     presenter.show_skill_detail(skill)
+    presenter.show_skill_workflow_plan(
+        skill_name="surface-recon",
+        workflow_profile="surface-recon",
+        operation_label="O0001",
+        primary_target="example.com",
+        planned_rows=[
+            {
+                "type": "http_probe",
+                "target": "https://example.com",
+                "arguments": '{"method": "GET"}',
+                "timeout": "-",
+                "retry": "0",
+                "notes": "Target is within the declared scope policy.",
+            }
+        ],
+        skipped_rows=[
+            {
+                "type": "http_probe",
+                "target": "http://example.com",
+                "reason": "Protocol is not allowed.",
+                "summary": "Probe http://example.com.",
+            }
+        ],
+    )
     presenter.show_final_answer("Completed successfully.")
     presenter.show_error("Something failed.")
     presenter.show_success("Saved.")
@@ -141,6 +167,8 @@ def test_presenter_detail_views_include_key_fields_without_blob_internals():
     assert "blob_path" not in merged
     assert "payload_digest" not in merged
     assert "Source:" in merged and "built-in" in merged
+    assert "Invocation Mode:" in merged
+    assert "Skill Workflow Plan" in merged
     assert "Metadata" in merged and "category: security" in merged
     assert "Final Answer" in merged and "Completed successfully." in merged
     assert "Error" in merged and "Something failed." in merged

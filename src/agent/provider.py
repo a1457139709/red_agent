@@ -9,6 +9,7 @@ def create_model(settings: Settings | None = None):
 
     return ChatOpenAI(
         model=settings.openai_model,
+        reasoning_effort=settings.openai_reasoning_effort,
         temperature=settings.model_temperature,
         openai_api_key=settings.openai_api_key,
         openai_api_base=settings.openai_api_base,

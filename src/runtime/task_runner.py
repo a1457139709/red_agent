@@ -144,6 +144,7 @@ class TaskRunner:
                 runtime_config.skill.manifest.name if runtime_config.skill else None
             )
             observability.effective_tools = [tool.name for tool in visible_executor.get_tools()]
+            effective_settings = runtime_config.with_settings(settings)
             runtime_executor = visible_executor.with_safety_policy(
                 runtime_config.safety_policy,
                 on_audit=self._build_safety_audit_logger(task.id, run.id, observability),
@@ -155,7 +156,7 @@ class TaskRunner:
                     question,
                     session_state,
                     runtime_executor,
-                    settings,
+                    effective_settings,
                     system_prompt=runtime_config.system_prompt,
                     tools=runtime_executor.get_tools(),
                 )
@@ -175,7 +176,7 @@ class TaskRunner:
                         question,
                         session_state,
                         runtime_executor,
-                        settings,
+                        effective_settings,
                     )
                 except ToolExecutionError as exc:
                     await self._fail_run_and_task(

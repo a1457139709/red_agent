@@ -21,6 +21,7 @@ The repository now contains two parallel runtime families:
 - hierarchical help output with topic drill-down
 - built-in and user-local `SKILL.md` skills
 - explicit skill activation and one-shot skill invocation
+- bounded skill-driven workflow planning for v2 security jobs
 - file tools: read, write, edit, list, search, delete
 - web tools: `web_fetch` and `web_search`
 - shell command execution with safety checks
@@ -35,6 +36,9 @@ The repository now contains two parallel runtime families:
 - a durable scheduler/worker runtime with job queueing, leases, heartbeats, retries, and cooperative cancellation
 - pure-Python typed security tools for DNS, HTTP, TLS, banner grabbing, and TCP port scans
 - structured typed-tool results with evidence and finding candidates
+- automatic persistence of typed-tool evidence artifacts and finding records
+- evidence-to-finding traceability links for structured review and export
+- JSON export generation for operation summaries, findings, and evidence indexes
 - minimal red-team CLI inspection for operations and jobs
 
 ## Run
@@ -79,6 +83,8 @@ Use `latest` or `last` in task-facing commands to target the most recently updat
 - `/skill list`
 - `/skill show <name>`
 - `/skill use <name>`
+- `/skill plan <name> <operation_id>`
+- `/skill apply <name> <operation_id>`
 - `/skill reload`
 - `/skill clear`
 - `/skill current`
@@ -91,7 +97,7 @@ Use `/help operation`, `/help job`, `/help task`, and `/help skill` for detailed
 
 ## Red-Team Runtime Status
 
-Phase 2, Phase 3, and Phase 4 currently deliver:
+Phase 2, Phase 3, Phase 4, and Phase 5 currently deliver:
 
 - `Operation`, `ScopePolicy`, `Job`, `Evidence`, `Finding`, and `MemoryEntry` domain models
 - SQLite-backed repositories and services for the v2 red-team runtime
@@ -108,12 +114,42 @@ Phase 2, Phase 3, and Phase 4 currently deliver:
 - `dns_lookup` validates both the resolver egress target and the queried logical name against scope
 - `http_probe` captures only the first HTTP response and does not auto-follow redirects
 - structured typed-tool outputs that expose normalized payloads plus evidence and finding candidates
+- automatic persistence of successful typed-job evidence into `.red-code/operations/<operation_public_id>/evidence/`
+- automatic persistence of finding candidates plus finding-to-evidence traceability links
+- JSON export generation under `.red-code/operations/<operation_public_id>/exports/<export_name>/`
 
 The current runtime still intentionally does not yet deliver:
 
-- automatic persistence of typed-tool evidence candidates
-- automatic persistence of typed-tool finding candidates
-- managed evidence artifact export
+- `/finding`, `/evidence`, and `/dashboard` CLI command groups
+- CLI-triggered export flows
+- planner-driven use of the structured evidence and finding store
+
+Phase 6 now also delivers:
+
+- per-skill runtime activation of `model`, `effort`, `shell`, `user-invocable`, and `disable-model-invocation`
+- workflow-only skills that generate bounded v2 job plans instead of freeform prompt execution
+- built-in `surface-recon` and `web-enum` workflow skills
+
+## Evidence and Export Layout
+
+Successful v2 typed security jobs now write structured evidence artifacts and metadata under:
+
+```text
+.red-code/
+  operations/
+    <operation_public_id>/
+      evidence/
+        <job_public_id>-<ordinal>-<evidence_type>.json
+      exports/
+        <export_name>/
+          operation-summary.json
+          findings.json
+          evidence-index.json
+```
+
+Each evidence artifact is stored as a JSON envelope with metadata plus the normalized tool payload. The persisted `Evidence` row keeps the relative artifact path, a SHA-256 digest, and `application/json` as the stored artifact content type.
+
+Programmatic export is available through `reporting.evidence_export.EvidenceExportService.generate_operation_export(...)`. Phase 5 intentionally stops short of adding new CLI commands for export or finding review.
 
 ## Skill Locations
 
@@ -170,8 +206,11 @@ The docs index is at `docs/README.md`.
 The current built-in skills are:
 
 - `development-default`
+- `git-auto-commit`
 - `security-audit`
+- `surface-recon`
 - `weather-query-example`
+- `web-enum`
 
 ## Tests
 
