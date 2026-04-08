@@ -85,3 +85,51 @@ def test_dashboard_service_aggregates_counts_and_recent_items(tmp_path):
     assert dashboard.recent_findings[0].id == finding.id
     assert dashboard.recent_evidence[0].id == evidence.id
     assert dashboard.event_counts["admission_denied"] == 1
+
+
+def test_dashboard_service_defaults_to_most_recent_runtime_activity(tmp_path):
+    settings = build_settings(tmp_path)
+    operation_service = OperationService.from_settings(settings)
+    job_service = JobService.from_settings(settings)
+    event_service = OperationEventService.from_settings(settings)
+    dashboard_service = DashboardService.from_settings(settings)
+
+    newer_but_idle = operation_service.create_operation(
+        title="Idle",
+        objective="No activity",
+        status=OperationStatus.READY,
+    )
+    active = operation_service.create_operation(
+        title="Active",
+        objective="Recent event",
+        status=OperationStatus.READY,
+    )
+
+    active_job = job_service.create_job(
+        operation_identifier=active.public_id,
+        job_type="http_probe",
+        target_ref="https://example.com",
+    )
+    event_service.create_event(
+        operation_identifier=active.public_id,
+        job_identifier=active_job.public_id,
+        event_type=OperationEventType.EXECUTION_FAILED,
+        level=OperationEventLevel.ERROR,
+        tool_name="http_probe",
+        tool_category="recon",
+        target_ref="https://example.com",
+        message="Recent failure.",
+        created_at="2026-04-08T10:00:00+00:00",
+    )
+
+    idle_loaded = operation_service.require_operation(newer_but_idle.public_id)
+    idle_loaded.updated_at = "2026-04-08T09:00:00+00:00"
+    operation_service.save_operation(idle_loaded)
+
+    active_loaded = operation_service.require_operation(active.public_id)
+    active_loaded.updated_at = "2026-04-08T08:00:00+00:00"
+    operation_service.save_operation(active_loaded)
+
+    dashboard = dashboard_service.build_dashboard()
+
+    assert dashboard.operation.id == active.id

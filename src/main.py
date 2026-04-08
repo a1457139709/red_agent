@@ -1074,11 +1074,18 @@ def handle_job_command(
                 ui.show_error("Usage: /job cancel <job_id>")
                 return True
             reason = input_func("Cancellation reason [blank=default]: ").strip()
-            job = job_orchestration_service.request_cancellation(
+            outcome = job_orchestration_service.request_cancellation(
                 args[0],
                 reason=reason or "Operator requested cancellation.",
             )
-            ui.show_success(f"Requested cancellation for job {job.public_id} ({job.id})")
+            job = outcome.job
+            if outcome.accepted:
+                ui.show_success(f"Requested cancellation for job {job.public_id} ({job.id})")
+            else:
+                ui.show_info(
+                    f"Job {job.public_id} ({job.id}) is already terminal with status {job.status.value}; "
+                    "no cancellation request was recorded."
+                )
             return True
 
         ui.show_error(f"Unknown job command: {action}")

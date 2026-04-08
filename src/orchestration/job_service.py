@@ -44,6 +44,12 @@ class AttemptResolution:
     cancelled: bool
 
 
+@dataclass(frozen=True, slots=True)
+class CancellationRequestOutcome:
+    job: Job
+    accepted: bool
+
+
 class JobOrchestrationService:
     def __init__(
         self,
@@ -111,11 +117,11 @@ class JobOrchestrationService:
         *,
         reason: str = "Operator requested cancellation.",
         now: str | None = None,
-    ) -> Job:
+    ) -> CancellationRequestOutcome:
         timestamp = now or utc_now_iso()
         job = self.job_service.require_job(job_identifier)
         if job.status in TERMINAL_JOB_STATUSES:
-            return job
+            return CancellationRequestOutcome(job=job, accepted=False)
         job.cancel_requested_at = timestamp
         job.cancel_reason = reason
         job.updated_at = timestamp
@@ -126,7 +132,7 @@ class JobOrchestrationService:
             message="job_cancellation_requested",
             payload={"reason": reason},
         )
-        return job
+        return CancellationRequestOutcome(job=job, accepted=True)
 
     def cancel_requested_jobs(
         self,

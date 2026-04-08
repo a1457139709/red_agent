@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime
 
 from agent.settings import Settings, get_settings
 from models.evidence import Evidence
@@ -110,7 +111,23 @@ class DashboardService:
         if operation_identifier:
             return self.operation_service.require_operation(operation_identifier)
 
-        operations = self.operation_service.list_operations(limit=1)
+        operations = self.operation_service.list_operations(limit=None)
         if not operations:
             raise ValueError("No operations found for /dashboard.")
-        return operations[0]
+        return max(operations, key=self._operation_activity_key)
+
+    def _operation_activity_key(self, operation: Operation) -> datetime:
+        timestamps = [operation.updated_at, operation.created_at]
+        jobs = self.job_service.list_jobs(operation.id, limit=1)
+        findings = self.finding_service.list_findings(operation.id, limit=1)
+        evidence = self.evidence_service.list_evidence(operation.id, limit=1)
+        events = self.operation_event_service.list_events(operation.id, limit=1)
+        if jobs:
+            timestamps.append(jobs[0].updated_at)
+        if findings:
+            timestamps.append(findings[0].updated_at)
+        if evidence:
+            timestamps.append(evidence[0].captured_at)
+        if events:
+            timestamps.append(events[0].created_at)
+        return max(datetime.fromisoformat(timestamp) for timestamp in timestamps)

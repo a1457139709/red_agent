@@ -4,6 +4,7 @@ from app.evidence_service import EvidenceService
 from app.finding_service import FindingService
 from app.job_service import JobService
 from app.operation_service import OperationService
+from models.job import JobStatus
 from models.operation import OperationStatus
 from main import (
     handle_dashboard_command,
@@ -221,4 +222,38 @@ def test_job_commands_create_list_show_cancel_and_review_views(tmp_path):
     assert any("Linked Evidence IDs:" in message and evidence.public_id in message for message in outputs)
     assert any("Linked Finding IDs:" in message and finding.public_id in message for message in outputs)
     assert any("Dashboard Summary" in message and operation.public_id in message for message in outputs)
+    assert not errors
+
+
+def test_job_cancel_reports_noop_for_terminal_jobs(tmp_path):
+    settings = build_settings(tmp_path)
+    operation_service = OperationService.from_settings(settings)
+    job_service = JobService.from_settings(settings)
+    outputs = []
+    infos = []
+    errors = []
+    successes = []
+
+    operation = operation_service.create_operation(title="Probe", objective="Inspect target")
+    job = job_service.create_job(
+        operation_identifier=operation.public_id,
+        job_type="http_probe",
+        target_ref="https://example.com",
+    )
+    job.status = JobStatus.SUCCEEDED
+    job_service.save_job(job)
+
+    assert handle_job_command(
+        f"/job cancel {job.public_id}",
+        job_service=job_service,
+        operation_service=operation_service,
+        text_output=outputs.append,
+        info_output=infos.append,
+        error_output=errors.append,
+        success_output=successes.append,
+        input_func=lambda _prompt: "",
+    )
+
+    assert not successes
+    assert any("already terminal" in message and "succeeded" in message for message in infos)
     assert not errors
