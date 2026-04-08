@@ -7,10 +7,10 @@ from agent.settings import Settings
 from models.skill import LoadedSkill
 from skills.registry import SkillRegistry
 from tools.policy import RuntimeSafetyPolicy
+from tools.shells import ShellResolutionError, ensure_shell_available, normalize_shell_name
 
 
 DEFAULT_SKILL_NAME = "development-default"
-SUPPORTED_DIRECT_SHELLS = {"powershell", "pwsh"}
 
 
 @dataclass(slots=True)
@@ -99,11 +99,13 @@ class SkillService:
         normalized_shell = self._normalize_shell(skill.manifest.shell)
         if normalized_shell is None:
             return
-        if normalized_shell not in SUPPORTED_DIRECT_SHELLS:
+        try:
+            ensure_shell_available(normalized_shell)
+        except ShellResolutionError as exc:
             raise ValueError(
                 f"Skill '{skill.manifest.name}' requires shell '{normalized_shell}', "
-                "but direct skill invocation in this runtime supports PowerShell only."
-            )
+                f"but {exc}"
+            ) from exc
 
     def require_workflow_skill(self, name: str) -> LoadedSkill:
         skill = self.require_user_invocable_skill(name)
@@ -168,7 +170,4 @@ class SkillService:
         )
 
     def _normalize_shell(self, value: str | None) -> str | None:
-        if value is None:
-            return None
-        normalized = value.strip().lower()
-        return normalized or None
+        return normalize_shell_name(value)

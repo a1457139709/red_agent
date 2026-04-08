@@ -13,7 +13,6 @@ metadata:
   mode: workflow
 user-invocable: true
 disable-model-invocation: true
-shell: powershell
 workflow-profile: surface-recon
 ---
 

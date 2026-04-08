@@ -45,8 +45,15 @@ The repository now contains two parallel runtime families:
 ## Run
 
 ```powershell
+# Windows
 .venv\Scripts\python -m pip install -r requirements.txt
 .venv\Scripts\python src/main.py
+```
+
+```bash
+# macOS / Linux
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python src/main.py
 ```
 
 ## Current CLI Commands
@@ -142,6 +149,7 @@ The current runtime still intentionally does not yet deliver:
 Phase 6 now also delivers:
 
 - per-skill runtime activation of `model`, `effort`, `shell`, `user-invocable`, and `disable-model-invocation`
+- explicit shell selection for the `bash` tool when a skill declares `shell`; otherwise the runtime uses the host default shell
 - workflow-only skills that generate bounded v2 job plans instead of freeform prompt execution
 - built-in `surface-recon` and `web-enum` workflow skills
 
@@ -230,5 +238,11 @@ The current built-in skills are:
 ## Tests
 
 ```powershell
+# Windows
 .venv\Scripts\python -m pytest
+```
+
+```bash
+# macOS / Linux
+.venv/bin/python -m pytest
 ```

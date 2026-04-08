@@ -8,6 +8,7 @@ from tools import build_tool_registry, get_tools
 from tools.executor import ToolExecutionError, ToolExecutor
 from tools.policy import CapabilityTier
 from tools.search import search
+from tools.shells import ShellSpec
 
 
 def test_build_tool_registry_matches_available_tools():
@@ -56,9 +57,17 @@ def test_tool_executor_unknown_tool_is_audited_and_classified():
 
 def test_bash_decodes_utf8_stdout(monkeypatch):
     seen_timeout = None
+    seen_command = None
+
+    monkeypatch.setattr(
+        bash_module,
+        "resolve_shell_spec",
+        lambda shell: ShellSpec("bash", "/bin/bash", ("-lc",)),
+    )
 
     def fake_run(*args, **kwargs):
-        nonlocal seen_timeout
+        nonlocal seen_command, seen_timeout
+        seen_command = args[0]
         seen_timeout = kwargs.get("timeout")
         return subprocess.CompletedProcess(
             args=args[0],
@@ -71,12 +80,19 @@ def test_bash_decodes_utf8_stdout(monkeypatch):
 
     result = bash_module.execute_command.invoke({"command": "echo demo"})
 
+    assert seen_command == ["/bin/bash", "-lc", "echo demo"]
     assert seen_timeout == bash_module.DEFAULT_COMMAND_TIMEOUT_SECONDS
     assert "[stdout]:" in result
     assert "\u4e2d\u6587\u8f93\u51fa" in result
 
 
 def test_bash_decodes_gbk_stdout(monkeypatch):
+    monkeypatch.setattr(
+        bash_module,
+        "resolve_shell_spec",
+        lambda shell: ShellSpec("bash", "/bin/bash", ("-lc",)),
+    )
+
     def fake_run(*args, **kwargs):
         return subprocess.CompletedProcess(
             args=args[0],
@@ -94,6 +110,12 @@ def test_bash_decodes_gbk_stdout(monkeypatch):
 
 
 def test_bash_preserves_stdout_and_stderr_envelope(monkeypatch):
+    monkeypatch.setattr(
+        bash_module,
+        "resolve_shell_spec",
+        lambda shell: ShellSpec("bash", "/bin/bash", ("-lc",)),
+    )
+
     def fake_run(*args, **kwargs):
         return subprocess.CompletedProcess(
             args=args[0],
@@ -113,6 +135,12 @@ def test_bash_preserves_stdout_and_stderr_envelope(monkeypatch):
 
 
 def test_bash_reports_non_zero_exit_code(monkeypatch):
+    monkeypatch.setattr(
+        bash_module,
+        "resolve_shell_spec",
+        lambda shell: ShellSpec("bash", "/bin/bash", ("-lc",)),
+    )
+
     def fake_run(*args, **kwargs):
         return subprocess.CompletedProcess(
             args=args[0],
@@ -133,6 +161,12 @@ def test_bash_reports_non_zero_exit_code(monkeypatch):
 
 
 def test_bash_reports_timeout(monkeypatch):
+    monkeypatch.setattr(
+        bash_module,
+        "resolve_shell_spec",
+        lambda shell: ShellSpec("bash", "/bin/bash", ("-lc",)),
+    )
+
     def fake_run(*args, **kwargs):
         raise subprocess.TimeoutExpired(
             cmd=args[0],
@@ -153,6 +187,64 @@ def test_bash_reports_timeout(monkeypatch):
     assert "\u90e8\u5206\u8f93\u51fa" in result
     assert "[stderr]:" in result
     assert "\u4ecd\u5728\u8fd0\u884c" in result
+
+
+def test_bash_uses_requested_powershell_executable(monkeypatch):
+    seen_shell = None
+    seen_command = None
+
+    def fake_resolve_shell_spec(shell):
+        nonlocal seen_shell
+        seen_shell = shell
+        return ShellSpec(
+            "powershell",
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            ("-NoLogo", "-NoProfile", "-NonInteractive", "-Command"),
+        )
+
+    def fake_run(*args, **kwargs):
+        nonlocal seen_command
+        seen_command = args[0]
+        return subprocess.CompletedProcess(
+            args=args[0],
+            returncode=0,
+            stdout=b"done",
+            stderr=b"",
+        )
+
+    monkeypatch.setattr(bash_module, "resolve_shell_spec", fake_resolve_shell_spec)
+    monkeypatch.setattr(bash_module.subprocess, "run", fake_run)
+
+    result = bash_module.execute_command.invoke(
+        {"command": "Write-Output done", "shell": "powershell"}
+    )
+
+    assert seen_shell == "powershell"
+    assert seen_command == [
+        "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "Write-Output done",
+    ]
+    assert "done" in result
+
+
+def test_tool_executor_applies_preferred_shell_to_bash():
+    captured = {}
+
+    class FakeBashTool:
+        def invoke(self, args):
+            captured.update(args)
+            return "ok"
+
+    executor = ToolExecutor({"bash": FakeBashTool()}).with_shell_preference("zsh")
+
+    result = executor.execute("bash", {"command": "echo demo"})
+
+    assert result == "ok"
+    assert captured == {"command": "echo demo", "shell": "zsh"}
 
 
 def test_search_stays_within_workspace(tmp_path, monkeypatch):

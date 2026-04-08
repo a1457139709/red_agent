@@ -123,7 +123,9 @@ The runtime currently parses and preserves these optional fields when present:
 - `effort`
 - `shell`
 
-These fields are not all active yet, but they are part of the normalized manifest shape.
+These fields are part of the normalized manifest shape.
+`model`, `effort`, `user-invocable`, `disable-model-invocation`, and `shell` now affect runtime behavior.
+When a skill declares `shell`, the `bash` tool launches that shell explicitly instead of falling back to the host default command shell.
 
 ## Body Requirements
 

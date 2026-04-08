@@ -1,10 +1,13 @@
 from pathlib import Path
 import asyncio
+import subprocess
 import textwrap
 
 import pytest
 from langchain_core.messages import AIMessage
 
+import app.skill_service as skill_service_module
+import tools.bash as bash_module
 from agent.prompt import assemble_system_prompt
 from agent.settings import Settings
 from agent.state import SessionState
@@ -19,6 +22,7 @@ from skills.loader import load_skill_from_file
 from skills.registry import SkillRegistry
 from tools import build_tool_registry
 from tools.executor import ToolExecutor
+from tools.shells import ShellResolutionError, ShellSpec
 import runtime.task_runner as task_runner_module
 
 
@@ -203,7 +207,7 @@ def test_git_auto_commit_skill_is_discovered_with_expected_runtime_metadata():
     skill = skill_service.require_skill("git-auto-commit")
 
     assert skill.manifest.user_invocable is True
-    assert skill.manifest.shell == "powershell"
+    assert skill.manifest.shell is None
     assert skill.manifest.allowed_tools == ["bash", "list_dir", "read_file", "search"]
     assert "git status --short" in skill.manifest.body
     assert "git commit -m" in skill.manifest.body
@@ -530,3 +534,146 @@ def test_task_runner_applies_skill_model_and_effort_overrides(monkeypatch, tmp_p
     )
 
     assert result["status"] == "completed"
+
+
+def test_skill_service_rejects_unavailable_direct_shell(monkeypatch, tmp_path):
+    local_root = tmp_path / "skills"
+    write_skill(
+        local_root,
+        "bash-skill",
+        """
+        ---
+        name: bash-skill
+        description: Require bash.
+        license: Proprietary
+        compatibility: Agent Skills baseline
+        allowed-tools:
+          - bash
+        metadata:
+          category: demo
+        user-invocable: true
+        shell: bash
+        ---
+
+        # Bash Skill
+        """,
+    )
+    registry = SkillRegistry.built_in_and_local(
+        known_tool_names=set(build_tool_registry().keys()),
+        local_root=local_root,
+    )
+    service = SkillService(registry)
+
+    def fake_ensure_shell_available(shell: str) -> str:
+        raise ShellResolutionError("Shell 'bash' is not available on this host. Expected one of: bash.")
+
+    monkeypatch.setattr(skill_service_module, "ensure_shell_available", fake_ensure_shell_available)
+
+    with pytest.raises(ValueError, match="requires shell 'bash'"):
+        asyncio.run(
+            service.build_skill_runtime_config(
+                skill_name="bash-skill",
+                context_summary="summary",
+            )
+        )
+
+
+def test_task_runner_applies_skill_shell_preference(monkeypatch, tmp_path):
+    settings = build_settings(tmp_path)
+    local_root = tmp_path / "skills"
+    write_skill(
+        local_root,
+        "bash-skill",
+        """
+        ---
+        name: bash-skill
+        description: Require bash.
+        license: Proprietary
+        compatibility: Agent Skills baseline
+        allowed-tools:
+          - bash
+        metadata:
+          category: demo
+        user-invocable: true
+        shell: bash
+        ---
+
+        # Bash Skill
+        """,
+    )
+    registry = SkillRegistry.built_in_and_local(
+        known_tool_names=set(build_tool_registry().keys()),
+        local_root=local_root,
+    )
+    skill_service = SkillService(registry)
+    task_service = TaskService.from_settings(settings)
+    run_service = RunService.from_settings(settings)
+    runner = TaskRunner(task_service, run_service, skill_service)
+    task = task_service.create_task(
+        title="Shell Preference",
+        goal="Verify runtime shell propagation",
+        skill_profile="bash-skill",
+    )
+    task, session_state = runner.resume_task(task.id)
+    executor = ToolExecutor(build_tool_registry())
+    seen_shell = None
+
+    monkeypatch.setattr(skill_service_module, "ensure_shell_available", lambda shell: shell)
+
+    def fake_resolve_shell_spec(shell):
+        nonlocal seen_shell
+        seen_shell = shell
+        return ShellSpec("bash", "/bin/bash", ("-lc",))
+
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(
+            args=args[0],
+            returncode=0,
+            stdout=b"done",
+            stderr=b"",
+        )
+
+    async def fake_agent_loop(
+        question,
+        state,
+        tool_executor,
+        current_settings,
+        *,
+        system_prompt=None,
+        tools=None,
+    ):
+        tool_result = tool_executor.execute("bash", {"command": "printf done"})
+        assert "done" in tool_result
+        return {
+            "status": "completed",
+            "response": "done",
+            "messages": [
+                AIMessage(
+                    content="done",
+                    tool_calls=[],
+                    usage_metadata={
+                        "input_tokens": 4,
+                        "output_tokens": 4,
+                        "total_tokens": 8,
+                    },
+                )
+            ],
+            "usage": {"input_tokens": 4, "output_tokens": 4, "total_tokens": 8},
+        }
+
+    monkeypatch.setattr(bash_module, "resolve_shell_spec", fake_resolve_shell_spec)
+    monkeypatch.setattr(bash_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(task_runner_module, "agent_loop", fake_agent_loop)
+
+    result = asyncio.run(
+        runner.run_prompt(
+            task_id=task.id,
+            question="continue",
+            session_state=session_state,
+            tool_executor=executor,
+            settings=settings,
+        )
+    )
+
+    assert result["status"] == "completed"
+    assert seen_shell == "bash"

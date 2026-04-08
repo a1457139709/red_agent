@@ -109,7 +109,7 @@ The callable tool set exposed by `src/tools/__init__.py` is currently:
 - path resolution and workspace confinement
 - confirmation gates for sensitive writes and destructive actions
 - shell command danger classification
-- bounded shell execution with explicit timeout and non-zero exit reporting
+- bounded shell execution with explicit shell selection, timeout, and non-zero exit reporting
 - UTF-8-first shell output decoding with Windows fallback codecs to avoid mojibake
 - task-scoped audit and tool-event callbacks
 - unknown tool requests normalized into audited tool errors

@@ -14,7 +14,6 @@ metadata:
   mode: commit
 argument-hint: summarize the current git changes and create a commit
 user-invocable: true
-shell: powershell
 ---
 
 # Git Auto Commit

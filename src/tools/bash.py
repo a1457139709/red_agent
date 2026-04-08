@@ -6,6 +6,7 @@ from langchain.tools import tool
 from utils.truncate import truncate_tool_output
 
 from .registry import register_tool
+from .shells import ShellResolutionError, resolve_shell_spec
 
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 30
 
@@ -15,6 +16,10 @@ tool_schema = {
         "command": {
             "type": "string",
             "description": "Shell command to execute",
+        },
+        "shell": {
+            "type": "string",
+            "description": "Optional shell name such as powershell, bash, zsh, sh, or cmd",
         },
     },
     "required": ["command"],
@@ -84,7 +89,7 @@ def _format_timeout_seconds(timeout: float | int | None) -> str:
     ),
     args_schema=tool_schema,
 )
-def execute_command(command: str) -> str:
+def execute_command(command: str, shell: str | None = None) -> str:
     """
     Executes a shell command and returns its output.
 
@@ -92,13 +97,15 @@ def execute_command(command: str) -> str:
         command (str): The shell command to execute.
     """
     try:
+        shell_spec = resolve_shell_spec(shell)
         result = subprocess.run(
-            command,
-            shell=True,
+            shell_spec.build_command(command),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=DEFAULT_COMMAND_TIMEOUT_SECONDS,
         )
+    except ShellResolutionError as exc:
+        return "Command execution failed: " + str(exc)
     except subprocess.TimeoutExpired as exc:
         stdout = _decode_stream(exc.output).strip()
         stderr = _decode_stream(exc.stderr).strip()

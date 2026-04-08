@@ -620,7 +620,9 @@ async def run_prompt_with_runtime(
         else:
             raise
 
-    runtime_executor = visible_executor.with_safety_policy(runtime_config.safety_policy)
+    runtime_executor = visible_executor.with_shell_preference(
+        runtime_config.preferred_shell
+    ).with_safety_policy(runtime_config.safety_policy)
 
     try:
         result = await agent_loop(

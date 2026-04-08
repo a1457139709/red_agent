@@ -77,6 +77,7 @@ class ToolExecutor:
         safety_policy: RuntimeSafetyPolicy | None = None,
         on_audit: AuditCallback = None,
         on_tool_event: ToolEventCallback = None,
+        preferred_shell: str | None = None,
     ) -> None:
         self._tools = tools
         self._confirm_command = confirm_command
@@ -84,6 +85,7 @@ class ToolExecutor:
         self._safety_policy = safety_policy or RuntimeSafetyPolicy.base()
         self._on_audit = on_audit
         self._on_tool_event = on_tool_event
+        self._preferred_shell = preferred_shell
 
     @property
     def tool_names(self) -> set[str]:
@@ -108,6 +110,7 @@ class ToolExecutor:
             safety_policy=self._safety_policy,
             on_audit=self._on_audit,
             on_tool_event=self._on_tool_event,
+            preferred_shell=self._preferred_shell,
         )
 
     def with_safety_policy(
@@ -124,13 +127,26 @@ class ToolExecutor:
             safety_policy=safety_policy,
             on_audit=self._on_audit if on_audit is None else on_audit,
             on_tool_event=self._on_tool_event if on_tool_event is None else on_tool_event,
+            preferred_shell=self._preferred_shell,
+        )
+
+    def with_shell_preference(self, preferred_shell: str | None) -> "ToolExecutor":
+        return ToolExecutor(
+            dict(self._tools),
+            confirm_command=self._confirm_command,
+            on_info=self._on_info,
+            safety_policy=self._safety_policy,
+            on_audit=self._on_audit,
+            on_tool_event=self._on_tool_event,
+            preferred_shell=preferred_shell,
         )
 
     def execute(self, tool_name: str, args: dict) -> str:
+        effective_args = self._apply_runtime_args(tool_name, args)
         capability = self._resolve_capability(tool_name)
-        target_path = self._resolve_target_path(args)
-        target = self._summarize_target(tool_name, args, target_path)
-        args_summary = self._summarize_args(args)
+        target_path = self._resolve_target_path(effective_args)
+        target = self._summarize_target(tool_name, effective_args, target_path)
+        args_summary = self._summarize_args(effective_args)
         context = _ExecutionContext(
             tool_name=tool_name,
             capability=capability,
@@ -210,7 +226,7 @@ class ToolExecutor:
                 return denial
 
         if capability == CapabilityTier.EXECUTE:
-            denial = self._handle_shell_safety(context, args.get("command", ""))
+            denial = self._handle_shell_safety(context, effective_args.get("command", ""))
             if denial is not None:
                 self._emit_tool_event(
                     event_type="tool_failed",
@@ -222,7 +238,7 @@ class ToolExecutor:
                 return denial
 
         try:
-            result = tool.invoke(args)
+            result = tool.invoke(effective_args)
             self._emit_tool_event(
                 event_type="tool_completed",
                 tool_name=tool_name,
@@ -380,6 +396,12 @@ class ToolExecutor:
             command = args.get("command", "")
             return command[:200]
         return None
+
+    def _apply_runtime_args(self, tool_name: str, args: dict) -> dict:
+        effective_args = dict(args)
+        if tool_name == "bash" and self._preferred_shell and not effective_args.get("shell"):
+            effective_args["shell"] = self._preferred_shell
+        return effective_args
 
     def _summarize_args(self, args: dict) -> str:
         compact: dict[str, object] = {}

@@ -145,10 +145,12 @@ class TaskRunner:
             )
             observability.effective_tools = [tool.name for tool in visible_executor.get_tools()]
             effective_settings = runtime_config.with_settings(settings)
-            runtime_executor = visible_executor.with_safety_policy(
-                runtime_config.safety_policy,
-                on_audit=self._build_safety_audit_logger(task.id, run.id, observability),
-                on_tool_event=self._build_tool_event_logger(task.id, run.id),
+            runtime_executor = (
+                visible_executor.with_shell_preference(runtime_config.preferred_shell).with_safety_policy(
+                    runtime_config.safety_policy,
+                    on_audit=self._build_safety_audit_logger(task.id, run.id, observability),
+                    on_tool_event=self._build_tool_event_logger(task.id, run.id),
+                )
             )
 
             try:
