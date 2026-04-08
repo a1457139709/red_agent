@@ -1,11 +1,36 @@
 # AGENTS.md
 
-## Working agreements
+## 思考指南
 
-- Always use venv python to run tests and code, the venv in ".\.venv" directory
-- the tests file always store in tests directory
+- 改动较多，且代码量过大时，对工作进行拆分，按步骤进行
 
-## Repository expectations
+## 构建、测试与开发
 
-- Document public utilities in `docs/` when you change behavior.
+- 总是使用.venv下的Python虚拟环境
+- 将测试文件写在tests目录下
+- 永远不要为旧实现做兼容性妥协。重构和改进是被鼓励的，但不应以牺牲代码质量、可维护性或安全性为代价。
+- 代码风格统一
+- 兼容不同的操作系统
+
+## 代码风格与命名
+
+- 优先使用纯函数。将副作用保留在 CLI 入口或工具适配器中。为非显而易见的行为添加简短注释。
+- 保持文档同步，当外部行为或输出发生变化时，更新 `README.md` 和相关的 `docs/` 示例
+
+## 提交规范
+
+- 提交信息遵循 Conventional Commits 规范
+- 详细要求与示例见 `[commit.md](codex_prompt/commit.md)`
+
+## 测试指南
+
+- 相关测试文件命名遵从 pytest 标准格式
+
+## 代码审计
+
+- 详细要求与示例见 `[code_review.md](codex_prompt/code_review.md)`
+
+## 安全与配置说明
+
+- 永远不要提交密钥
 
