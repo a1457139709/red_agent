@@ -22,7 +22,7 @@ Current phase status based on the repository implementation:
 - Phase 5: implemented
 - Phase 6: implemented
 - Phase 7: implemented
-- Phase 8: partially implemented
+- Phase 8: implemented
 
 ## Current Repository Anchors
 
@@ -476,9 +476,19 @@ Support higher-level orchestration without reverting to transcript-heavy control
 
 ### Status
 
-Partially implemented.
+Implemented.
 
-The repository already persists structured memory entries, but it does not yet provide planner runtime orchestration, planner-generated job proposals, or planner context assembly from evidence and open findings.
+The repository now provides:
+
+- persisted planner plans and proposal records
+- planner context assembly from operation scope, evidence, open findings, successful jobs, and structured memory
+- model-backed planning with rule-based fallback generation
+- `/planner plan` and `/planner apply`
+- `/operation resume` context summaries without transcript replay
+
+Still deferred:
+
+- planner-driven memory write-back for newly derived stable facts
 
 ### Work Items
 

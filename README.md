@@ -83,6 +83,8 @@ The repository now contains two parallel runtime families:
 - `/evidence list <operation_id> [limit]`
 - `/evidence show <evidence_id>`
 - `/dashboard [operation_id]`
+- `/planner plan <operation_id>`
+- `/planner apply <plan_id> [1,3,...]`
 - `/task create`
 - `/task list [status] [limit]`
 - `/task recent [limit]`
@@ -140,8 +142,12 @@ Phase 2 through Phase 7 currently deliver:
 - automatic persistence of finding candidates plus finding-to-evidence traceability links
 - JSON export generation under `.red-code/operations/<operation_public_id>/exports/<export_name>/`
 - CLI inspection and lifecycle flows for `/operation`, `/job`, `/finding`, `/evidence`, and `/dashboard`
+- persisted planner plans and proposal application flows for `/planner`
+- `/operation resume` context summaries built from structured state rather than transcript replay
 
 The current runtime still intentionally does not yet deliver:
+
+- planner write-back of newly derived stable facts into structured memory
 
 - CLI-triggered export flows
 - planner-driven use of the structured evidence and finding store

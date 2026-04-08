@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from io import StringIO
+import os
 from typing import Callable
 
 from rich import box
@@ -19,6 +20,7 @@ from models.finding import Finding
 from models.job import Job
 from models.operation import Operation
 from models.operation_event import OperationEvent
+from models.planner import OperationContextSummary, PlannerPlan, PlannerProposal, PlannerProposalKind
 from models.run import Run, TaskLogEntry
 from models.skill import LoadedSkill
 from models.scope_policy import ScopePolicy
@@ -211,6 +213,7 @@ class CliPresenter:
         topics.add_row("finding", "Finding review and triage")
         topics.add_row("evidence", "Evidence inspection and traceability")
         topics.add_row("dashboard", "Operation summary, failures, and recent events")
+        topics.add_row("planner", "Structured next-step planning for v2 operations")
         topics.add_row("task", "Task lifecycle, runs, checkpoints, and logs")
         topics.add_row("skill", "Skill activation, inspection, reload, and shorthand usage")
         return Group(
@@ -218,8 +221,11 @@ class CliPresenter:
             Rule(style="grey50", characters="-"),
             Panel(topics, title="Help Topics", border_style="bright_blue", box=ASCII_BOX),
             Text(
-                "Drill down with /help operation, /help job, /help finding, /help evidence, "
-                "/help dashboard, /help task, /help skill.",
+                "Drill down with /help operation, /help job, /help finding, /help evidence.",
+                style="dim",
+            ),
+            Text(
+                "Also available: /help dashboard, /help planner, /help task, /help skill.",
                 style="dim",
             ),
             Text("Session shortcuts: /clear, /reset, /exit, /quit", style="dim"),
@@ -280,6 +286,20 @@ class CliPresenter:
                 ("/dashboard", "Show the most recently updated operation dashboard"),
                 ("/dashboard <operation_id>", "Show the dashboard for one operation"),
             ], border_style="bright_blue"),
+        )
+
+    def _help_planner(self) -> Group:
+        return Group(
+            Text("Planner help", style="dim"),
+            Rule(style="grey50", characters="-"),
+            self._command_panel("Planner Commands", [
+                ("/planner plan <operation_id>", "Create and preview a persisted planner plan"),
+                ("/planner apply <plan_id> [1,3,...]", "Create jobs from all or selected planner proposals"),
+            ], border_style="bright_blue"),
+            Text(
+                "Tip: /operation resume now shows a context summary and points you to /planner plan.",
+                style="dim",
+            ),
         )
 
     def _help_task(self) -> Group:
@@ -345,6 +365,9 @@ class CliPresenter:
         elif topic == "dashboard":
             body = self._help_dashboard()
             title = "Help: dashboard"
+        elif topic == "planner":
+            body = self._help_planner()
+            title = "Help: planner"
         elif topic == "task":
             body = self._help_task()
             title = "Help: task"
@@ -368,6 +391,12 @@ class CliPresenter:
             )
         ):
             return
+        file = self.console.file
+        is_tty = callable(getattr(file, "isatty", None)) and bool(file.isatty())
+        if os.name == "nt" and is_tty:
+            # `cls` remains the most reliable option for classic Windows terminals.
+            if os.system("cls") == 0:
+                return
         self.console.clear(home=True)
 
     def show_task_list(self, tasks: list[Task], *, filter_label: str | None = None) -> None:
@@ -449,6 +478,24 @@ class CliPresenter:
             box=ASCII_BOX,
         )
         self._emit(Group(summary, policy_panel))
+
+    def show_operation_context_summary(self, summary: OperationContextSummary) -> None:
+        self._emit(
+            Panel(
+                self._detail_table([
+                    ("Operation", summary.operation_id),
+                    ("Summary", summary.summary),
+                    ("Scope", summary.scope_summary),
+                    ("Findings", summary.findings_summary),
+                    ("Evidence", summary.evidence_summary),
+                    ("Memory", summary.memory_summary),
+                    ("Suggested Next Step", summary.next_step_hint),
+                ]),
+                title="Operation Context Summary",
+                border_style="bright_blue",
+                box=ASCII_BOX,
+            )
+        )
 
     def show_job_list(self, jobs: list[Job], *, operation_label: str | None = None) -> None:
         if not jobs:
@@ -734,6 +781,90 @@ class CliPresenter:
             )
 
         self._emit(Group(summary, job_counts, finding_counts, flagged_jobs, recent_findings, recent_evidence, recent_events))
+
+    def show_planner_plan(
+        self,
+        *,
+        plan: PlannerPlan,
+        operation_label: str,
+        proposals: list[PlannerProposal],
+    ) -> None:
+        summary = Panel(
+            self._detail_table([
+                ("Plan ID", plan.public_id),
+                ("Operation", operation_label),
+                ("Status", plan.status.value),
+                ("Planning Mode", plan.planning_mode),
+                ("Planner Source", plan.planner_source.value),
+                ("Model", plan.model_name or "-"),
+                ("Summary", plan.summary),
+                ("Rationale", plan.rationale),
+            ]),
+            title="Planner Plan",
+            border_style="bright_blue",
+            box=ASCII_BOX,
+        )
+        proposed = [proposal for proposal in proposals if proposal.proposal_kind == PlannerProposalKind.PROPOSED]
+        blocked_or_skipped = [
+            proposal
+            for proposal in proposals
+            if proposal.proposal_kind != PlannerProposalKind.PROPOSED
+        ]
+
+        if proposed:
+            proposed_table: RenderableType = Table(
+                title="Planner Proposals",
+                box=ASCII_BOX,
+                expand=True,
+                header_style="bold",
+            )
+            proposed_table.add_column("#", style="cyan", no_wrap=True)
+            proposed_table.add_column("Type", no_wrap=True)
+            proposed_table.add_column("Target", overflow="fold")
+            proposed_table.add_column("Summary", overflow="fold")
+            proposed_table.add_column("Rationale", overflow="fold")
+            for proposal in proposed:
+                proposed_table.add_row(
+                    str(proposal.proposal_index),
+                    proposal.job_type,
+                    proposal.target_ref,
+                    proposal.summary or "-",
+                    proposal.rationale or "-",
+                )
+        else:
+            proposed_table = Panel(
+                Text("No runnable planner proposals were produced.", style="dim"),
+                title="Planner Proposals",
+                border_style="yellow",
+                box=ASCII_BOX,
+            )
+
+        if blocked_or_skipped:
+            blocked_table: RenderableType = Table(
+                title="Skipped / Blocked Proposals",
+                box=ASCII_BOX,
+                expand=True,
+                header_style="bold",
+            )
+            blocked_table.add_column("Kind", style="cyan", no_wrap=True)
+            blocked_table.add_column("Type", no_wrap=True)
+            blocked_table.add_column("Target", overflow="fold")
+            blocked_table.add_column("Reason", overflow="fold")
+            for proposal in blocked_or_skipped:
+                blocked_table.add_row(
+                    proposal.proposal_kind.value,
+                    proposal.job_type,
+                    proposal.target_ref,
+                    proposal.skip_reason or "-",
+                )
+        else:
+            blocked_table = Panel(
+                Text("No skipped or blocked planner proposals.", style="dim"),
+                title="Skipped / Blocked Proposals",
+                border_style="green",
+                box=ASCII_BOX,
+            )
+        self._emit(Group(summary, proposed_table, blocked_table))
 
     def show_task_detail(self, task: Task) -> None:
         identity = Panel(

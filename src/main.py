@@ -15,6 +15,7 @@ from app.evidence_service import EvidenceService
 from app.finding_service import FindingService
 from app.job_service import JobService
 from app.operation_service import OperationService
+from app.planner_service import PlannerService
 from app.run_service import RunService
 from app.skill_service import SkillService
 from app.skill_workflow_service import SkillWorkflowPlan, SkillWorkflowService
@@ -149,6 +150,17 @@ def parse_dashboard_command(command: str) -> list[str] | None:
     return parts[1:]
 
 
+def parse_planner_command(command: str) -> tuple[str, list[str]] | None:
+    stripped = command.strip()
+    if not stripped.startswith("/planner"):
+        return None
+
+    parts = stripped.split()
+    if len(parts) == 1:
+        return "", []
+    return parts[1], parts[2:]
+
+
 def parse_help_command(command: str) -> list[str] | None:
     stripped = command.strip()
     if not stripped.startswith("/help"):
@@ -173,6 +185,7 @@ def parse_skill_shorthand(
         or stripped.startswith("/finding")
         or stripped.startswith("/evidence")
         or stripped.startswith("/dashboard")
+        or stripped.startswith("/planner")
     ):
         return None
 
@@ -285,14 +298,14 @@ def handle_help_command(
         ui.show_help()
         return True
     if len(args) != 1:
-        ui.show_error("Usage: /help [task|skill|operation|job|finding|evidence|dashboard]")
+        ui.show_error("Usage: /help [task|skill|operation|job|finding|evidence|dashboard|planner]")
         return True
 
     topic = args[0].lower()
-    if topic not in {"operation", "job", "task", "skill", "finding", "evidence", "dashboard"}:
+    if topic not in {"operation", "job", "task", "skill", "finding", "evidence", "dashboard", "planner"}:
         ui.show_error(
             f"Unknown help topic: {args[0]}. Available topics: task, skill, operation, job, "
-            "finding, evidence, dashboard"
+            "finding, evidence, dashboard, planner"
         )
         return True
     ui.show_help(topic)
@@ -542,6 +555,18 @@ def _parse_optional_limit_arg(args: list[str], *, usage: str) -> int:
     if len(args) == 1:
         return _parse_limit(args[0])
     raise ValueError(usage)
+
+
+def _parse_selection_indices(raw: str) -> list[int]:
+    values: list[int] = []
+    seen: set[int] = set()
+    for item in _parse_csv_list(raw):
+        index = _parse_limit(item)
+        if index in seen:
+            raise ValueError(f"Duplicate planner proposal index: {index}")
+        seen.add(index)
+        values.append(index)
+    return values
 
 
 def _parse_task_list_args(args: list[str]) -> tuple[TaskStatus | None, int]:
@@ -858,10 +883,83 @@ def handle_task_command(
         return True
 
 
+def handle_planner_command(
+    command: str,
+    *,
+    planner_service: PlannerService,
+    presenter: CliPresenter | None = None,
+    text_output: OutputFn | None = None,
+    info_output: OutputFn | None = None,
+    error_output: OutputFn | None = None,
+    success_output: OutputFn | None = None,
+) -> bool:
+    parsed = parse_planner_command(command)
+    if parsed is None:
+        return False
+
+    ui = _resolve_presenter(
+        presenter,
+        text_output=text_output,
+        info_output=info_output,
+        error_output=error_output,
+        success_output=success_output,
+    )
+    action, args = parsed
+
+    try:
+        if action in {"", "help"}:
+            ui.show_help("planner")
+            return True
+
+        if action == "plan":
+            if len(args) != 1:
+                ui.show_error("Usage: /planner plan <operation_id>")
+                return True
+            bundle = planner_service.create_plan(args[0])
+            operation = planner_service.operation_service.require_operation(bundle.plan.operation_id)
+            ui.show_planner_plan(
+                plan=bundle.plan,
+                operation_label=operation.public_id or operation.id,
+                proposals=bundle.proposals,
+            )
+            return True
+
+        if action == "apply":
+            if not args or len(args) > 2:
+                ui.show_error("Usage: /planner apply <plan_id> [1,3,...]")
+                return True
+            selected_indices = None if len(args) == 1 else _parse_selection_indices(args[1])
+            result = planner_service.apply_plan(args[0], selected_indices=selected_indices)
+            if result.applied_jobs:
+                ui.show_success(
+                    f"Applied {len(result.applied_jobs)} planner proposal(s) from {result.plan.public_id}."
+                )
+                operation = planner_service.operation_service.require_operation(result.plan.operation_id)
+                ui.show_job_list(result.applied_jobs, operation_label=operation.public_id or operation.id)
+            else:
+                ui.show_info(f"No planner proposals were applied from {result.plan.public_id}.")
+            for proposal in result.skipped_proposals:
+                ui.show_info(
+                    f"Skipped proposal {proposal.proposal_index or '-'} ({proposal.job_type} {proposal.target_ref}): "
+                    f"{proposal.skip_reason or 'not applicable'}"
+                )
+            return True
+
+        ui.show_error(f"Unknown planner command: {action}")
+        return True
+    except ValueError as exc:
+        ui.show_error(str(exc))
+        return True
+    except Exception as exc:
+        ui.show_error(f"Planner command failed: {exc}")
+        return True
+
+
 def handle_operation_command(
     command: str,
     *,
     operation_service: OperationService,
+    planner_service: PlannerService | None = None,
     presenter: CliPresenter | None = None,
     text_output: OutputFn | None = None,
     info_output: OutputFn | None = None,
@@ -881,6 +979,7 @@ def handle_operation_command(
         success_output=success_output,
     )
     action, args = parsed
+    planner_service = planner_service or PlannerService.from_settings(operation_service.settings)
 
     try:
         if action in {"", "help"}:
@@ -962,6 +1061,14 @@ def handle_operation_command(
                 return True
             operation = operation_service.resume_operation(args[0])
             ui.show_success(f"Resumed operation {operation.public_id} ({operation.id})")
+            try:
+                summary = planner_service.build_operation_context_summary(operation.id)
+                ui.show_operation_context_summary(summary)
+                ui.show_info(
+                    f"Run /planner plan {operation.public_id or operation.id} to generate next-step proposals."
+                )
+            except Exception as exc:
+                ui.show_info(f"Planner context summary unavailable: {exc}")
             return True
 
         ui.show_error(f"Unknown operation command: {action}")
@@ -1304,6 +1411,7 @@ async def run_interactive_shell(
     shell_state: ShellState,
     tool_executor: ToolExecutor,
     operation_service: OperationService | None = None,
+    planner_service: PlannerService | None = None,
     job_service: JobService | None = None,
     workflow_service: SkillWorkflowService | None = None,
     finding_service: FindingService | None = None,
@@ -1318,6 +1426,7 @@ async def run_interactive_shell(
 ) -> None:
     checkpoint_service = checkpoint_service or task_runner.checkpoint_service
     operation_service = operation_service or OperationService.from_settings(settings)
+    planner_service = planner_service or PlannerService.from_settings(settings)
     job_service = job_service or JobService.from_settings(settings)
     workflow_service = workflow_service or SkillWorkflowService.from_settings(settings)
     finding_service = finding_service or FindingService.from_settings(settings)
@@ -1378,7 +1487,14 @@ async def run_interactive_shell(
         if handle_operation_command(
             question,
             operation_service=operation_service,
+            planner_service=planner_service,
             input_func=input_func,
+        ):
+            continue
+
+        if handle_planner_command(
+            question,
+            planner_service=planner_service,
         ):
             continue
 

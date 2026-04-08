@@ -68,6 +68,31 @@ def test_presenter_clear_screen_uses_console_clear_in_default_mode():
     assert called == {"home": True}
 
 
+def test_presenter_clear_screen_uses_cls_on_windows_tty(monkeypatch):
+    class TtyBuffer(StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    console = Console(file=TtyBuffer(), force_terminal=False)
+    called = {"system": [], "console_clear": 0}
+
+    def fake_system(command: str) -> int:
+        called["system"].append(command)
+        return 0
+
+    def fake_clear(*, home=True):
+        called["console_clear"] += 1
+
+    monkeypatch.setattr("cli.ui.os.name", "nt")
+    monkeypatch.setattr("cli.ui.os.system", fake_system)
+    console.clear = fake_clear
+    presenter = CliPresenter(console=console)
+
+    presenter.clear_screen()
+
+    assert called == {"system": ["cls"], "console_clear": 0}
+
+
 def test_presenter_detail_views_include_key_fields_without_blob_internals():
     outputs: list[str] = []
     presenter = build_presenter(outputs)

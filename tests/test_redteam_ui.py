@@ -5,6 +5,13 @@ from models.finding import Finding
 from models.job import Job, JobStatus
 from models.operation import Operation, OperationStatus
 from models.operation_event import OperationEvent, OperationEventLevel, OperationEventType
+from models.planner import (
+    OperationContextSummary,
+    PlannerPlan,
+    PlannerProposal,
+    PlannerProposalKind,
+    PlannerSource,
+)
 from models.scope_policy import ScopePolicy
 
 
@@ -96,11 +103,53 @@ def test_presenter_renders_operation_job_finding_evidence_and_dashboard_views():
     presenter.show_help("finding")
     presenter.show_help("evidence")
     presenter.show_help("dashboard")
+    presenter.show_help("planner")
     presenter.show_operation_detail(operation, policy)
     presenter.show_job_detail(job)
     presenter.show_finding_detail(finding, linked_evidence_ids=[evidence.public_id])
     presenter.show_evidence_detail(evidence, linked_finding_ids=[finding.public_id])
     presenter.show_dashboard(dashboard)
+    plan = PlannerPlan.create(
+        operation_id=operation.id,
+        planning_mode="next_steps",
+        context_hash="ctx",
+        summary="Planner summary.",
+        rationale="Planner rationale.",
+        planner_source=PlannerSource.FALLBACK,
+    )
+    plan.public_id = "PLN0001"
+    proposal = PlannerProposal.create(
+        plan_id=plan.id,
+        proposal_index=1,
+        proposal_kind=PlannerProposalKind.PROPOSED,
+        job_type="http_probe",
+        target_ref="https://example.com",
+        arguments={"method": "GET"},
+        summary="Probe https://example.com.",
+        rationale="Recent evidence points here.",
+    )
+    blocked = PlannerProposal.create(
+        plan_id=plan.id,
+        proposal_index=0,
+        proposal_kind=PlannerProposalKind.BLOCKED,
+        job_type="http_probe",
+        target_ref="https://admin.example.net",
+        summary="Blocked probe.",
+        rationale="Out of scope.",
+        skip_reason="Target is explicitly denied by the scope policy.",
+    )
+    presenter.show_planner_plan(plan=plan, operation_label=operation.public_id, proposals=[proposal, blocked])
+    presenter.show_operation_context_summary(
+        OperationContextSummary(
+            operation_id=operation.public_id,
+            summary="Objective summary.",
+            scope_summary="Scope allows example.com.",
+            findings_summary="1 open finding.",
+            evidence_summary="1 evidence item.",
+            memory_summary="1 memory fact.",
+            next_step_hint="Probe https://example.com.",
+        )
+    )
 
     merged = "\n\n".join(outputs)
     assert "Operation Commands" in merged
@@ -108,6 +157,7 @@ def test_presenter_renders_operation_job_finding_evidence_and_dashboard_views():
     assert "/finding show <finding_id>" in merged
     assert "/evidence show <evidence_id>" in merged
     assert "/dashboard <operation_id>" in merged
+    assert "/planner plan <operation_id>" in merged
     assert "Operation ID:" in merged and "O0001" in merged
     assert "Allowed Ports:" in merged and "80, 443" in merged
     assert "Job ID:" in merged and "J0001" in merged
@@ -118,3 +168,6 @@ def test_presenter_renders_operation_job_finding_evidence_and_dashboard_views():
     assert "Linked Finding IDs:" in merged and "F0001" in merged
     assert "Dashboard Summary" in merged
     assert "Recent Failed / Timed-Out / Blocked Jobs" in merged
+    assert "Planner Plan" in merged and "PLN0001" in merged
+    assert "Planner Proposals" in merged
+    assert "Operation Context Summary" in merged

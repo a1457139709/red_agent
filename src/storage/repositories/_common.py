@@ -33,20 +33,21 @@ def get_row_by_identifier(
 
 
 def allocate_public_id(connection, *, table_name: str, prefix: str) -> str:
+    prefix_length = len(prefix)
     row = connection.execute(
         f"""
         SELECT public_id
         FROM {table_name}
         WHERE public_id LIKE ?
-        ORDER BY CAST(SUBSTR(public_id, 2) AS INTEGER) DESC
+        ORDER BY CAST(SUBSTR(public_id, ?) AS INTEGER) DESC
         LIMIT 1
         """,
-        (f"{prefix}%",),
+        (f"{prefix}%", prefix_length + 1),
     ).fetchone()
     next_number = 1
     if row is not None and row["public_id"]:
         try:
-            next_number = int(str(row["public_id"])[1:]) + 1
+            next_number = int(str(row["public_id"])[prefix_length:]) + 1
         except ValueError:
             next_number = 1
     return f"{prefix}{next_number:04d}"

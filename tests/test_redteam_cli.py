@@ -3,7 +3,13 @@ from app.dashboard_service import DashboardService
 from app.evidence_service import EvidenceService
 from app.finding_service import FindingService
 from app.job_service import JobService
+from app.memory_service import MemoryService
 from app.operation_service import OperationService
+from app.planner_service import PlannerService
+from models.planner import PlannerPlanStatus, PlannerProposalKind
+from orchestration.planner_runtime import PlannerRuntime
+from storage.repositories.planner import PlannerRepository
+from storage.sqlite import SQLiteStorage
 from models.job import JobStatus
 from models.operation import OperationStatus
 from main import (
@@ -12,6 +18,7 @@ from main import (
     handle_finding_command,
     handle_job_command,
     handle_operation_command,
+    handle_planner_command,
 )
 
 
@@ -24,11 +31,52 @@ def build_settings(tmp_path):
     )
 
 
+class FakePlannerModel:
+    def invoke(self, _messages):
+        content = (
+            '{"summary":"Planner summary.","rationale":"Planner rationale.","proposals":['
+            '{"job_type":"http_probe","target_ref":"https://example.com","arguments":{"method":"GET"},'
+            '"summary":"Probe https://example.com.","rationale":"Recent evidence points here."},'
+            '{"job_type":"http_probe","target_ref":"https://admin.example.net","arguments":{"method":"GET"},'
+            '"summary":"Blocked probe.","rationale":"Out of scope."}'
+            "]}"
+        )
+        return type(
+            "Response",
+            (),
+            {"content": content},
+        )()
+
+
+def build_planner_service(settings):
+    storage = SQLiteStorage(settings.sqlite_path)
+    operation_service = OperationService.from_settings(settings)
+    job_service = JobService.from_settings(settings)
+    runtime = PlannerRuntime(
+        operation_service=operation_service,
+        job_service=job_service,
+        evidence_service=EvidenceService.from_settings(settings),
+        finding_service=FindingService.from_settings(settings),
+        memory_service=MemoryService.from_settings(settings),
+        settings=settings,
+        model_factory=lambda _settings: FakePlannerModel(),
+    )
+    return PlannerService(
+        repository=PlannerRepository(storage),
+        runtime=runtime,
+        operation_service=operation_service,
+        job_service=job_service,
+        settings=settings,
+    )
+
+
 def test_operation_commands_create_list_show_pause_and_resume(tmp_path):
     settings = build_settings(tmp_path)
     operation_service = OperationService.from_settings(settings)
+    planner_service = PlannerService.from_settings(settings)
     outputs = []
     errors = []
+    infos = []
     successes = []
     responses = iter([
         "Surface recon",
@@ -51,7 +99,9 @@ def test_operation_commands_create_list_show_pause_and_resume(tmp_path):
     assert handle_operation_command(
         "/operation create",
         operation_service=operation_service,
+        planner_service=planner_service,
         text_output=outputs.append,
+        info_output=infos.append,
         error_output=errors.append,
         success_output=successes.append,
         input_func=fake_input,
@@ -62,28 +112,36 @@ def test_operation_commands_create_list_show_pause_and_resume(tmp_path):
     assert handle_operation_command(
         "/operation list",
         operation_service=operation_service,
+        planner_service=planner_service,
         text_output=outputs.append,
+        info_output=infos.append,
         error_output=errors.append,
         success_output=successes.append,
     )
     assert handle_operation_command(
         f"/operation show {operation.public_id}",
         operation_service=operation_service,
+        planner_service=planner_service,
         text_output=outputs.append,
+        info_output=infos.append,
         error_output=errors.append,
         success_output=successes.append,
     )
     assert handle_operation_command(
         f"/operation resume {operation.public_id}",
         operation_service=operation_service,
+        planner_service=planner_service,
         text_output=outputs.append,
+        info_output=infos.append,
         error_output=errors.append,
         success_output=successes.append,
     )
     assert handle_operation_command(
         f"/operation pause {operation.public_id}",
         operation_service=operation_service,
+        planner_service=planner_service,
         text_output=outputs.append,
+        info_output=infos.append,
         error_output=errors.append,
         success_output=successes.append,
     )
@@ -91,6 +149,8 @@ def test_operation_commands_create_list_show_pause_and_resume(tmp_path):
     assert any(f"Created operation {operation.public_id}" in message for message in successes)
     assert any(operation.public_id in message and "Surface recon" in message for message in outputs)
     assert any("Scope Policy" in message and "Allowed Ports:" in message for message in outputs)
+    assert any("Operation Context Summary" in message for message in outputs)
+    assert any("/planner plan" in message for message in infos)
     assert any(f"Resumed operation {operation.public_id}" in message for message in successes)
     assert any(f"Paused operation {operation.public_id}" in message for message in successes)
     assert operation_service.require_operation(operation.public_id).status == OperationStatus.PAUSED
@@ -223,6 +283,83 @@ def test_job_commands_create_list_show_cancel_and_review_views(tmp_path):
     assert any("Linked Finding IDs:" in message and finding.public_id in message for message in outputs)
     assert any("Dashboard Summary" in message and operation.public_id in message for message in outputs)
     assert not errors
+
+
+def test_planner_commands_plan_and_apply(tmp_path):
+    settings = build_settings(tmp_path)
+    operation_service = OperationService.from_settings(settings)
+    job_service = JobService.from_settings(settings)
+    planner_service = build_planner_service(settings)
+    outputs = []
+    infos = []
+    errors = []
+    successes = []
+
+    operation = operation_service.create_operation(
+        title="Plan",
+        objective="Inspect target",
+        allowed_hosts=["example.com"],
+        allowed_domains=["example.com"],
+        allowed_ports=[80, 443],
+        allowed_protocols=["http", "https"],
+    )
+
+    assert handle_planner_command(
+        f"/planner plan {operation.public_id}",
+        planner_service=planner_service,
+        text_output=outputs.append,
+        info_output=infos.append,
+        error_output=errors.append,
+        success_output=successes.append,
+    )
+
+    bundle = planner_service.get_plan_bundle("PLN0001")
+    proposed = [proposal for proposal in bundle.proposals if proposal.proposal_kind == PlannerProposalKind.PROPOSED]
+    assert proposed
+
+    assert handle_planner_command(
+        f"/planner apply {bundle.plan.public_id} 1",
+        planner_service=planner_service,
+        text_output=outputs.append,
+        info_output=infos.append,
+        error_output=errors.append,
+        success_output=successes.append,
+    )
+
+    jobs = job_service.list_jobs(operation.public_id)
+    assert len(jobs) == 1
+    assert jobs[0].job_type == "http_probe"
+    assert any("Planner Plan" in message and bundle.plan.public_id in message for message in outputs)
+    assert any("Planner Proposals" in message for message in outputs)
+    assert any("Skipped / Blocked Proposals" in message for message in outputs)
+    assert any(f"Applied 1 planner proposal(s) from {bundle.plan.public_id}" in message for message in successes)
+    assert not errors
+
+
+def test_planner_apply_is_idempotent_for_already_applied_proposals(tmp_path):
+    settings = build_settings(tmp_path)
+    operation_service = OperationService.from_settings(settings)
+    planner_service = build_planner_service(settings)
+
+    operation = operation_service.create_operation(
+        title="Plan",
+        objective="Inspect target",
+        allowed_hosts=["example.com"],
+        allowed_domains=["example.com"],
+        allowed_ports=[80, 443],
+        allowed_protocols=["http", "https"],
+    )
+    bundle = planner_service.create_plan(operation.public_id)
+
+    first = planner_service.apply_plan(bundle.plan.public_id, selected_indices=[1])
+    second = planner_service.apply_plan(bundle.plan.public_id, selected_indices=[1])
+
+    assert first.plan.status == PlannerPlanStatus.APPLIED
+    assert second.plan.status == PlannerPlanStatus.APPLIED
+    assert len(second.applied_jobs) == 0
+    assert len(second.skipped_proposals) == 1
+    refreshed = planner_service.get_plan_bundle(bundle.plan.public_id)
+    assert refreshed.plan.status == PlannerPlanStatus.APPLIED
 
 
 def test_job_cancel_reports_noop_for_terminal_jobs(tmp_path):
