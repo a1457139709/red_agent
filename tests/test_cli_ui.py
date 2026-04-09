@@ -27,7 +27,9 @@ def test_presenter_help_and_observation_render_clean_text():
     )
 
     assert "red-code" in outputs[0]
-    assert "Help Topics" in outputs[0]
+    assert "Natural-Language First" in outputs[0]
+    assert "Advanced Help Topics" in outputs[0]
+    assert "Summarize this repository structure" in outputs[0]
     assert "task" in outputs[0]
     assert "skill" in outputs[0]
     assert "/help task" in outputs[0]

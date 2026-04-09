@@ -17,9 +17,20 @@ from app.job_service import JobService
 from app.operation_service import OperationService
 from app.planner_service import PlannerService
 from app.run_service import RunService
+from app.session_service import SessionService
 from app.skill_service import SkillService
 from app.skill_workflow_service import SkillWorkflowPlan, SkillWorkflowService
 from app.task_service import TaskService
+from controller import (
+    AgentController,
+    ClarificationRequest,
+    ControllerRequest,
+    ControllerResult,
+    ControllerResultStatus,
+    ExecutionBridgeKind,
+    SessionSummary,
+)
+from models.session import SessionMode
 from models.job import JobStatus
 from models.operation import OperationStatus
 from models.run import TaskLogEntry
@@ -43,6 +54,12 @@ class ShellState:
     active_task_id: str | None = None
     active_task_public_id: str | None = None
     active_skill_name: str | None = None
+    active_session_id: str | None = None
+    active_session_public_id: str | None = None
+    active_session_mode: SessionMode | None = None
+    active_session_title: str | None = None
+    active_session_target_summary: str | None = None
+    pending_clarification: ClarificationRequest | None = None
 
     @property
     def active_task_label(self) -> str | None:
@@ -51,6 +68,12 @@ class ShellState:
         if self.active_task_id is None:
             return None
         return self.active_task_id[:8]
+
+    @property
+    def active_session_label(self) -> str | None:
+        if self.active_session_public_id:
+            return self.active_session_public_id
+        return self.active_session_id
 
 
 def create_skill_service(settings: Settings | None = None) -> SkillService:
@@ -72,6 +95,8 @@ def build_prompt(shell_state: ShellState) -> str:
         return f"\ntask:{shell_state.active_task_label} > "
     if shell_state.active_skill_name:
         return f"\nskill:{shell_state.active_skill_name} > "
+    if shell_state.active_session_label and shell_state.active_session_mode is not None:
+        return f"\n{shell_state.active_session_mode.value}:{shell_state.active_session_label} > "
     return "\n> "
 
 
@@ -327,6 +352,7 @@ def handle_clear_command(
         return False
 
     session_state.reset()
+    shell_state.pending_clarification = None
     if presenter is not None or any(
         output is not None for output in (text_output, info_output, error_output, success_output)
     ):
@@ -624,6 +650,127 @@ def copy_session_state(target: SessionState, source: SessionState) -> None:
     target.history = list(source.history)
     target.compressed_summary = source.compressed_summary
     target.last_usage = dict(source.last_usage)
+
+
+def clear_active_session(shell_state: ShellState) -> None:
+    shell_state.active_session_id = None
+    shell_state.active_session_public_id = None
+    shell_state.active_session_mode = None
+    shell_state.active_session_title = None
+    shell_state.active_session_target_summary = None
+
+
+def bind_session_summary(shell_state: ShellState, summary: SessionSummary) -> None:
+    shell_state.active_session_id = summary.id
+    shell_state.active_session_public_id = summary.public_id
+    shell_state.active_session_mode = summary.mode
+    shell_state.active_session_title = summary.title
+    shell_state.active_session_target_summary = summary.target_summary
+
+
+def build_controller_request(
+    *,
+    question: str,
+    shell_state: ShellState,
+) -> ControllerRequest:
+    return ControllerRequest(
+        raw_input=question,
+        active_task_id=shell_state.active_task_id,
+        active_task_public_id=shell_state.active_task_public_id,
+        active_skill_name=shell_state.active_skill_name,
+        active_session_id=shell_state.active_session_id,
+        active_session_public_id=shell_state.active_session_public_id,
+        active_session_mode=shell_state.active_session_mode,
+        active_session_title=shell_state.active_session_title,
+        active_session_target_summary=shell_state.active_session_target_summary,
+        pending_clarification=shell_state.pending_clarification,
+    )
+
+
+def render_controller_result(
+    result: ControllerResult,
+    *,
+    ui: CliPresenter,
+) -> None:
+    if result.status == ControllerResultStatus.CLARIFICATION_REQUIRED:
+        if result.message:
+            ui.show_info(result.message)
+        return
+    if result.status == ControllerResultStatus.UNSUPPORTED:
+        if result.message:
+            ui.show_error(result.message)
+        return
+    if result.status == ControllerResultStatus.DELEGATED_TO_ADVANCED_COMMAND:
+        if result.message:
+            ui.show_info(result.message)
+        return
+
+    if result.session_summary is not None:
+        summary = result.session_summary
+        session_action = "Reused" if summary.reused else "Started"
+        lines = [
+            f"{session_action} session {summary.public_id}",
+            f"Title: {summary.title}",
+            f"Mode: {summary.mode.value}",
+            f"Status: {summary.status.value}",
+        ]
+        if summary.target_summary:
+            lines.append(f"Target: {summary.target_summary}")
+        ui.show_info("\n".join(lines))
+    elif result.message:
+        ui.show_info(result.message)
+
+
+async def execute_controller_bridge(
+    *,
+    result: ControllerResult,
+    shell_state: ShellState,
+    session_state: SessionState,
+    task_runner: TaskRunner,
+    skill_service: SkillService,
+    tool_executor: ToolExecutor,
+    settings: Settings,
+) -> None:
+    if result.execution_bridge is None:
+        return
+
+    reset_steps()
+    if result.execution_bridge.kind == ExecutionBridgeKind.LEGACY_BOUND_TASK:
+        result_payload = await task_runner.run_prompt(
+            task_id=shell_state.active_task_id,
+            question=result.execution_bridge.prompt_text,
+            session_state=session_state,
+            tool_executor=tool_executor,
+            settings=settings,
+            on_info=ColoredOutput.print_info,
+            on_error=ColoredOutput.print_error,
+        )
+    else:
+        if result.execution_bridge.kind == ExecutionBridgeKind.ACTIVE_SKILL_RUNTIME:
+            runtime_config = await skill_service.build_skill_runtime_config(
+                skill_name=shell_state.active_skill_name,
+                context_summary=session_state.context_summary,
+            )
+        else:
+            runtime_config = await skill_service.build_base_runtime_config(
+                context_summary=session_state.context_summary,
+            )
+        result_payload = await run_prompt_with_runtime(
+            question=result.execution_bridge.prompt_text,
+            runtime_config=runtime_config,
+            session_state=session_state,
+            tool_executor=tool_executor,
+            settings=settings,
+            on_info=ColoredOutput.print_info,
+            on_error=ColoredOutput.print_error,
+        )
+
+    text = result_payload["response"]
+    status = result_payload.get("status", "completed")
+    if status == "completed":
+        ColoredOutput.print_final_answer(text)
+    else:
+        ColoredOutput.print_error(text)
 
 
 async def run_prompt_with_runtime(
@@ -1418,6 +1565,8 @@ async def run_interactive_shell(
     finding_service: FindingService | None = None,
     evidence_service: EvidenceService | None = None,
     dashboard_service: DashboardService | None = None,
+    session_service: SessionService | None = None,
+    controller: AgentController | None = None,
     task_service: TaskService,
     run_service: RunService,
     checkpoint_service: CheckpointService | None = None,
@@ -1433,6 +1582,9 @@ async def run_interactive_shell(
     finding_service = finding_service or FindingService.from_settings(settings)
     evidence_service = evidence_service or EvidenceService.from_settings(settings)
     dashboard_service = dashboard_service or DashboardService.from_settings(settings)
+    session_service = session_service or SessionService.from_settings(settings)
+    controller = controller or AgentController.from_session_service(session_service)
+    ui = get_presenter()
     while True:
         try:
             question = input_func(build_prompt(shell_state)).strip()
@@ -1461,157 +1613,149 @@ async def run_interactive_shell(
             )
             session_state.reset()
             shell_state.active_skill_name = None
+            shell_state.pending_clarification = None
+            clear_active_session(shell_state)
             ColoredOutput.print_header("Session reset")
             continue
 
         if handle_clear_command(
             question,
             shell_state=shell_state,
-            session_state=session_state,
+                session_state=session_state,
         ):
-            continue
-
-        if handle_help_command(question):
-            continue
-
-        if handle_skill_command(
-            question,
-            shell_state=shell_state,
-            skill_service=skill_service,
-            operation_service=operation_service,
-            job_service=job_service,
-            workflow_service=workflow_service,
-            input_func=input_func,
-        ):
-            continue
-
-        if handle_operation_command(
-            question,
-            operation_service=operation_service,
-            planner_service=planner_service,
-            input_func=input_func,
-        ):
-            continue
-
-        if handle_planner_command(
-            question,
-            planner_service=planner_service,
-        ):
-            continue
-
-        if handle_job_command(
-            question,
-            job_service=job_service,
-            operation_service=operation_service,
-            input_func=input_func,
-        ):
-            continue
-
-        if handle_finding_command(
-            question,
-            finding_service=finding_service,
-            input_func=input_func,
-        ):
-            continue
-
-        if handle_evidence_command(
-            question,
-            evidence_service=evidence_service,
-            finding_service=finding_service,
-        ):
-            continue
-
-        if handle_dashboard_command(
-            question,
-            dashboard_service=dashboard_service,
-        ):
-            continue
-
-        if handle_task_command(
-            question,
-            shell_state=shell_state,
-            session_state=session_state,
-            task_service=task_service,
-            run_service=run_service,
-            checkpoint_service=checkpoint_service,
-            task_runner=task_runner,
-            skill_service=skill_service,
-        ):
-            continue
-
-        skill_shorthand = parse_skill_shorthand(question, skill_service=skill_service)
-        if skill_shorthand is not None:
-            skill_name, shorthand_prompt = skill_shorthand
-            if not shorthand_prompt:
-                ColoredOutput.print_error(f"Usage: /{skill_name} <prompt>")
-                continue
-            reset_steps()
-            try:
-                runtime_config = await skill_service.build_skill_runtime_config(
-                    skill_name=skill_name,
-                    context_summary=session_state.context_summary,
-                )
-                result = await run_prompt_with_runtime(
-                    question=shorthand_prompt,
-                    runtime_config=runtime_config,
-                    session_state=session_state,
-                    tool_executor=tool_executor,
-                    settings=settings,
-                    on_info=ColoredOutput.print_info,
-                    on_error=ColoredOutput.print_error,
-                )
-                text = result["response"]
-                status = result.get("status", "completed")
-                if status == "completed":
-                    ColoredOutput.print_final_answer(text)
-                else:
-                    ColoredOutput.print_error(text)
-            except Exception as exc:
-                ColoredOutput.print_error(str(exc))
             continue
 
         if not question:
             continue
 
-        reset_steps()
         try:
-            if shell_state.active_task_id is not None:
-                result = await task_runner.run_prompt(
-                    task_id=shell_state.active_task_id,
-                    question=question,
-                    session_state=session_state,
-                    tool_executor=tool_executor,
-                    settings=settings,
-                    on_info=ColoredOutput.print_info,
-                    on_error=ColoredOutput.print_error,
-                )
-            else:
-                if shell_state.active_skill_name is None:
-                    runtime_config = await skill_service.build_base_runtime_config(
-                        context_summary=session_state.context_summary,
-                    )
-                else:
-                    runtime_config = await skill_service.build_skill_runtime_config(
-                        skill_name=shell_state.active_skill_name,
-                        context_summary=session_state.context_summary,
-                    )
-                result = await run_prompt_with_runtime(
-                    question=question,
-                    runtime_config=runtime_config,
-                    session_state=session_state,
-                    tool_executor=tool_executor,
-                    settings=settings,
-                    on_info=ColoredOutput.print_info,
-                    on_error=ColoredOutput.print_error,
-                )
+            controller_result = controller.handle(
+                build_controller_request(question=question, shell_state=shell_state)
+            )
 
-            text = result["response"]
-            status = result.get("status", "completed")
+            if controller_result.status == ControllerResultStatus.DELEGATED_TO_ADVANCED_COMMAND:
+                shell_state.pending_clarification = None
 
-            if status == "completed":
-                ColoredOutput.print_final_answer(text)
+                if handle_help_command(question):
+                    continue
+
+                if handle_skill_command(
+                    question,
+                    shell_state=shell_state,
+                    skill_service=skill_service,
+                    operation_service=operation_service,
+                    job_service=job_service,
+                    workflow_service=workflow_service,
+                    input_func=input_func,
+                ):
+                    continue
+
+                if handle_operation_command(
+                    question,
+                    operation_service=operation_service,
+                    planner_service=planner_service,
+                    input_func=input_func,
+                ):
+                    continue
+
+                if handle_planner_command(
+                    question,
+                    planner_service=planner_service,
+                ):
+                    continue
+
+                if handle_job_command(
+                    question,
+                    job_service=job_service,
+                    operation_service=operation_service,
+                    input_func=input_func,
+                ):
+                    continue
+
+                if handle_finding_command(
+                    question,
+                    finding_service=finding_service,
+                    input_func=input_func,
+                ):
+                    continue
+
+                if handle_evidence_command(
+                    question,
+                    evidence_service=evidence_service,
+                    finding_service=finding_service,
+                ):
+                    continue
+
+                if handle_dashboard_command(
+                    question,
+                    dashboard_service=dashboard_service,
+                ):
+                    continue
+
+                if handle_task_command(
+                    question,
+                    shell_state=shell_state,
+                    session_state=session_state,
+                    task_service=task_service,
+                    run_service=run_service,
+                    checkpoint_service=checkpoint_service,
+                    task_runner=task_runner,
+                    skill_service=skill_service,
+                ):
+                    continue
+
+                skill_shorthand = parse_skill_shorthand(question, skill_service=skill_service)
+                if skill_shorthand is not None:
+                    skill_name, shorthand_prompt = skill_shorthand
+                    if not shorthand_prompt:
+                        ColoredOutput.print_error(f"Usage: /{skill_name} <prompt>")
+                        continue
+                    reset_steps()
+                    try:
+                        runtime_config = await skill_service.build_skill_runtime_config(
+                            skill_name=skill_name,
+                            context_summary=session_state.context_summary,
+                        )
+                        result = await run_prompt_with_runtime(
+                            question=shorthand_prompt,
+                            runtime_config=runtime_config,
+                            session_state=session_state,
+                            tool_executor=tool_executor,
+                            settings=settings,
+                            on_info=ColoredOutput.print_info,
+                            on_error=ColoredOutput.print_error,
+                        )
+                        text = result["response"]
+                        status = result.get("status", "completed")
+                        if status == "completed":
+                            ColoredOutput.print_final_answer(text)
+                        else:
+                            ColoredOutput.print_error(text)
+                    except Exception as exc:
+                        ColoredOutput.print_error(str(exc))
+                    continue
+
+                ui.show_error(f"Unknown command: {question}")
+                continue
+
+            if controller_result.status == ControllerResultStatus.CLARIFICATION_REQUIRED:
+                shell_state.pending_clarification = controller_result.clarification_request
             else:
-                ColoredOutput.print_error(text)
+                shell_state.pending_clarification = None
+
+            if controller_result.bind_session and controller_result.session_summary is not None:
+                bind_session_summary(shell_state, controller_result.session_summary)
+
+            render_controller_result(controller_result, ui=ui)
+            await execute_controller_bridge(
+                result=controller_result,
+                shell_state=shell_state,
+                session_state=session_state,
+                task_runner=task_runner,
+                skill_service=skill_service,
+                tool_executor=tool_executor,
+                settings=settings,
+            )
         except Exception as exc:
             ColoredOutput.print_error(str(exc))
 
@@ -1622,10 +1766,12 @@ async def main() -> None:
     shell_state = ShellState()
     operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
+    session_service = SessionService.from_settings(settings)
     task_service = TaskService.from_settings(settings)
     run_service = RunService.from_settings(settings)
     checkpoint_service = CheckpointService.from_settings(settings)
     skill_service = create_skill_service(settings)
+    controller = AgentController.from_session_service(session_service)
     task_runner = TaskRunner(
         task_service,
         run_service,
@@ -1645,6 +1791,8 @@ async def main() -> None:
         tool_executor=tool_executor,
         operation_service=operation_service,
         job_service=job_service,
+        session_service=session_service,
+        controller=controller,
         task_service=task_service,
         run_service=run_service,
         checkpoint_service=checkpoint_service,
@@ -1654,5 +1802,5 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    print("red-code 0.1.0 - type /help for available commands")
+    print("red-code 0.1.0 - describe what you want, or type /help for advanced help")
     asyncio.run(main())

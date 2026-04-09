@@ -212,6 +212,13 @@ class CliPresenter:
         return limited
 
     def _help_overview(self) -> Group:
+        examples = Table(box=ASCII_BOX, expand=True, header_style="bold")
+        examples.add_column("Example", style="bold green", no_wrap=True)
+        examples.add_column("What Happens", style="white")
+        examples.add_row("Summarize this repository structure", "Starts or reuses a normal session and runs the normal prompt flow.")
+        examples.add_row("Start a recon session for example.com", "Starts or reuses a redteam session and shows the session summary.")
+        examples.add_row("What did you already do?", "Looks up the current or requested session context.")
+
         topics = Table(box=ASCII_BOX, expand=True, header_style="bold")
         topics.add_column("Topic", style="bold cyan", no_wrap=True)
         topics.add_column("Purpose", style="white")
@@ -224,11 +231,12 @@ class CliPresenter:
         topics.add_row("task", "Task lifecycle, runs, checkpoints, and logs")
         topics.add_row("skill", "Skill activation, inspection, reload, and shorthand usage")
         return Group(
-            Text("Base mode uses the default prompt and full built-in tool set.", style="dim"),
+            Text("Describe what you want in plain language first. Slash commands are available for advanced and debug workflows.", style="dim"),
             Rule(style="grey50", characters="-"),
-            Panel(topics, title="Help Topics", border_style="bright_blue", box=ASCII_BOX),
+            Panel(examples, title="Natural-Language First", border_style="green", box=ASCII_BOX),
+            Panel(topics, title="Advanced Help Topics", border_style="bright_blue", box=ASCII_BOX),
             Text(
-                "Drill down with /help operation, /help job, /help finding, /help evidence.",
+                "Drill down with /help operation, /help job, /help finding, /help evidence for advanced command groups.",
                 style="dim",
             ),
             Text(
