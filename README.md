@@ -2,6 +2,7 @@
 
 `red-code` is a local Python CLI coding agent built around:
 
+- a controller-first natural-language entry flow
 - a LangChain tool-calling loop
 - a persisted task runtime
 - an explicit `SKILL.md` skill system
@@ -57,6 +58,14 @@ The repository now contains two parallel runtime families:
 ```
 
 ## Current CLI Commands
+
+Describe what you want in plain language first. Examples:
+
+- `Summarize this repository structure`
+- `Start a recon session for example.com`
+- `What did you already do?`
+
+Use slash commands for advanced and debug workflows. Legacy `/task` and `/operation` commands remain available for migration and explicit operator control, but they do not take over the default plain-language entry flow.
 
 - `/help`
 - `/help operation`
@@ -114,9 +123,9 @@ Use `latest` or `last` in task-facing commands to target the most recently updat
 - `/skill help`
 - `/skill-name <prompt>`
 
-`/help` now shows only top-level topics.
+`/help` now leads with natural-language examples and keeps command groups in advanced help topics.
 Use `/help operation`, `/help job`, `/help task`, and `/help skill` for detailed command help.
-`/clear` resets only the in-memory context and clears the screen while preserving any active task binding or active shell skill.
+`/clear` resets only the in-memory context and clears the screen while preserving any active session binding, active task binding, or active shell skill.
 
 ## Red-Team Runtime Status
 

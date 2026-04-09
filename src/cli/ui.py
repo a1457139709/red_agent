@@ -321,6 +321,7 @@ class CliPresenter:
         return Group(
             Text("Task help", style="dim"),
             Rule(style="grey50", characters="-"),
+            Text("Legacy advanced path: task commands remain available for migration and debugging, but plain-language requests now stay on the session-first entry flow.", style="dim"),
             self._command_panel("Task Commands", [
                 ("/task create", "Create a persisted task"),
                 ("/task list [status] [limit]", "List recent tasks"),

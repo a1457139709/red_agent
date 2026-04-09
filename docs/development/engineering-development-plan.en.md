@@ -43,6 +43,7 @@ It is still not aiming for:
 
 Already implemented:
 
+- controller-first natural-language entry for plain-text requests
 - local interactive CLI shell
 - Rich presenter-backed CLI output
 - hierarchical help with compact `/help` plus `/help task` and `/help skill`
@@ -78,6 +79,8 @@ User-local skills are supported under:
 ## Stable Architectural Rules
 
 ### 1. Base Runtime First
+
+Plain-text input now enters through the controller layer first. Advanced slash commands remain available, but they are no longer the primary product entry path.
 
 Normal ad-hoc chat runs in base mode:
 

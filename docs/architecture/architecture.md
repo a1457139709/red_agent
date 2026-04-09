@@ -4,6 +4,7 @@
 
 `red-code` is a local, single-user Python CLI coding agent. The runtime is organized around four always-on concerns:
 
+- controller-first natural-language entry
 - interactive shell workflows
 - explicit skill overlays
 - persisted task execution
@@ -40,7 +41,7 @@ This document explains the implemented runtime as it exists today. For the appro
 
 ### 1. Shell and Presentation
 
-`src/main.py` is the composition root. It builds settings, services, the tool executor, and the interactive loop.
+`src/main.py` is the composition root. It builds settings, services, the controller, the tool executor, and the interactive loop.
 
 The shell owns three pieces of session-local routing state:
 
@@ -48,7 +49,7 @@ The shell owns three pieces of session-local routing state:
 - `active_task_public_id`
 - `active_skill_name`
 
-`run_interactive_shell(...)` dispatches:
+`run_interactive_shell(...)` now routes plain-text input through the controller first, then dispatches advanced slash commands as fallback. It still handles:
 
 - session commands such as `/clear`, `/reset`, `/exit`, and `/quit`
 - task commands under `/task ...`

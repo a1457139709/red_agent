@@ -90,5 +90,5 @@ def test_task_cli_uses_public_ids_for_render_and_binding(tmp_path):
     assert any(f"Created task {task.public_id}" in message for message in successes)
     assert any("Task ID:" in message and task.public_id in message for message in outputs)
     assert shell_state.active_task_public_id == task.public_id
-    assert build_prompt(shell_state) == f"\ntask:{task.public_id} > "
+    assert build_prompt(shell_state) == "\n> "
     assert not errors

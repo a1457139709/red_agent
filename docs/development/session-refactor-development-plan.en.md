@@ -160,6 +160,39 @@ No compatibility goal:
 
 - do not preserve the old storage mental model if it conflicts with the target structure
 
+## Replacement Milestone for `task` and `operation`
+
+The replacement of `task` and `operation` happens in stages.
+
+### Phase 1: Architecture Replacement
+
+In Phase 1:
+
+- `session` replaces `task` and `operation` as the target top-level product concept
+- `TaskService` and `OperationService` become legacy services
+- new top-level contracts must be written against `session`, not against legacy models
+
+This is the point where the old top-level model is replaced in architecture terms.
+
+### Phase 2: Product Entry Replacement
+
+In Phase 2:
+
+- the primary runtime entry path moves to natural language plus the Agent Controller
+- `/task` and `/operation` are demoted to advanced or debug-only paths
+- the main product workflow no longer depends on legacy top-level commands
+
+This is the point where the old top-level model is replaced in product UX terms.
+
+### Phase 3 and Later: Physical Cleanup
+
+From Phase 3 onward:
+
+- once the new runtime path is stable, legacy top-level code paths should be removed physically
+- deletion may proceed only after the controller-first and foreground-execution paths are established
+
+This is the point where the old top-level model should disappear from the codebase, not just from the target design.
+
 ## Phase Overview
 
 Implementation should follow this order:

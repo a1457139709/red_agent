@@ -224,7 +224,7 @@ def test_handle_clear_command_preserves_skill_and_task_binding():
     assert shell_state.active_task_id == "task-1"
     assert shell_state.active_task_public_id == "T0001"
     assert shell_state.active_skill_name == "security-audit"
-    assert build_prompt(shell_state) == "\ntask:T0001 > "
+    assert build_prompt(shell_state) == "\nskill:security-audit > "
     assert cleared == []
 
 

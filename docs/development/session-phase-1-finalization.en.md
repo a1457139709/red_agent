@@ -31,6 +31,20 @@ This means:
 - the main unresolved design choices are closed
 - coding can begin without reopening the product model
 
+## Replacement Position of Phase 1
+
+Phase 1 is the point where `task` and `operation` are replaced in **architecture terms**.
+
+After Phase 1:
+
+- `session` is the only valid target top-level product model
+- `task` and `operation` may still exist in code temporarily
+- but they are legacy and no longer define the future runtime contract
+
+Phase 1 does **not** require full removal of legacy command paths from the running product surface.
+
+That replacement is completed in product-entry terms during Phase 2.
+
 ## Final Decisions
 
 ## 1. Top-Level Product Entity
@@ -480,6 +494,19 @@ During Phase 1:
 - `Operation` is legacy
 
 They may remain in the repository temporarily, but they are no longer part of the target architecture contract.
+
+### Replacement Meaning in Phase 1
+
+In Phase 1, replacement means:
+
+- replaced in domain model
+- replaced in planning documents
+- replaced in service contract direction
+
+It does not yet mean:
+
+- physically deleted everywhere
+- removed from all temporary operator paths
 
 ### Allowed Temporary Migration Utilities
 

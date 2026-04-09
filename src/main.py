@@ -91,8 +91,6 @@ def create_skill_service(settings: Settings | None = None) -> SkillService:
 
 
 def build_prompt(shell_state: ShellState) -> str:
-    if shell_state.active_task_label:
-        return f"\ntask:{shell_state.active_task_label} > "
     if shell_state.active_skill_name:
         return f"\nskill:{shell_state.active_skill_name} > "
     if shell_state.active_session_label and shell_state.active_session_mode is not None:
@@ -675,8 +673,6 @@ def build_controller_request(
 ) -> ControllerRequest:
     return ControllerRequest(
         raw_input=question,
-        active_task_id=shell_state.active_task_id,
-        active_task_public_id=shell_state.active_task_public_id,
         active_skill_name=shell_state.active_skill_name,
         active_session_id=shell_state.active_session_id,
         active_session_public_id=shell_state.active_session_public_id,
@@ -726,7 +722,6 @@ async def execute_controller_bridge(
     result: ControllerResult,
     shell_state: ShellState,
     session_state: SessionState,
-    task_runner: TaskRunner,
     skill_service: SkillService,
     tool_executor: ToolExecutor,
     settings: Settings,
@@ -735,35 +730,24 @@ async def execute_controller_bridge(
         return
 
     reset_steps()
-    if result.execution_bridge.kind == ExecutionBridgeKind.LEGACY_BOUND_TASK:
-        result_payload = await task_runner.run_prompt(
-            task_id=shell_state.active_task_id,
-            question=result.execution_bridge.prompt_text,
-            session_state=session_state,
-            tool_executor=tool_executor,
-            settings=settings,
-            on_info=ColoredOutput.print_info,
-            on_error=ColoredOutput.print_error,
+    if result.execution_bridge.kind == ExecutionBridgeKind.ACTIVE_SKILL_RUNTIME:
+        runtime_config = await skill_service.build_skill_runtime_config(
+            skill_name=shell_state.active_skill_name,
+            context_summary=session_state.context_summary,
         )
     else:
-        if result.execution_bridge.kind == ExecutionBridgeKind.ACTIVE_SKILL_RUNTIME:
-            runtime_config = await skill_service.build_skill_runtime_config(
-                skill_name=shell_state.active_skill_name,
-                context_summary=session_state.context_summary,
-            )
-        else:
-            runtime_config = await skill_service.build_base_runtime_config(
-                context_summary=session_state.context_summary,
-            )
-        result_payload = await run_prompt_with_runtime(
-            question=result.execution_bridge.prompt_text,
-            runtime_config=runtime_config,
-            session_state=session_state,
-            tool_executor=tool_executor,
-            settings=settings,
-            on_info=ColoredOutput.print_info,
-            on_error=ColoredOutput.print_error,
+        runtime_config = await skill_service.build_base_runtime_config(
+            context_summary=session_state.context_summary,
         )
+    result_payload = await run_prompt_with_runtime(
+        question=result.execution_bridge.prompt_text,
+        runtime_config=runtime_config,
+        session_state=session_state,
+        tool_executor=tool_executor,
+        settings=settings,
+        on_info=ColoredOutput.print_info,
+        on_error=ColoredOutput.print_error,
+    )
 
     text = result_payload["response"]
     status = result_payload.get("status", "completed")
@@ -1751,7 +1735,6 @@ async def run_interactive_shell(
                 result=controller_result,
                 shell_state=shell_state,
                 session_state=session_state,
-                task_runner=task_runner,
                 skill_service=skill_service,
                 tool_executor=tool_executor,
                 settings=settings,

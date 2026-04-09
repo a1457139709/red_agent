@@ -53,6 +53,12 @@ Development docs describe planning, review, and iteration guidance.
 8. `development/session-phase-1-finalization.en.md`
    Finalized Phase 1 baseline that freezes the `Session` model, statuses, persistence direction,
    repository and service boundaries, and the no-compatibility rule for `task` and `operation`.
+9. `development/session-phase-2-implementation-checklist.en.md`
+   Implementation-ready checklist for Phase 2, covering the Agent Controller layer, CLI adapter
+   split, intent routing, clarification flow, and the demotion of slash commands from the primary UX.
+10. `development/session-phase-2-finalization.en.md`
+   Finalized Phase 2 baseline that freezes the controller boundary, intent model, clarification
+   policy, CLI role, and the rewrite requirement for `src/main.py`.
 
 ## Read These First
 

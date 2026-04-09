@@ -33,7 +33,6 @@ class ClarificationKind(StrEnum):
 class ExecutionBridgeKind(StrEnum):
     BASE_RUNTIME = "base_runtime"
     ACTIVE_SKILL_RUNTIME = "active_skill_runtime"
-    LEGACY_BOUND_TASK = "legacy_bound_task"
 
 
 @dataclass(slots=True)
@@ -85,8 +84,6 @@ class ExecutionBridge:
 @dataclass(slots=True)
 class ControllerRequest:
     raw_input: str
-    active_task_id: str | None = None
-    active_task_public_id: str | None = None
     active_skill_name: str | None = None
     active_session_id: str | None = None
     active_session_public_id: str | None = None

@@ -52,14 +52,6 @@ class AgentController:
                 mode=SessionMode.REDTEAM,
                 execute=False,
             )
-        if request.active_task_id is not None:
-            return ControllerResult.handled(
-                intent=classification.intent,
-                execution_bridge=ExecutionBridge(
-                    kind=ExecutionBridgeKind.LEGACY_BOUND_TASK,
-                    prompt_text=request.raw_input,
-                ),
-            )
         return self._handle_session_request(
             request=request,
             classification=classification,
