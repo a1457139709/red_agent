@@ -921,6 +921,7 @@ def handle_planner_command(
                 plan=bundle.plan,
                 operation_label=operation.public_id or operation.id,
                 proposals=bundle.proposals,
+                memory_writeback=bundle.memory_writeback,
             )
             return True
 

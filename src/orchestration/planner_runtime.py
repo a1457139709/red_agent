@@ -82,6 +82,21 @@ class PlannerRuntimeResult:
     proposals: list[PlannerProposal]
 
 
+@dataclass(frozen=True, slots=True)
+class PlannerDerivedMemoryCandidate:
+    entry_type: str
+    key: str
+    value: dict[str, Any]
+    summary: str
+    source_job_identifier: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PlannerDerivedMemoryResult:
+    candidates: list[PlannerDerivedMemoryCandidate]
+    skipped_count: int = 0
+
+
 def _truncate_text(value: str, *, limit: int) -> str:
     if len(value) <= limit:
         return value
@@ -163,6 +178,10 @@ def _tls_target_from_value(value: str) -> str | None:
     if host is None:
         return None
     return f"{host}:443"
+
+
+def _normalize_value_signature(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
 def _ordered_unique(items: Iterable[str]) -> list[str]:
@@ -302,6 +321,38 @@ class PlannerRuntime:
         ):
             return model_result
         return self._build_fallback_plan(context)
+
+    def derive_memory_candidates(self, operation_identifier: str) -> PlannerDerivedMemoryResult:
+        context = self.build_context(operation_identifier)
+        return self.derive_memory_candidates_from_context(context)
+
+    def derive_memory_candidates_from_context(self, context: PlannerContext) -> PlannerDerivedMemoryResult:
+        candidates: list[PlannerDerivedMemoryCandidate] = []
+        seen: set[tuple[str, str, str]] = set()
+        skipped_count = 0
+
+        def append_candidate(candidate: PlannerDerivedMemoryCandidate | None) -> None:
+            nonlocal skipped_count
+            if candidate is None:
+                return
+            signature = (
+                candidate.entry_type,
+                candidate.key,
+                _normalize_value_signature(candidate.value),
+            )
+            if signature in seen:
+                skipped_count += 1
+                return
+            seen.add(signature)
+            candidates.append(candidate)
+
+        for job in context.successful_jobs:
+            append_candidate(self._candidate_from_job(job))
+        for evidence in context.evidence_items:
+            append_candidate(self._candidate_from_evidence(evidence))
+        for finding in context.open_findings:
+            append_candidate(self._candidate_from_finding(finding))
+        return PlannerDerivedMemoryResult(candidates=candidates, skipped_count=skipped_count)
 
     def build_operation_context_summary(self, operation_identifier: str) -> OperationContextSummary:
         context = self.build_context(operation_identifier)
@@ -895,6 +946,133 @@ class PlannerRuntime:
             if host:
                 return host
         return None
+
+    def _candidate_from_job(self, job: Job) -> PlannerDerivedMemoryCandidate | None:
+        source_type_map = {
+            "dns_lookup": "host",
+            "http_probe": "web",
+            "tls_inspect": "tls",
+            "port_scan": "host",
+            "banner_grab": "host",
+        }
+        source_type = source_type_map.get(job.job_type)
+        if source_type is None:
+            return None
+        return self._build_memory_candidate(
+            source_type=source_type,
+            origin_kind="job",
+            origin_ref=job.public_id or job.id,
+            target_ref=job.target_ref,
+            source_job_identifier=job.id,
+        )
+
+    def _candidate_from_evidence(self, evidence: Evidence) -> PlannerDerivedMemoryCandidate | None:
+        source_type_map = {
+            "dns_response": "host",
+            "http_response": "web",
+            "tls_certificate": "tls",
+            "port_scan": "host",
+            "banner": "host",
+        }
+        source_type = source_type_map.get(evidence.evidence_type)
+        if source_type is None:
+            return None
+        return self._build_memory_candidate(
+            source_type=source_type,
+            origin_kind="evidence",
+            origin_ref=evidence.public_id or evidence.id,
+            target_ref=evidence.target_ref,
+            source_job_identifier=evidence.job_id,
+        )
+
+    def _candidate_from_finding(self, finding: Finding) -> PlannerDerivedMemoryCandidate | None:
+        source_type: str | None
+        if finding.finding_type.startswith("tls_") or self._is_tls_target(finding.target_ref):
+            source_type = "tls"
+        elif _looks_like_url(finding.target_ref):
+            source_type = "web"
+        else:
+            host = _host_from_target(finding.target_ref)
+            source_type = "host" if host is not None else None
+        if source_type is None:
+            return None
+        return self._build_memory_candidate(
+            source_type=source_type,
+            origin_kind="finding",
+            origin_ref=finding.public_id or finding.id,
+            target_ref=finding.target_ref,
+            source_job_identifier=finding.source_job_id,
+        )
+
+    def _build_memory_candidate(
+        self,
+        *,
+        source_type: str,
+        origin_kind: str,
+        origin_ref: str,
+        target_ref: str,
+        source_job_identifier: str | None,
+    ) -> PlannerDerivedMemoryCandidate | None:
+        if source_type == "host":
+            host = _host_from_target(target_ref)
+            if host is None:
+                return None
+            return PlannerDerivedMemoryCandidate(
+                entry_type="host",
+                key=host,
+                value={
+                    "host": host,
+                    "target": target_ref,
+                    "origin_kind": origin_kind,
+                    "origin_ref": origin_ref,
+                    "source_type": source_type,
+                },
+                summary=f"Planner recorded {host} as a stable host target.",
+                source_job_identifier=source_job_identifier,
+            )
+        if source_type == "web":
+            host = _host_from_target(target_ref)
+            if host is None:
+                return None
+            url = target_ref if _looks_like_url(target_ref) else f"https://{host}"
+            return PlannerDerivedMemoryCandidate(
+                entry_type="web",
+                key=host,
+                value={
+                    "host": host,
+                    "url": url,
+                    "origin_kind": origin_kind,
+                    "origin_ref": origin_ref,
+                    "source_type": source_type,
+                },
+                summary=f"Planner recorded {host} as a stable web target.",
+                source_job_identifier=source_job_identifier,
+            )
+        if source_type == "tls":
+            tls_target = _tls_target_from_value(target_ref)
+            if tls_target is None:
+                return None
+            host = _host_from_target(tls_target)
+            if host is None:
+                return None
+            return PlannerDerivedMemoryCandidate(
+                entry_type="tls",
+                key=tls_target,
+                value={
+                    "host": host,
+                    "target": tls_target,
+                    "origin_kind": origin_kind,
+                    "origin_ref": origin_ref,
+                    "source_type": source_type,
+                },
+                summary=f"Planner recorded {host} as a stable TLS-relevant target.",
+                source_job_identifier=source_job_identifier,
+            )
+        return None
+
+    def _is_tls_target(self, target_ref: str) -> bool:
+        target = target_ref.strip().lower()
+        return target.startswith("https://") or target.endswith(":443")
 
     def _planner_system_prompt(self) -> str:
         tool_names = ", ".join(sorted(self.security_tool_executor.tool_names))

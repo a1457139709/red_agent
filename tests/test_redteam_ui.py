@@ -7,6 +7,8 @@ from models.operation import Operation, OperationStatus
 from models.operation_event import OperationEvent, OperationEventLevel, OperationEventType
 from models.planner import (
     OperationContextSummary,
+    PlannerMemoryWritebackStatus,
+    PlannerMemoryWritebackSummary,
     PlannerPlan,
     PlannerProposal,
     PlannerProposalKind,
@@ -138,7 +140,16 @@ def test_presenter_renders_operation_job_finding_evidence_and_dashboard_views():
         rationale="Out of scope.",
         skip_reason="Target is explicitly denied by the scope policy.",
     )
-    presenter.show_planner_plan(plan=plan, operation_label=operation.public_id, proposals=[proposal, blocked])
+    presenter.show_planner_plan(
+        plan=plan,
+        operation_label=operation.public_id,
+        proposals=[proposal, blocked],
+        memory_writeback=PlannerMemoryWritebackSummary(
+            status=PlannerMemoryWritebackStatus.SUCCEEDED,
+            created_count=2,
+            skipped_count=1,
+        ),
+    )
     presenter.show_operation_context_summary(
         OperationContextSummary(
             operation_id=operation.public_id,
@@ -169,5 +180,6 @@ def test_presenter_renders_operation_job_finding_evidence_and_dashboard_views():
     assert "Dashboard Summary" in merged
     assert "Recent Failed / Timed-Out / Blocked Jobs" in merged
     assert "Planner Plan" in merged and "PLN0001" in merged
+    assert "Memory Write-back:" in merged and "created 2, skipped 1" in merged
     assert "Planner Proposals" in merged
     assert "Operation Context Summary" in merged

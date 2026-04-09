@@ -52,12 +52,13 @@ def build_planner_service(settings):
     storage = SQLiteStorage(settings.sqlite_path)
     operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
+    memory_service = MemoryService.from_settings(settings)
     runtime = PlannerRuntime(
         operation_service=operation_service,
         job_service=job_service,
         evidence_service=EvidenceService.from_settings(settings),
         finding_service=FindingService.from_settings(settings),
-        memory_service=MemoryService.from_settings(settings),
+        memory_service=memory_service,
         settings=settings,
         model_factory=lambda _settings: FakePlannerModel(),
     )
@@ -66,6 +67,7 @@ def build_planner_service(settings):
         runtime=runtime,
         operation_service=operation_service,
         job_service=job_service,
+        memory_service=memory_service,
         settings=settings,
     )
 
@@ -332,6 +334,7 @@ def test_planner_commands_plan_and_apply(tmp_path):
     assert any("Planner Plan" in message and bundle.plan.public_id in message for message in outputs)
     assert any("Planner Proposals" in message for message in outputs)
     assert any("Skipped / Blocked Proposals" in message for message in outputs)
+    assert any("Memory Write-back:" in message and "created 0, skipped 0" in message for message in outputs)
     assert any(f"Applied 1 planner proposal(s) from {bundle.plan.public_id}" in message for message in successes)
     assert not errors
 

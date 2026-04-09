@@ -20,7 +20,14 @@ from models.finding import Finding
 from models.job import Job
 from models.operation import Operation
 from models.operation_event import OperationEvent
-from models.planner import OperationContextSummary, PlannerPlan, PlannerProposal, PlannerProposalKind
+from models.planner import (
+    OperationContextSummary,
+    PlannerMemoryWritebackStatus,
+    PlannerMemoryWritebackSummary,
+    PlannerPlan,
+    PlannerProposal,
+    PlannerProposalKind,
+)
 from models.run import Run, TaskLogEntry
 from models.skill import LoadedSkill
 from models.scope_policy import ScopePolicy
@@ -788,7 +795,16 @@ class CliPresenter:
         plan: PlannerPlan,
         operation_label: str,
         proposals: list[PlannerProposal],
+        memory_writeback: PlannerMemoryWritebackSummary | None = None,
     ) -> None:
+        memory_writeback_label = "-"
+        if memory_writeback is not None:
+            if memory_writeback.status == PlannerMemoryWritebackStatus.SUCCEEDED:
+                memory_writeback_label = (
+                    f"created {memory_writeback.created_count}, skipped {memory_writeback.skipped_count}"
+                )
+            else:
+                memory_writeback_label = f"failed: {memory_writeback.error_message or 'unknown error'}"
         summary = Panel(
             self._detail_table([
                 ("Plan ID", plan.public_id),
@@ -797,6 +813,7 @@ class CliPresenter:
                 ("Planning Mode", plan.planning_mode),
                 ("Planner Source", plan.planner_source.value),
                 ("Model", plan.model_name or "-"),
+                ("Memory Write-back", memory_writeback_label),
                 ("Summary", plan.summary),
                 ("Rationale", plan.rationale),
             ]),

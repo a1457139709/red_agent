@@ -4,11 +4,19 @@ from dataclasses import dataclass
 
 from agent.settings import Settings, get_settings
 from app.job_service import JobService
+from app.memory_service import MemoryService
 from app.operation_service import OperationService
 from models.job import Job
-from models.planner import PlannerPlan, PlannerPlanStatus, PlannerProposal, PlannerProposalApplyStatus
+from models.planner import (
+    PlannerMemoryWritebackStatus,
+    PlannerMemoryWritebackSummary,
+    PlannerPlan,
+    PlannerPlanStatus,
+    PlannerProposal,
+    PlannerProposalApplyStatus,
+)
 from models.run import utc_now_iso
-from orchestration.planner_runtime import PlannerRuntime
+from orchestration.planner_runtime import PlannerDerivedMemoryCandidate, PlannerRuntime
 from storage.repositories.planner import PlannerRepository
 from storage.sqlite import SQLiteStorage
 
@@ -17,6 +25,7 @@ from storage.sqlite import SQLiteStorage
 class PlannerPlanBundle:
     plan: PlannerPlan
     proposals: list[PlannerProposal]
+    memory_writeback: PlannerMemoryWritebackSummary | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,12 +43,14 @@ class PlannerService:
         runtime: PlannerRuntime,
         operation_service: OperationService,
         job_service: JobService,
+        memory_service: MemoryService,
         settings: Settings,
     ) -> None:
         self.repository = repository
         self.runtime = runtime
         self.operation_service = operation_service
         self.job_service = job_service
+        self.memory_service = memory_service
         self.settings = settings
 
     @classmethod
@@ -53,6 +64,7 @@ class PlannerService:
             runtime=PlannerRuntime.from_settings(settings),
             operation_service=operation_service,
             job_service=job_service,
+            memory_service=MemoryService.from_settings(settings),
             settings=settings,
         )
 
@@ -73,7 +85,8 @@ class PlannerService:
             proposal.plan_id = plan.id
             proposals.append(proposal)
         self.repository.create_plan(plan, proposals)
-        return PlannerPlanBundle(plan=plan, proposals=proposals)
+        memory_writeback = self._write_back_memory_candidates(result.context.operation.id)
+        return PlannerPlanBundle(plan=plan, proposals=proposals, memory_writeback=memory_writeback)
 
     def get_plan_bundle(self, identifier: str) -> PlannerPlanBundle:
         plan = self.repository.get_plan(identifier)
@@ -149,6 +162,43 @@ class PlannerService:
 
     def build_operation_context_summary(self, operation_identifier: str):
         return self.runtime.build_operation_context_summary(operation_identifier)
+
+    def _write_back_memory_candidates(self, operation_identifier: str) -> PlannerMemoryWritebackSummary:
+        created_count = 0
+        skipped_count = 0
+        try:
+            result = self.runtime.derive_memory_candidates(operation_identifier)
+            for candidate in result.candidates:
+                if self._persist_candidate(operation_identifier, candidate):
+                    created_count += 1
+            skipped_count = result.skipped_count
+            return PlannerMemoryWritebackSummary(
+                status=PlannerMemoryWritebackStatus.SUCCEEDED,
+                created_count=created_count,
+                skipped_count=skipped_count,
+            )
+        except Exception as exc:
+            return PlannerMemoryWritebackSummary(
+                status=PlannerMemoryWritebackStatus.FAILED,
+                created_count=created_count,
+                skipped_count=skipped_count,
+                error_message=str(exc),
+            )
+
+    def _persist_candidate(
+        self,
+        operation_identifier: str,
+        candidate: PlannerDerivedMemoryCandidate,
+    ) -> bool:
+        self.memory_service.create_memory_entry(
+            operation_identifier=operation_identifier,
+            entry_type=candidate.entry_type,
+            key=candidate.key,
+            value=dict(candidate.value),
+            summary=candidate.summary,
+            source_job_identifier=candidate.source_job_identifier,
+        )
+        return True
 
     def _resolve_selection(
         self,

@@ -32,6 +32,11 @@ class PlannerProposalApplyStatus(StrEnum):
     SKIPPED = "skipped"
 
 
+class PlannerMemoryWritebackStatus(StrEnum):
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
 @dataclass(slots=True)
 class PlannerPlan:
     id: str
@@ -213,3 +218,11 @@ class OperationContextSummary:
     evidence_summary: str
     memory_summary: str
     next_step_hint: str
+
+
+@dataclass(frozen=True, slots=True)
+class PlannerMemoryWritebackSummary:
+    status: PlannerMemoryWritebackStatus
+    created_count: int
+    skipped_count: int
+    error_message: str | None = None
