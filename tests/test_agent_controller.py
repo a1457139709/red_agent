@@ -145,6 +145,76 @@ def test_agent_controller_returns_legacy_bridge_for_active_task(tmp_path):
     assert result.execution_bridge.kind == ExecutionBridgeKind.LEGACY_BOUND_TASK
 
 
+def test_agent_controller_active_task_does_not_override_record_lookup_or_redteam_startup(tmp_path):
+    settings = build_settings(tmp_path)
+    session_service = SessionService.from_settings(settings)
+    controller = AgentController.from_session_service(session_service)
+    session = session_service.create_session(
+        title="Current",
+        goal="Track current work",
+        mode="normal",
+        status="active",
+    )
+
+    record_result = controller.handle(
+        ControllerRequest(
+            raw_input="What did you already do?",
+            active_task_id="task-1",
+            active_task_public_id="T0001",
+            active_session_id=session.id,
+            active_session_public_id=session.public_id,
+            active_session_mode=session.mode,
+        )
+    )
+    redteam_result = controller.handle(
+        ControllerRequest(
+            raw_input="Start a recon session for example.com",
+            active_task_id="task-1",
+            active_task_public_id="T0001",
+        )
+    )
+    clarification_result = controller.handle(
+        ControllerRequest(
+            raw_input="scan this host",
+            active_task_id="task-1",
+            active_task_public_id="T0001",
+        )
+    )
+
+    assert record_result.intent == ControllerIntent.RECORD_LOOKUP_REQUEST
+    assert record_result.execution_bridge is None
+    assert redteam_result.intent == ControllerIntent.REDTEAM_REQUEST
+    assert redteam_result.execution_bridge is None
+    assert clarification_result.status == ControllerResultStatus.CLARIFICATION_REQUIRED
+    assert clarification_result.execution_bridge is None
+
+
+def test_agent_controller_clarification_preserves_all_resolved_targets_in_execution_prompt(tmp_path):
+    settings = build_settings(tmp_path)
+    session_service = SessionService.from_settings(settings)
+    controller = AgentController.from_session_service(session_service)
+
+    first = controller.handle(ControllerRequest(raw_input="scan this host"))
+    resolved = controller.handle(
+        ControllerRequest(
+            raw_input="Use example.com and 10.0.0.1 for a one-off check",
+            pending_clarification=first.clarification_request,
+        )
+    )
+
+    assert first.status == ControllerResultStatus.CLARIFICATION_REQUIRED
+    assert resolved.status == ControllerResultStatus.HANDLED
+    assert resolved.execution_bridge is not None
+    assert resolved.execution_bridge.kind == ExecutionBridgeKind.BASE_RUNTIME
+    assert resolved.execution_bridge.prompt_text.startswith("scan this host\nTargets:\n")
+    assert "- domain: example.com" in resolved.execution_bridge.prompt_text
+    assert "- ip: 10.0.0.1" in resolved.execution_bridge.prompt_text
+    assert resolved.session_summary is not None
+    assert resolved.session_summary.target_summary is not None
+    assert "example.com" in resolved.session_summary.target_summary
+    assert "10.0.0.1" in resolved.session_summary.target_summary
+
+
 def test_render_controller_result_uses_callback_presenter(tmp_path):
     outputs = []
     session_service = SessionService.from_settings(build_settings(tmp_path))

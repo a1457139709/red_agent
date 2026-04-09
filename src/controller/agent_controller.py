@@ -41,14 +41,6 @@ class AgentController:
                 message=classification.unsupported_reason
                 or "I couldn't route that request."
             )
-        if request.active_task_id is not None:
-            return ControllerResult.handled(
-                intent=classification.intent,
-                execution_bridge=ExecutionBridge(
-                    kind=ExecutionBridgeKind.LEGACY_BOUND_TASK,
-                    prompt_text=request.raw_input,
-                ),
-            )
         if classification.intent == ControllerIntent.CLARIFICATION_REQUIRED:
             return self._build_clarification_result(request.raw_input, classification)
         if classification.intent == ControllerIntent.RECORD_LOOKUP_REQUEST:
@@ -59,6 +51,14 @@ class AgentController:
                 classification=classification,
                 mode=SessionMode.REDTEAM,
                 execute=False,
+            )
+        if request.active_task_id is not None:
+            return ControllerResult.handled(
+                intent=classification.intent,
+                execution_bridge=ExecutionBridge(
+                    kind=ExecutionBridgeKind.LEGACY_BOUND_TASK,
+                    prompt_text=request.raw_input,
+                ),
             )
         return self._handle_session_request(
             request=request,
@@ -275,6 +275,7 @@ class AgentController:
     ) -> str:
         if not targets:
             return raw_request
-        if any(target.value in raw_request for target in targets):
+        if all(target.value in raw_request for target in targets):
             return raw_request
-        return raw_request.rstrip() + f"\nTarget: {targets[0].value}"
+        target_lines = [f"- {target.kind.value}: {target.value}" for target in targets]
+        return raw_request.rstrip() + "\nTargets:\n" + "\n".join(target_lines)
