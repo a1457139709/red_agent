@@ -144,10 +144,9 @@ Phase 2 through Phase 7 currently deliver:
 - CLI inspection and lifecycle flows for `/operation`, `/job`, `/finding`, `/evidence`, and `/dashboard`
 - persisted planner plans and proposal application flows for `/planner`
 - `/operation resume` context summaries built from structured state rather than transcript replay
+- planner write-back of newly derived stable facts into structured memory
 
 The current runtime still intentionally does not yet deliver:
-
-- planner write-back of newly derived stable facts into structured memory
 
 - CLI-triggered export flows
 - planner-driven use of the structured evidence and finding store

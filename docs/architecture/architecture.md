@@ -11,6 +11,8 @@
 
 The repository also contains a parallel v2 red-team runtime layer centered on persisted operations, jobs, scope-aware admission, and operation-level audit events.
 
+That task-and-operation split describes the current coexistence state only. The approved target architecture now converges on a single top-level `session` model, with `task` and `operation` treated as legacy top-level runtime families during the migration window.
+
 The implementation is local-first. State lives under `.red-code/`, the agent talks to an OpenAI-compatible chat model through LangChain, and there is still no server or daemon in the current design. The v2 runtime now includes an in-process scheduler/worker foundation for durable job execution.
 
 One naming detail is worth calling out: the product is branded as `red-code`, but the Python package name in `pyproject.toml` is still `mini-claude-code`.
@@ -33,6 +35,8 @@ src/
 ```
 
 ## Runtime Boundaries
+
+This document explains the implemented runtime as it exists today. For the approved forward direction, use `docs/architecture/session-target-architecture.md` and the Phase 1 session refactor documents under `docs/development/`.
 
 ### 1. Shell and Presentation
 

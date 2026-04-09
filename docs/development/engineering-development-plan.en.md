@@ -1,3 +1,13 @@
+# RETIRED DOCUMENT
+
+This development plan is retained for historical context only. It is superseded by the session-domain planning and finalization documents:
+
+- [Session Refactor Development Plan](D:\Project\Python\Agent\docs\development\session-refactor-development-plan.en.md)
+- [Phase 1 Domain and Service Contract](D:\Project\Python\Agent\docs\development\session-phase-1-domain-and-service-contract.en.md)
+- [Phase 1 Finalization](D:\Project\Python\Agent\docs\development\session-phase-1-finalization.en.md)
+
+Do not use this document as the forward-looking product contract for top-level runtime modeling.
+
 # Engineering Development Plan
 
 ## Purpose
@@ -9,6 +19,8 @@ It should stay aligned with the actual Python codebase and answer:
 - what is already implemented
 - what architectural rules now hold
 - what the next development phase should be
+
+This document remains useful as a summary of the task-centric runtime history, but it no longer defines the target top-level product model.
 
 ## Current Product Direction
 
@@ -165,6 +177,8 @@ Completed:
 
 ## Next Phase
 
+The next architecture reset is the session-centric refactor, not additional long-term investment in `task` as the permanent top-level user concept.
+
 ### Phase 5: Better Task Ergonomics Beyond Identity
 
 Completed:
@@ -189,9 +203,9 @@ Completed:
   - `/skill help`
 - removal of the old plain-string CLI rendering path from `src/main.py`
 
-### Phase 6: Safer Cybersecurity Skill Expansion
+### Legacy Roadmap Continuation: Safer Cybersecurity Skill Expansion
 
-This is now the next implementation focus.
+This remains a useful runtime hardening direction inside the current codebase, but the approved top-level product direction is now the session refactor plan.
 
 Recommended order:
 

@@ -1,3 +1,13 @@
+# RETIRED DOCUMENT
+
+This specification is retained for historical context only. It is superseded by the session-domain planning and finalization documents:
+
+- [Session Refactor Development Plan](D:\Project\Python\Agent\docs\development\session-refactor-development-plan.en.md)
+- [Phase 1 Domain and Service Contract](D:\Project\Python\Agent\docs\development\session-phase-1-domain-and-service-contract.en.md)
+- [Phase 1 Finalization](D:\Project\Python\Agent\docs\development\session-phase-1-finalization.en.md)
+
+Do not use this document as the forward-looking product contract for top-level runtime modeling.
+
 # Red-Team Agent Requirements Specification
 
 ## Purpose

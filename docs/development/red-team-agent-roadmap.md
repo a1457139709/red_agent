@@ -1,3 +1,13 @@
+# RETIRED DOCUMENT
+
+This roadmap is retained for historical context only. It is superseded by the session-domain planning and finalization documents:
+
+- [Session Refactor Development Plan](D:\Project\Python\Agent\docs\development\session-refactor-development-plan.en.md)
+- [Phase 1 Domain and Service Contract](D:\Project\Python\Agent\docs\development\session-phase-1-domain-and-service-contract.en.md)
+- [Phase 1 Finalization](D:\Project\Python\Agent\docs\development\session-phase-1-finalization.en.md)
+
+Do not use this document as the forward-looking product contract for top-level runtime modeling.
+
 # Red-Team Agent Roadmap
 
 ## Purpose
@@ -9,6 +19,8 @@ The plan assumes:
 - the existing task runtime remains temporarily available as legacy behavior
 - the new security-oriented runtime is introduced beside it
 - correctness, scope control, and observability are more important than backward compatibility
+
+This roadmap is still useful for the historical red-team runtime plan, but it is no longer the source of truth for the future top-level product model.
 
 ## Implementation Status Snapshot
 
@@ -483,12 +495,9 @@ The repository now provides:
 - persisted planner plans and proposal records
 - planner context assembly from operation scope, evidence, open findings, successful jobs, and structured memory
 - model-backed planning with rule-based fallback generation
+- planner-driven memory write-back for newly derived stable facts
 - `/planner plan` and `/planner apply`
 - `/operation resume` context summaries without transcript replay
-
-Still deferred:
-
-- planner-driven memory write-back for newly derived stable facts
 
 ### Work Items
 
