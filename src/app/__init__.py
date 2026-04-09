@@ -1,14 +1,6 @@
-from .checkpoint_service import CheckpointService
-from .dashboard_service import DashboardService
-from .evidence_service import EvidenceService
-from .finding_service import FindingService
-from .job_service import JobService
-from .memory_service import MemoryService
-from .operation_service import OperationService
-from .operation_event_service import OperationEventService
-from .run_service import RunService
-from .scope_policy_service import ScopePolicyService
-from .task_service import TaskService
+from __future__ import annotations
+
+from importlib import import_module
 
 __all__ = [
     "CheckpointService",
@@ -20,6 +12,36 @@ __all__ = [
     "OperationService",
     "OperationEventService",
     "RunService",
+    "SessionService",
     "ScopePolicyService",
     "TaskService",
 ]
+
+_EXPORTS = {
+    "CheckpointService": ".checkpoint_service",
+    "DashboardService": ".dashboard_service",
+    "EvidenceService": ".evidence_service",
+    "FindingService": ".finding_service",
+    "JobService": ".job_service",
+    "MemoryService": ".memory_service",
+    "OperationService": ".operation_service",
+    "OperationEventService": ".operation_event_service",
+    "RunService": ".run_service",
+    "SessionService": ".session_service",
+    "ScopePolicyService": ".scope_policy_service",
+    "TaskService": ".task_service",
+}
+
+
+def __getattr__(name: str) -> object:
+    module_name = _EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module = import_module(module_name, __name__)
+    value = getattr(module, name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Legacy top-level operation service kept stable during the session refactor."""
+
 from agent.settings import Settings, get_settings
 from models.operation import Operation, OperationStatus
 from models.scope_policy import ScopePolicy

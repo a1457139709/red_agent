@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Legacy top-level operation model kept temporarily during the session refactor."""
+
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any

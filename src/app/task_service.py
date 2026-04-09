@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Legacy top-level task service kept stable during the session refactor."""
+
 from agent.settings import Settings, get_settings
 from models.task import Task, TaskStatus
 from storage.sqlite import SQLiteStorage

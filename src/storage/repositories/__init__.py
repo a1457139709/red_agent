@@ -1,11 +1,6 @@
-from .evidence import EvidenceRepository
-from .findings import FindingRepository
-from .finding_evidence_links import FindingEvidenceLinkRepository
-from .jobs import JobRepository
-from .memory import MemoryRepository
-from .operations import OperationRepository
-from .operation_events import OperationEventRepository
-from .scope_policies import ScopePolicyRepository
+from __future__ import annotations
+
+from importlib import import_module
 
 __all__ = [
     "EvidenceRepository",
@@ -15,5 +10,32 @@ __all__ = [
     "MemoryRepository",
     "OperationRepository",
     "OperationEventRepository",
+    "SessionRepository",
     "ScopePolicyRepository",
 ]
+
+_EXPORTS = {
+    "EvidenceRepository": ".evidence",
+    "FindingRepository": ".findings",
+    "FindingEvidenceLinkRepository": ".finding_evidence_links",
+    "JobRepository": ".jobs",
+    "MemoryRepository": ".memory",
+    "OperationRepository": ".operations",
+    "OperationEventRepository": ".operation_events",
+    "SessionRepository": ".sessions",
+    "ScopePolicyRepository": ".scope_policies",
+}
+
+
+def __getattr__(name: str) -> object:
+    module_name = _EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module = import_module(module_name, __name__)
+    value = getattr(module, name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))

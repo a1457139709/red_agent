@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Legacy top-level task model kept temporarily during the session refactor."""
+
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
