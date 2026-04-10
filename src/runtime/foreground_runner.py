@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
@@ -56,6 +57,8 @@ class ForegroundRunner:
                     skill_name=skill_name,
                     context_summary=session_state.context_summary,
                 )
+        except asyncio.CancelledError:
+            return self._interrupted_outcome(session=session, on_progress=on_progress)
         except Exception as exc:
             return self._failed_outcome(
                 session=session,
@@ -95,6 +98,8 @@ class ForegroundRunner:
                 system_prompt=runtime_config.system_prompt,
                 tools=runtime_executor.get_tools(),
             )
+        except asyncio.CancelledError:
+            return self._interrupted_outcome(session=session, on_progress=on_progress)
         except TypeError as exc:
             if "unexpected keyword argument 'system_prompt'" not in str(exc):
                 return self._failed_outcome(
@@ -109,6 +114,8 @@ class ForegroundRunner:
                     runtime_executor,
                     effective_settings,
                 )
+            except asyncio.CancelledError:
+                return self._interrupted_outcome(session=session, on_progress=on_progress)
             except ToolExecutionError as inner_exc:
                 return self._failed_outcome(
                     session=session,
@@ -143,6 +150,8 @@ class ForegroundRunner:
                 on_info=on_info,
                 on_error=on_error,
             )
+        except asyncio.CancelledError:
+            return self._interrupted_outcome(session=session, on_progress=on_progress)
         except Exception as exc:
             return self._failed_outcome(
                 session=session,
@@ -199,6 +208,27 @@ class ForegroundRunner:
             status="failed",
             response=error,
             error=error,
+            usage={},
+            raw_result=None,
+        )
+
+    def _interrupted_outcome(
+        self,
+        *,
+        session: Session,
+        on_progress: ProgressCallback,
+    ) -> ExecutionOutcome:
+        message = "Foreground execution was interrupted before completion."
+        self._emit_event(
+            on_progress=on_progress,
+            event_type=ExecutionEventType.EXECUTION_PAUSED,
+            session=session,
+            message=message,
+        )
+        return ExecutionOutcome(
+            status="paused",
+            response=message,
+            error=message,
             usage={},
             raw_result=None,
         )

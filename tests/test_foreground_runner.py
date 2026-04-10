@@ -168,6 +168,46 @@ def test_foreground_runner_returns_failed_outcome_when_agent_loop_raises(tmp_pat
     assert events[-1].event_type == ExecutionEventType.EXECUTION_FAILED
 
 
+def test_foreground_runner_maps_cancelled_agent_loop_to_paused_outcome(tmp_path):
+    settings = build_settings(tmp_path)
+    session = build_session(tmp_path)
+    session_state = SessionState()
+    skill_service = FakeSkillService()
+    tool_executor = ToolExecutor({"fake_tool": FakeTool()})
+
+    async def cancelled_agent_loop(*args, **kwargs):
+        raise asyncio.CancelledError
+
+    async def fake_apply_result_to_session(**kwargs):
+        raise AssertionError("apply_result_to_session should not run on interruption")
+
+    runner = ForegroundRunner(
+        agent_loop_fn=cancelled_agent_loop,
+        apply_result_to_session_fn=fake_apply_result_to_session,
+    )
+    events = []
+    outcome = asyncio.run(
+        runner.run(
+            session=session,
+            prompt_text="inspect",
+            session_state=session_state,
+            skill_service=skill_service,
+            tool_executor=tool_executor,
+            settings=settings,
+            on_progress=events.append,
+        )
+    )
+
+    assert not outcome.is_completed
+    assert outcome.status == "paused"
+    assert outcome.error == "Foreground execution was interrupted before completion."
+    assert [event.event_type for event in events] == [
+        ExecutionEventType.EXECUTION_STARTED,
+        ExecutionEventType.EXECUTION_PAUSED,
+    ]
+    assert events[-1].message == outcome.error
+
+
 def test_foreground_runner_maps_non_completed_status_to_execution_failed(tmp_path):
     settings = build_settings(tmp_path)
     session = build_session(tmp_path)
