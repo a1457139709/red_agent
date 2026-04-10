@@ -1,5 +1,22 @@
-# 环境变量文件
+# Environment files
 .env
-!.env.example  # 允许提交示例文件
+!.env.example
 
-# 其他敏感文件
+# Python caches and bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Python tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Local project data
+.red-code/
+tests_acl_backup_*/
