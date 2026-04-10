@@ -44,12 +44,48 @@ class ToolExecutionEvent:
 ToolEventCallback = Callable[[ToolExecutionEvent], None] | None
 
 
+@dataclass(frozen=True, slots=True)
+class ToolExecutionRequest:
+    tool_name: str
+    capability: CapabilityTier
+    args: dict[str, Any]
+    target: str | None
+    args_summary: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ToolExecutionGateDecision:
+    status: str
+    reason: str
+    message: str
+
+    @property
+    def is_allowed(self) -> bool:
+        return self.status == "allow"
+
+
+ToolExecutionGate = Callable[[ToolExecutionRequest], ToolExecutionGateDecision | None] | None
+
+
 class ToolExecutionError(RuntimeError):
     def __init__(self, tool_name: str, capability: CapabilityTier, error: str) -> None:
         super().__init__(error)
         self.tool_name = tool_name
         self.capability = capability
         self.error = error
+
+
+class ToolExecutionBlockedError(ToolExecutionError):
+    def __init__(
+        self,
+        tool_name: str,
+        capability: CapabilityTier,
+        error: str,
+        *,
+        reason: str,
+    ) -> None:
+        super().__init__(tool_name, capability, error)
+        self.reason = reason
 
 
 class SecurityToolExecutionError(RuntimeError):
@@ -77,6 +113,7 @@ class ToolExecutor:
         safety_policy: RuntimeSafetyPolicy | None = None,
         on_audit: AuditCallback = None,
         on_tool_event: ToolEventCallback = None,
+        execution_gate: ToolExecutionGate = None,
         preferred_shell: str | None = None,
     ) -> None:
         self._tools = tools
@@ -85,6 +122,7 @@ class ToolExecutor:
         self._safety_policy = safety_policy or RuntimeSafetyPolicy.base()
         self._on_audit = on_audit
         self._on_tool_event = on_tool_event
+        self._execution_gate = execution_gate
         self._preferred_shell = preferred_shell
 
     @property
@@ -110,6 +148,7 @@ class ToolExecutor:
             safety_policy=self._safety_policy,
             on_audit=self._on_audit,
             on_tool_event=self._on_tool_event,
+            execution_gate=self._execution_gate,
             preferred_shell=self._preferred_shell,
         )
 
@@ -127,6 +166,7 @@ class ToolExecutor:
             safety_policy=safety_policy,
             on_audit=self._on_audit if on_audit is None else on_audit,
             on_tool_event=self._on_tool_event if on_tool_event is None else on_tool_event,
+            execution_gate=self._execution_gate,
             preferred_shell=self._preferred_shell,
         )
 
@@ -138,7 +178,20 @@ class ToolExecutor:
             safety_policy=self._safety_policy,
             on_audit=self._on_audit,
             on_tool_event=self._on_tool_event,
+            execution_gate=self._execution_gate,
             preferred_shell=preferred_shell,
+        )
+
+    def with_execution_gate(self, execution_gate: ToolExecutionGate) -> "ToolExecutor":
+        return ToolExecutor(
+            dict(self._tools),
+            confirm_command=self._confirm_command,
+            on_info=self._on_info,
+            safety_policy=self._safety_policy,
+            on_audit=self._on_audit,
+            on_tool_event=self._on_tool_event,
+            execution_gate=execution_gate,
+            preferred_shell=self._preferred_shell,
         )
 
     def execute(self, tool_name: str, args: dict) -> str:
@@ -160,6 +213,25 @@ class ToolExecutor:
             capability=capability,
             args_summary=args_summary,
         )
+
+        gate_decision = self._apply_execution_gate(
+            context=context,
+            effective_args=effective_args,
+        )
+        if gate_decision is not None and not gate_decision.is_allowed:
+            self._emit_tool_event(
+                event_type="tool_failed",
+                tool_name=tool_name,
+                capability=capability,
+                args_summary=args_summary,
+                error=gate_decision.message,
+            )
+            raise ToolExecutionBlockedError(
+                tool_name,
+                capability,
+                gate_decision.message,
+                reason=gate_decision.reason,
+            )
 
         tool = self._tools.get(tool_name)
         if tool is None:
@@ -470,6 +542,23 @@ class ToolExecutor:
         if len(value) <= limit:
             return value
         return value[: limit - 3] + "..."
+
+    def _apply_execution_gate(
+        self,
+        *,
+        context: _ExecutionContext,
+        effective_args: dict[str, Any],
+    ) -> ToolExecutionGateDecision | None:
+        if self._execution_gate is None:
+            return None
+        request = ToolExecutionRequest(
+            tool_name=context.tool_name,
+            capability=context.capability,
+            args=dict(effective_args),
+            target=context.target,
+            args_summary=context.args_summary,
+        )
+        return self._execution_gate(request)
 
 
 class SecurityToolExecutor:

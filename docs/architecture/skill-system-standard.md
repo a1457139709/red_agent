@@ -4,6 +4,28 @@
 
 `red-code` uses the standard `SKILL.md` format as the skill artifact.
 
+### Target Architecture Warning
+
+This document describes the **current** skill runtime. It is not the target contract for the session-centric refactor.
+
+The current `SKILL.md` design only partially matches the target architecture. It can inform low-level reuse, but Phase 5 must not continue by copying the current design directly.
+
+Reusable ideas:
+
+- local skill description files
+- `allowed-tools` narrowing
+- `references/` and `scripts/` directories
+
+Do not treat these as the target Phase 5 design:
+
+- slash-command-first skill activation
+- task-bound skill profiles
+- operation-id-based workflow skills
+- prompt-body-only red-team module semantics
+- `/skill plan <name> <operation_id>` and `/skill apply <name> <operation_id>` as the main red-team workflow
+
+The target architecture requires a unified skill/module contract with parameters, risk metadata, execution style, session integration, and execution-service routing.
+
 The compatibility strategy remains:
 
 - baseline: Agent Skills open standard
@@ -201,6 +223,8 @@ Current built-in skills include:
 - `development-default`
 - `git-auto-commit`
 - `security-audit`
+- `surface-recon`
+- `web-enum`
 - `weather-query-example`
 
 ## Runtime Integration Rules

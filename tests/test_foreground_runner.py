@@ -6,7 +6,7 @@ from agent.state import SessionState
 from models.session import Session, SessionMode, SessionPersistenceMode, SessionStatus
 from runtime.execution_events import ExecutionEventType
 from runtime.foreground_runner import ForegroundRunner
-from tools.executor import ToolExecutor
+from tools.executor import ToolExecutionGateDecision, ToolExecutor
 from tools.policy import RuntimeSafetyPolicy
 
 
@@ -246,3 +246,45 @@ def test_foreground_runner_maps_non_completed_status_to_execution_failed(tmp_pat
     assert outcome.status == "max_steps_exceeded"
     assert outcome.error == "too long"
     assert events[-1].event_type == ExecutionEventType.EXECUTION_FAILED
+
+
+def test_foreground_runner_maps_gate_block_to_blocked_outcome(tmp_path):
+    settings = build_settings(tmp_path)
+    session = build_session(tmp_path)
+    session_state = SessionState()
+    skill_service = FakeSkillService()
+    tool_executor = ToolExecutor({"fake_tool": FakeTool()})
+
+    async def fake_agent_loop(*args, **kwargs):
+        runtime_executor = args[2]
+        runtime_executor.execute("fake_tool", {"value": "x"})
+        return {"status": "completed", "response": "done", "messages": [], "usage": {}}
+
+    async def fake_apply_result_to_session(**kwargs):
+        return None
+
+    runner = ForegroundRunner(
+        agent_loop_fn=fake_agent_loop,
+        apply_result_to_session_fn=fake_apply_result_to_session,
+    )
+    events = []
+    outcome = asyncio.run(
+        runner.run(
+            session=session,
+            prompt_text="inspect",
+            session_state=session_state,
+            skill_service=skill_service,
+            tool_executor=tool_executor,
+            settings=settings,
+            execution_gate=lambda request: ToolExecutionGateDecision(
+                status="deny",
+                reason="test_block",
+                message="blocked by test gate",
+            ),
+            on_progress=events.append,
+        )
+    )
+
+    assert outcome.status == "blocked"
+    assert outcome.error == "blocked by test gate"
+    assert events[-1].event_type == ExecutionEventType.EXECUTION_PAUSED

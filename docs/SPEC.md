@@ -238,6 +238,36 @@
 - 支持未来类似 metasploit 的模块使用体验
 - 支持既可挂在持久化 session 下执行，也可独立单次执行
 
+### 10.1 与当前 `SKILL.md` 设计的关系
+
+当前已有的 `SKILL.md` 机制不完全匹配目标架构。
+
+当前机制更接近：
+
+- prompt 片段注入
+- `allowed-tools` 工具可见性收窄
+- 显式 `/skill` 激活
+- task 绑定
+- 部分 workflow skill 依赖 `operation_id`
+
+目标架构需要的是：
+
+- `skill` / `module` 共用的能力清单
+- 参数模式
+- 风险等级
+- 执行方式
+- 与 `session`、`ExecutionService`、确认策略和结果存储的集成
+
+因此后续实现不应照着当前 `SKILL.md` 设计继续扩展，也不应把 `/skill plan <name> <operation_id>` 或 `/skill apply <name> <operation_id>` 作为目标架构路径。
+
+允许复用的只有低层能力，例如：
+
+- `SKILL.md` 作为本地能力描述文件的想法
+- `allowed-tools` 收窄工具可见性的机制
+- `references/` 与 `scripts/` 的目录约定
+
+但 Phase 5 必须重新定义目标态的 skill/module manifest 与 session 执行契约。
+
 ## 11. Persistence and Storage
 
 对于持久化 redteam session，执行结果至少分为四层：

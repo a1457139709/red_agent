@@ -12,6 +12,9 @@ class ExecutionEventType(StrEnum):
     STEP_STARTED = "step_started"
     STEP_COMPLETED = "step_completed"
     STEP_FAILED = "step_failed"
+    CONFIRMATION_REQUIRED = "confirmation_required"
+    CONFIRMATION_APPROVED = "confirmation_approved"
+    CONFIRMATION_DENIED = "confirmation_denied"
     EXECUTION_PAUSED = "execution_paused"
     EXECUTION_COMPLETED = "execution_completed"
     EXECUTION_FAILED = "execution_failed"
@@ -26,6 +29,9 @@ class ExecutionProgressEvent:
     step_label: str | None = None
     target_summary: str | None = None
     message: str | None = None
+    action_name: str | None = None
+    risk_level: str | None = None
+    reason: str | None = None
     timestamp: str = field(default_factory=utc_now_iso)
 
     def to_dict(self) -> dict[str, Any]:
@@ -37,6 +43,9 @@ class ExecutionProgressEvent:
             "step_label": self.step_label,
             "target_summary": self.target_summary,
             "message": self.message,
+            "action_name": self.action_name,
+            "risk_level": self.risk_level,
+            "reason": self.reason,
             "timestamp": self.timestamp,
         }
 

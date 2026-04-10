@@ -10,7 +10,13 @@ from agent.state import SessionState
 from app.skill_service import SkillService
 from models.session import Session
 from runtime.task_runner import apply_result_to_session
-from tools.executor import ToolExecutionError, ToolExecutionEvent, ToolExecutor
+from tools.executor import (
+    ToolExecutionBlockedError,
+    ToolExecutionError,
+    ToolExecutionEvent,
+    ToolExecutionGate,
+    ToolExecutor,
+)
 
 from .execution_events import ExecutionEventType, ExecutionOutcome, ExecutionProgressEvent
 
@@ -36,6 +42,7 @@ class ForegroundRunner:
         tool_executor: ToolExecutor,
         settings: Settings,
         skill_name: str | None = None,
+        execution_gate: ToolExecutionGate = None,
         on_progress: ProgressCallback = None,
         on_info: InfoCallback = None,
         on_error: InfoCallback = None,
@@ -86,7 +93,7 @@ class ForegroundRunner:
                 session=session,
                 on_progress=on_progress,
             ),
-        )
+        ).with_execution_gate(execution_gate)
         effective_settings = runtime_config.with_settings(settings)
 
         try:
@@ -116,6 +123,12 @@ class ForegroundRunner:
                 )
             except asyncio.CancelledError:
                 return self._interrupted_outcome(session=session, on_progress=on_progress)
+            except ToolExecutionBlockedError as inner_exc:
+                return self._blocked_outcome(
+                    session=session,
+                    on_progress=on_progress,
+                    reason=inner_exc.error,
+                )
             except ToolExecutionError as inner_exc:
                 return self._failed_outcome(
                     session=session,
@@ -128,6 +141,12 @@ class ForegroundRunner:
                     on_progress=on_progress,
                     error=str(inner_exc),
                 )
+        except ToolExecutionBlockedError as exc:
+            return self._blocked_outcome(
+                session=session,
+                on_progress=on_progress,
+                reason=exc.error,
+            )
         except ToolExecutionError as exc:
             return self._failed_outcome(
                 session=session,
@@ -208,6 +227,27 @@ class ForegroundRunner:
             status="failed",
             response=error,
             error=error,
+            usage={},
+            raw_result=None,
+        )
+
+    def _blocked_outcome(
+        self,
+        *,
+        session: Session,
+        on_progress: ProgressCallback,
+        reason: str,
+    ) -> ExecutionOutcome:
+        self._emit_event(
+            on_progress=on_progress,
+            event_type=ExecutionEventType.EXECUTION_PAUSED,
+            session=session,
+            message=reason,
+        )
+        return ExecutionOutcome(
+            status="blocked",
+            response=reason,
+            error=reason,
             usage={},
             raw_result=None,
         )

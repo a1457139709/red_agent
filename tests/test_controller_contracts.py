@@ -1,6 +1,9 @@
 from controller.contracts import (
     ClarificationKind,
     ClarificationRequest,
+    ConfirmationDecision,
+    ConfirmationDecisionValue,
+    ConfirmationRequest,
     ControllerIntent,
     ControllerRequest,
     ControllerResult,
@@ -59,3 +62,21 @@ def test_controller_result_helpers_build_structured_payloads():
     assert needs_clarification.clarification_request is not None
     assert delegated.status == ControllerResultStatus.DELEGATED_TO_ADVANCED_COMMAND
     assert unsupported.status == ControllerResultStatus.UNSUPPORTED
+
+
+def test_confirmation_contracts_are_structured():
+    request = ConfirmationRequest(
+        action_name="poc_execute",
+        risk_level="dangerous",
+        target_summary="example.com",
+        reason="dangerous action",
+        message="Requires approval",
+    )
+    decision = ConfirmationDecision(
+        request_id=request.request_id,
+        decision=ConfirmationDecisionValue.APPROVE,
+    )
+
+    assert request.action_name == "poc_execute"
+    assert decision.request_id == request.request_id
+    assert decision.decision == ConfirmationDecisionValue.APPROVE

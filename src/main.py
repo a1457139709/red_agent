@@ -32,6 +32,7 @@ from controller import (
     SessionSummary,
 )
 from models.session import SessionMode
+from models.risk_policy import ConfirmationRequestPayload
 from models.job import JobStatus
 from models.operation import OperationStatus
 from models.run import TaskLogEntry
@@ -42,7 +43,6 @@ from cli.ui import CliPresenter, get_presenter
 from skills.registry import SkillRegistry
 from tools import build_tool_registry
 from tools.executor import ToolExecutor
-from utils.confirm import confirm_from_user
 
 
 OutputFn = Callable[[str], None]
@@ -322,14 +322,13 @@ def handle_help_command(
         ui.show_help()
         return True
     if len(args) != 1:
-        ui.show_error("Usage: /help [task|skill|operation|job|finding|evidence|dashboard|planner]")
+        ui.show_error("Usage: /help [skill]")
         return True
 
     topic = args[0].lower()
-    if topic not in {"operation", "job", "task", "skill", "finding", "evidence", "dashboard", "planner"}:
+    if topic not in {"skill"}:
         ui.show_error(
-            f"Unknown help topic: {args[0]}. Available topics: task, skill, operation, job, "
-            "finding, evidence, dashboard, planner"
+            f"Unknown help topic: {args[0]}. Available topics: skill"
         )
         return True
     ui.show_help(topic)
@@ -372,9 +371,6 @@ def handle_skill_command(
     *,
     shell_state: ShellState | None = None,
     skill_service: SkillService | None = None,
-    operation_service: OperationService | None = None,
-    job_service: JobService | None = None,
-    workflow_service: SkillWorkflowService | None = None,
     presenter: CliPresenter | None = None,
     text_output: OutputFn | None = None,
     info_output: OutputFn | None = None,
@@ -388,9 +384,6 @@ def handle_skill_command(
 
     shell_state = shell_state or ShellState()
     skill_service = skill_service or create_skill_service()
-    operation_service = operation_service or OperationService.from_settings()
-    job_service = job_service or JobService.from_settings()
-    workflow_service = workflow_service or SkillWorkflowService.from_settings(operation_service.settings)
     ui = _resolve_presenter(
         presenter,
         text_output=text_output,
@@ -423,54 +416,6 @@ def handle_skill_command(
             skill = skill_service.require_user_invocable_skill(args[0])
             shell_state.active_skill_name = skill.manifest.name
             ui.show_success(f"Activated skill {skill.manifest.name}.")
-            return True
-
-        if action in {"plan", "apply"}:
-            if len(args) != 2:
-                ui.show_error(f"Usage: /skill {action} <name> <operation_id>")
-                return True
-            skill = skill_service.require_workflow_skill(args[0])
-            operation = operation_service.get_operation(args[1])
-            if operation is None:
-                ui.show_error(f"Operation not found: {args[1]}")
-                return True
-
-            primary_target = input_func("Primary target: ").strip()
-            overrides = _parse_json_dict(input_func("Overrides JSON [{}]: ").strip())
-            if not primary_target:
-                ui.show_error("Primary target is required.")
-                return True
-
-            plan = workflow_service.plan_workflow(
-                skill=skill,
-                operation_identifier=operation.id,
-                primary_target=primary_target,
-                overrides=overrides,
-            )
-            planned_rows, skipped_rows = _workflow_plan_rows(plan)
-            ui.show_skill_workflow_plan(
-                skill_name=plan.skill_name,
-                workflow_profile=plan.workflow_profile,
-                operation_label=plan.operation.public_id or plan.operation.id,
-                primary_target=plan.primary_target,
-                planned_rows=planned_rows,
-                skipped_rows=skipped_rows,
-            )
-            if action == "plan":
-                return True
-
-            if not _confirm_choice(
-                input_func,
-                f"Create {len(plan.planned_jobs)} job(s) from skill {plan.skill_name}? [y/N]: ",
-            ):
-                ui.show_info("Cancelled workflow apply.")
-                return True
-            created_jobs = workflow_service.apply_plan(plan)
-            ui.show_success(
-                f"Created {len(created_jobs)} job(s) from skill {plan.skill_name} "
-                f"for {plan.operation.public_id or plan.operation.id}."
-            )
-            ui.show_job_list(created_jobs, operation_label=plan.operation.public_id or plan.operation.id)
             return True
 
         if action == "clear":
@@ -728,6 +673,7 @@ async def execute_controller_bridge(
     settings: Settings,
     execution_service: ExecutionService,
     ui: CliPresenter,
+    input_func: InputFn = input,
 ) -> None:
     if result.execution_bridge is None:
         return
@@ -758,6 +704,11 @@ async def execute_controller_bridge(
         on_progress=ui.show_execution_progress,
         on_info=ColoredOutput.print_info,
         on_error=ColoredOutput.print_error,
+        on_confirmation=lambda payload: prompt_execution_confirmation(
+            payload=payload,
+            input_func=input_func,
+            ui=ui,
+        ),
     )
 
     text = outcome.response
@@ -765,6 +716,25 @@ async def execute_controller_bridge(
         ColoredOutput.print_final_answer(text)
     else:
         ColoredOutput.print_error(outcome.error or text)
+
+
+def prompt_execution_confirmation(
+    *,
+    payload: ConfirmationRequestPayload,
+    input_func: InputFn,
+    ui: CliPresenter,
+) -> bool:
+    target_summary = payload.target_summary or "-"
+    prompt = (
+        f"Approve action '{payload.action_name}' "
+        f"(risk: {payload.risk_level.value}, target: {target_summary})? [y/N]: "
+    )
+    ui.show_info(
+        f"Confirmation required: {payload.action_name} | risk={payload.risk_level.value} | "
+        f"reason={payload.reason}"
+    )
+    answer = input_func(prompt).strip().lower()
+    return answer in {"y", "yes"}
 
 
 async def run_prompt_with_runtime(
@@ -1552,31 +1522,12 @@ async def run_interactive_shell(
     session_state: SessionState,
     shell_state: ShellState,
     tool_executor: ToolExecutor,
-    operation_service: OperationService | None = None,
-    planner_service: PlannerService | None = None,
-    job_service: JobService | None = None,
-    workflow_service: SkillWorkflowService | None = None,
-    finding_service: FindingService | None = None,
-    evidence_service: EvidenceService | None = None,
-    dashboard_service: DashboardService | None = None,
     session_service: SessionService | None = None,
     controller: AgentController | None = None,
     execution_service: ExecutionService | None = None,
-    task_service: TaskService,
-    run_service: RunService,
-    checkpoint_service: CheckpointService | None = None,
-    task_runner: TaskRunner,
     skill_service: SkillService,
     input_func: InputFn = input,
 ) -> None:
-    checkpoint_service = checkpoint_service or task_runner.checkpoint_service
-    operation_service = operation_service or OperationService.from_settings(settings)
-    planner_service = planner_service or PlannerService.from_settings(settings)
-    job_service = job_service or JobService.from_settings(settings)
-    workflow_service = workflow_service or SkillWorkflowService.from_settings(settings)
-    finding_service = finding_service or FindingService.from_settings(settings)
-    evidence_service = evidence_service or EvidenceService.from_settings(settings)
-    dashboard_service = dashboard_service or DashboardService.from_settings(settings)
     session_service = session_service or SessionService.from_settings(settings)
     controller = controller or AgentController.from_session_service(session_service)
     execution_service = execution_service or ExecutionService.from_settings(
@@ -1588,19 +1539,9 @@ async def run_interactive_shell(
         try:
             question = input_func(build_prompt(shell_state)).strip()
         except EOFError:
-            pause_active_task_if_needed(
-                shell_state=shell_state,
-                session_state=session_state,
-                task_runner=task_runner,
-            )
             break
 
         if question in ("/exit", "/quit"):
-            pause_active_task_if_needed(
-                shell_state=shell_state,
-                session_state=session_state,
-                task_runner=task_runner,
-            )
             ColoredOutput.print_header("Goodbye")
             break
 
@@ -1642,64 +1583,7 @@ async def run_interactive_shell(
                     question,
                     shell_state=shell_state,
                     skill_service=skill_service,
-                    operation_service=operation_service,
-                    job_service=job_service,
-                    workflow_service=workflow_service,
                     input_func=input_func,
-                ):
-                    continue
-
-                if handle_operation_command(
-                    question,
-                    operation_service=operation_service,
-                    planner_service=planner_service,
-                    input_func=input_func,
-                ):
-                    continue
-
-                if handle_planner_command(
-                    question,
-                    planner_service=planner_service,
-                ):
-                    continue
-
-                if handle_job_command(
-                    question,
-                    job_service=job_service,
-                    operation_service=operation_service,
-                    input_func=input_func,
-                ):
-                    continue
-
-                if handle_finding_command(
-                    question,
-                    finding_service=finding_service,
-                    input_func=input_func,
-                ):
-                    continue
-
-                if handle_evidence_command(
-                    question,
-                    evidence_service=evidence_service,
-                    finding_service=finding_service,
-                ):
-                    continue
-
-                if handle_dashboard_command(
-                    question,
-                    dashboard_service=dashboard_service,
-                ):
-                    continue
-
-                if handle_task_command(
-                    question,
-                    shell_state=shell_state,
-                    session_state=session_state,
-                    task_service=task_service,
-                    run_service=run_service,
-                    checkpoint_service=checkpoint_service,
-                    task_runner=task_runner,
-                    skill_service=skill_service,
                 ):
                     continue
 
@@ -1755,6 +1639,7 @@ async def run_interactive_shell(
                 settings=settings,
                 execution_service=execution_service,
                 ui=ui,
+                input_func=input_func,
             )
         except Exception as exc:
             ColoredOutput.print_error(str(exc))
@@ -1764,27 +1649,15 @@ async def main() -> None:
     settings = get_settings()
     session_state = SessionState()
     shell_state = ShellState()
-    operation_service = OperationService.from_settings(settings)
-    job_service = JobService.from_settings(settings)
     session_service = SessionService.from_settings(settings)
     execution_service = ExecutionService.from_settings(
         settings,
         session_service=session_service,
     )
-    task_service = TaskService.from_settings(settings)
-    run_service = RunService.from_settings(settings)
-    checkpoint_service = CheckpointService.from_settings(settings)
     skill_service = create_skill_service(settings)
     controller = AgentController.from_session_service(session_service)
-    task_runner = TaskRunner(
-        task_service,
-        run_service,
-        skill_service,
-        checkpoint_service,
-    )
     tool_executor = ToolExecutor(
         build_tool_registry(),
-        confirm_command=confirm_from_user,
         on_info=ColoredOutput.print_info,
     )
 
@@ -1793,15 +1666,9 @@ async def main() -> None:
         session_state=session_state,
         shell_state=shell_state,
         tool_executor=tool_executor,
-        operation_service=operation_service,
-        job_service=job_service,
         session_service=session_service,
         controller=controller,
         execution_service=execution_service,
-        task_service=task_service,
-        run_service=run_service,
-        checkpoint_service=checkpoint_service,
-        task_runner=task_runner,
         skill_service=skill_service,
     )
 

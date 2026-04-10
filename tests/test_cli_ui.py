@@ -19,7 +19,6 @@ def test_presenter_help_and_observation_render_clean_text():
     presenter = build_presenter(outputs)
 
     presenter.show_help()
-    presenter.show_help("task")
     presenter.show_help("skill")
     presenter.show_observation(
         "line1\nline2\nline3\nline4\nline5",
@@ -31,20 +30,15 @@ def test_presenter_help_and_observation_render_clean_text():
     assert "Natural-Language First" in outputs[0]
     assert "Advanced Help Topics" in outputs[0]
     assert "Summarize this repository structure" in outputs[0]
-    assert "task" in outputs[0]
     assert "skill" in outputs[0]
-    assert "/help task" in outputs[0]
     assert "/help skill" in outputs[0]
     assert "/clear" in outputs[0]
-    assert "Task Commands" in outputs[1]
-    assert "Runs and Checkpoints" in outputs[1]
-    assert "latest' or 'last" in outputs[1]
-    assert "Skill Commands" in outputs[2]
-    assert "Shorthand Invocation" in outputs[2]
-    assert "/skill-name <prompt>" in outputs[2]
-    assert "line1" in outputs[3]
-    assert "line3" in outputs[3]
-    assert "[truncated for display]" in outputs[3]
+    assert "Skill Commands" in outputs[1]
+    assert "Shorthand Invocation" in outputs[1]
+    assert "/skill-name <prompt>" in outputs[1]
+    assert "line1" in outputs[2]
+    assert "line3" in outputs[2]
+    assert "[truncated for display]" in outputs[2]
 
 
 def test_presenter_clear_screen_is_silent_for_callback_presenter():
@@ -209,6 +203,27 @@ def test_presenter_renders_structured_execution_progress_events():
 
     presenter.show_execution_progress(
         ExecutionProgressEvent(
+            event_type=ExecutionEventType.CONFIRMATION_REQUIRED,
+            session_id="session-1",
+            session_public_id="S0001",
+            action_name="poc_execute",
+            risk_level="dangerous",
+            reason="requires approval",
+            timestamp="2026-04-09T10:00:00+00:00",
+        )
+    )
+    presenter.show_execution_progress(
+        ExecutionProgressEvent(
+            event_type=ExecutionEventType.CONFIRMATION_DENIED,
+            session_id="session-1",
+            session_public_id="S0001",
+            action_name="poc_execute",
+            risk_level="dangerous",
+            timestamp="2026-04-09T10:00:00+00:00",
+        )
+    )
+    presenter.show_execution_progress(
+        ExecutionProgressEvent(
             event_type=ExecutionEventType.EXECUTION_STARTED,
             session_id="session-1",
             session_public_id="S0001",
@@ -248,6 +263,8 @@ def test_presenter_renders_structured_execution_progress_events():
     )
 
     merged = "\n\n".join(outputs)
+    assert "Confirmation Required" in merged
+    assert "Confirmation Decision" in merged
     assert "Execution Started" in merged
     assert "session S0001 | http_probe started" in merged
     assert "Step Completed (S0001)" in merged

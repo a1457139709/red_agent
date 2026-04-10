@@ -41,6 +41,14 @@ class Settings:
     def skills_dir(self) -> Path:
         return self.app_data_dir / "skills"
 
+    @property
+    def config_dir(self) -> Path:
+        return self.app_data_dir / "config"
+
+    @property
+    def risk_policy_path(self) -> Path:
+        return self.config_dir / "risk-policy.json"
+
     @classmethod
     def from_env(cls) -> "Settings":
         dotenv.load_dotenv()

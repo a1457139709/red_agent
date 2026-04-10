@@ -22,7 +22,8 @@ runtime shape for planned refactors.
 3. `architecture/prompt-runtime-contract.md`
    Contract for the base prompt, skill prompt, and context-summary layers.
 4. `architecture/skill-system-standard.md`
-   Current `SKILL.md` parsing, discovery, activation, and safety integration rules.
+   Current `SKILL.md` parsing, discovery, activation, and safety integration rules. This is a
+   current-runtime reference, not the target Phase 5 skill/module architecture.
 5. `architecture/checkpoint-storage-evolution.md`
    Checkpoint storage design: SQLite metadata plus filesystem blobs.
 6. `architecture/session-target-architecture.md`
@@ -65,6 +66,12 @@ Development docs describe planning, review, and iteration guidance.
 12. `development/session-phase-3-finalization.en.md`
    Finalized Phase 3 baseline that freezes the foreground-first execution model, execution service
    boundary, progress event model, and the demotion of worker-facing execution from the main product path.
+13. `development/session-phase-4-implementation-checklist.en.md`
+   Implementation-ready checklist for Phase 4, covering risk policy, confirmation configuration,
+   mode-specific base tool access, execution gating, audit events, and the rejection of CLI-owned safety rules.
+14. `development/session-phase-4-finalization.en.md`
+   Finalized Phase 4 baseline that freezes the three-level risk model, `.red-code/config/risk-policy.json`
+   override path, confirmation service boundary, and the policy/scope/tool-access separation.
 
 ## Read These First
 

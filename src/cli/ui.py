@@ -223,27 +223,13 @@ class CliPresenter:
         topics = Table(box=ASCII_BOX, expand=True, header_style="bold")
         topics.add_column("Topic", style="bold cyan", no_wrap=True)
         topics.add_column("Purpose", style="white")
-        topics.add_row("operation", "Red-team operations and scope policy inspection")
-        topics.add_row("job", "Operation jobs and execution details")
-        topics.add_row("finding", "Finding review and triage")
-        topics.add_row("evidence", "Evidence inspection and traceability")
-        topics.add_row("dashboard", "Operation summary, failures, and recent events")
-        topics.add_row("planner", "Structured next-step planning for v2 operations")
-        topics.add_row("task", "Task lifecycle, runs, checkpoints, and logs")
         topics.add_row("skill", "Skill activation, inspection, reload, and shorthand usage")
         return Group(
             Text("Describe what you want in plain language first. Slash commands are available for advanced and debug workflows.", style="dim"),
             Rule(style="grey50", characters="-"),
             Panel(examples, title="Natural-Language First", border_style="green", box=ASCII_BOX),
             Panel(topics, title="Advanced Help Topics", border_style="bright_blue", box=ASCII_BOX),
-            Text(
-                "Drill down with /help operation, /help job, /help finding, /help evidence for advanced command groups.",
-                style="dim",
-            ),
-            Text(
-                "Also available: /help dashboard, /help planner, /help task, /help skill.",
-                style="dim",
-            ),
+            Text("Drill down with /help skill for advanced command details.", style="dim"),
             Text("Session shortcuts: /clear, /reset, /exit, /quit", style="dim"),
         )
 
@@ -352,8 +338,6 @@ class CliPresenter:
                 ("/skill list", "List built-in and local skills"),
                 ("/skill show <name>", "Show skill details"),
                 ("/skill use <name>", "Activate a skill for this shell"),
-                ("/skill plan <name> <operation_id>", "Preview bounded workflow jobs for an operation"),
-                ("/skill apply <name> <operation_id>", "Create bounded workflow jobs for an operation"),
                 ("/skill reload", "Reload skills from disk"),
                 ("/skill clear", "Clear the active shell skill"),
                 ("/skill current", "Show the active shell skill"),
@@ -367,27 +351,6 @@ class CliPresenter:
         if topic is None:
             body = self._help_overview()
             title = "red-code"
-        elif topic == "operation":
-            body = self._help_operation()
-            title = "Help: operation"
-        elif topic == "job":
-            body = self._help_job()
-            title = "Help: job"
-        elif topic == "finding":
-            body = self._help_finding()
-            title = "Help: finding"
-        elif topic == "evidence":
-            body = self._help_evidence()
-            title = "Help: evidence"
-        elif topic == "dashboard":
-            body = self._help_dashboard()
-            title = "Help: dashboard"
-        elif topic == "planner":
-            body = self._help_planner()
-            title = "Help: planner"
-        elif topic == "task":
-            body = self._help_task()
-            title = "Help: task"
         elif topic == "skill":
             body = self._help_skill()
             title = "Help: skill"
@@ -1158,6 +1121,50 @@ class CliPresenter:
         self._emit(Group(*renderables))
 
     def show_execution_progress(self, event: ExecutionProgressEvent) -> None:
+        if event.event_type == ExecutionEventType.CONFIRMATION_REQUIRED:
+            details = [
+                f"Session: {event.session_public_id}",
+                f"Action: {event.action_name or event.step_label or '-'}",
+                f"Risk: {event.risk_level or '-'}",
+                f"Target: {event.target_summary or '-'}",
+                f"Reason: {event.reason or event.message or '-'}",
+            ]
+            self._emit(
+                Panel(
+                    Text("\n".join(details)),
+                    title="Confirmation Required",
+                    border_style="yellow",
+                    box=ASCII_BOX,
+                ),
+                kind="info",
+            )
+            return
+
+        if event.event_type in {
+            ExecutionEventType.CONFIRMATION_APPROVED,
+            ExecutionEventType.CONFIRMATION_DENIED,
+        }:
+            approved = event.event_type == ExecutionEventType.CONFIRMATION_APPROVED
+            self._emit(
+                Panel(
+                    Text(
+                        "\n".join(
+                            [
+                                f"Session: {event.session_public_id}",
+                                f"Action: {event.action_name or event.step_label or '-'}",
+                                f"Risk: {event.risk_level or '-'}",
+                                f"Decision: {'approved' if approved else 'denied'}",
+                            ]
+                        )
+                    ),
+                    title="Confirmation Decision",
+                    border_style="green" if approved else "red",
+                    box=ASCII_BOX,
+                ),
+                kind="success" if approved else "error",
+            )
+            return
+
         if event.event_type == ExecutionEventType.STEP_STARTED:
             label = event.step_label or "step"
             self._emit(

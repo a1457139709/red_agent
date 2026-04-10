@@ -4,9 +4,7 @@ import main as main_module
 from runtime.execution_events import ExecutionOutcome
 from agent.settings import Settings
 from agent.state import SessionState
-from app.run_service import RunService
 from app.session_service import SessionService
-from app.task_service import TaskService
 from controller.agent_controller import AgentController
 from controller.contracts import (
     ClarificationKind,
@@ -25,7 +23,6 @@ from main import (
     run_interactive_shell,
 )
 from models.session import SessionMode
-from runtime.task_runner import TaskRunner
 from tools import build_tool_registry
 from tools.executor import ToolExecutor
 
@@ -48,6 +45,7 @@ class FakeExecutionService:
         on_progress=None,
         on_info=None,
         on_error=None,
+        on_confirmation=None,
     ) -> ExecutionOutcome:
         self.calls.append(
             {
@@ -262,12 +260,9 @@ def test_run_interactive_shell_routes_plain_text_through_controller_and_skill_br
     settings = build_settings(tmp_path)
     session_state = SessionState()
     shell_state = ShellState(active_skill_name="security-audit")
-    task_service = TaskService.from_settings(settings)
-    run_service = RunService.from_settings(settings)
     session_service = SessionService.from_settings(settings)
     controller = AgentController.from_session_service(session_service)
     skill_service = main_module.create_skill_service()
-    task_runner = TaskRunner(task_service, run_service, skill_service)
     execution_service = FakeExecutionService()
     tool_executor = ToolExecutor(build_tool_registry())
     captured = {"answers": []}
@@ -286,12 +281,9 @@ def test_run_interactive_shell_routes_plain_text_through_controller_and_skill_br
             session_state=session_state,
             shell_state=shell_state,
             tool_executor=tool_executor,
-                session_service=session_service,
-                controller=controller,
-                execution_service=execution_service,
-                task_service=task_service,
-                run_service=run_service,
-                task_runner=task_runner,
+            session_service=session_service,
+            controller=controller,
+            execution_service=execution_service,
             skill_service=skill_service,
             input_func=fake_input,
         )
@@ -313,14 +305,10 @@ def test_run_interactive_shell_keeps_plain_text_on_session_flow_with_active_task
 ):
     settings = build_settings(tmp_path)
     session_state = SessionState()
-    task_service = TaskService.from_settings(settings)
-    run_service = RunService.from_settings(settings)
-    task = task_service.create_task(title="Task", goal="Goal")
-    shell_state = ShellState(active_task_id=task.id, active_task_public_id=task.public_id)
+    shell_state = ShellState(active_task_id="task-1", active_task_public_id="T0001")
     session_service = SessionService.from_settings(settings)
     controller = AgentController.from_session_service(session_service)
     skill_service = main_module.create_skill_service()
-    task_runner = TaskRunner(task_service, run_service, skill_service)
     execution_service = FakeExecutionService()
     tool_executor = ToolExecutor(build_tool_registry())
     captured = {"answers": []}
@@ -339,12 +327,9 @@ def test_run_interactive_shell_keeps_plain_text_on_session_flow_with_active_task
             session_state=session_state,
             shell_state=shell_state,
             tool_executor=tool_executor,
-                session_service=session_service,
-                controller=controller,
-                execution_service=execution_service,
-                task_service=task_service,
-                run_service=run_service,
-                task_runner=task_runner,
+            session_service=session_service,
+            controller=controller,
+            execution_service=execution_service,
             skill_service=skill_service,
             input_func=fake_input,
         )
@@ -352,8 +337,6 @@ def test_run_interactive_shell_keeps_plain_text_on_session_flow_with_active_task
 
     assert len(execution_service.calls) == 1
     assert execution_service.calls[0]["prompt_text"] == "inspect the configs"
-    assert shell_state.active_task_id is None
-    assert shell_state.active_task_public_id is None
     assert shell_state.active_session_mode == SessionMode.NORMAL
     assert shell_state.active_session_public_id is not None
     assert build_prompt(shell_state).startswith("\nnormal:")
@@ -367,12 +350,9 @@ def test_run_interactive_shell_redteam_startup_executes_in_foreground(
     settings = build_settings(tmp_path)
     session_state = SessionState()
     shell_state = ShellState()
-    task_service = TaskService.from_settings(settings)
-    run_service = RunService.from_settings(settings)
     session_service = SessionService.from_settings(settings)
     controller = AgentController.from_session_service(session_service)
     skill_service = main_module.create_skill_service()
-    task_runner = TaskRunner(task_service, run_service, skill_service)
     execution_service = FakeExecutionService()
     tool_executor = ToolExecutor(build_tool_registry())
     responses = iter(["Start a recon session for example.com", "/quit"])
@@ -389,9 +369,6 @@ def test_run_interactive_shell_redteam_startup_executes_in_foreground(
             session_service=session_service,
             controller=controller,
             execution_service=execution_service,
-            task_service=task_service,
-            run_service=run_service,
-            task_runner=task_runner,
             skill_service=skill_service,
             input_func=fake_input,
         )

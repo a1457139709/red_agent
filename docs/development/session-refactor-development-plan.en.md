@@ -160,6 +160,21 @@ No compatibility goal:
 
 - do not preserve the old storage mental model if it conflicts with the target structure
 
+### REWRITE REQUIRED: Current `SKILL.md` Workflow Model
+
+Current problem:
+
+- the existing skill runtime is centered on prompt-body injection, `allowed-tools`, explicit `/skill` activation, task binding, and some operation-id-based workflow skills
+
+Target:
+
+- a unified skill/module capability contract that can run one-shot or inside a `session`, carry parameters and risk metadata, integrate with the controller, and execute through the execution service
+
+No compatibility goal:
+
+- do not treat the current `SKILL.md` workflow design as the target Phase 5 architecture
+- do not preserve `/skill plan <name> <operation_id>` or `/skill apply <name> <operation_id>` as the primary red-team module flow
+
 ## Replacement Milestone for `task` and `operation`
 
 The replacement of `task` and `operation` happens in stages.
@@ -192,6 +207,28 @@ From Phase 3 onward:
 - deletion may proceed only after the controller-first and foreground-execution paths are established
 
 This is the point where the old top-level model should disappear from the codebase, not just from the target design.
+
+### Phase 4 Boundary: Do Not Complete Full Legacy Container Cleanup Here
+
+In Phase 4:
+
+- `task` and `operation` overlap is acknowledged as real
+- operation-level confirmation fields are demoted from the primary session path
+- new confirmation behavior should route through `session` and `ExecutionService`
+
+But Phase 4 does not own:
+
+- full `TaskService` deletion
+- full `OperationService` deletion
+- task checkpoint storage rewrite
+- operation/job/evidence/finding storage rewrite
+
+Fixed merge timing:
+
+- Phase 4 records the overlap but does not perform the physical merge.
+- Phase 5 removes operation-id-based skill/module workflow dependencies so modules no longer require `operation` as a top-level container.
+- Phase 6 starts the physical merge because the storage split is where task checkpoints, operation jobs, evidence, findings, artifacts, and reports can be re-owned by `session`.
+- Phase 7 must not depend on `TaskService` or `OperationService` for the primary record retrieval and report flows.
 
 ## Phase Overview
 
@@ -439,6 +476,8 @@ Replace manual low-level session setup with a configurable risk-based confirmati
 
 - This phase must simplify the user experience without weakening scope control.
 - The system should ask for less setup and still enforce boundaries.
+- This phase should not expand into a full physical merge or deletion of `TaskService` and `OperationService`.
+- `task` / `operation` overlap should be documented as follow-up legacy cleanup, while Phase 4 only removes operation-level policy fields from the primary session path.
 
 ### Deliverables
 
@@ -451,6 +490,7 @@ Replace manual low-level session setup with a configurable risk-based confirmati
 - low-risk actions can execute automatically
 - elevated and dangerous actions pause for confirmation
 - confirmation rules are configurable rather than hardcoded into CLI prompts
+- Phase 4 can complete even if legacy `TaskService` and `OperationService` still exist internally, as long as the new session confirmation path does not expose them
 
 ### Test Focus
 
@@ -458,12 +498,31 @@ Replace manual low-level session setup with a configurable risk-based confirmati
 - configuration parsing
 - confirmation-required action handling
 - denied action recording
+- regression coverage that session confirmation does not require user-facing operation policy fields
 
 ## Phase 5: Skill and Module Unification
 
 ### Goal
 
 Provide one extensible capability system that supports both general-purpose skills and red-team modules.
+
+### REWRITE REQUIRED
+
+The current `SKILL.md` system does **not** match the target architecture as-is.
+
+Reusable pieces:
+
+- local capability description files
+- `allowed-tools` as a tool visibility narrowing mechanism
+- `references/` and `scripts/` directory conventions
+
+Not reusable as the target design:
+
+- slash-command-first skill activation
+- task-bound skill profiles
+- operation-id-based workflow skills
+- prompt-body-only module semantics
+- `/skill plan <name> <operation_id>` and `/skill apply <name> <operation_id>` as the primary red-team module flow
 
 ### Work Items
 
@@ -481,22 +540,29 @@ Provide one extensible capability system that supports both general-purpose skil
    - execution inside a persistent red-team session
 4. Define how modules interact with the session controller and execution service.
 5. Retire workflow distinctions that only exist because of the current architecture split.
+6. Define the migration from current `SKILL.md` files to the new skill/module contract.
+7. Explicitly mark current operation-id-based workflow skills as legacy or rewrite targets.
+8. Remove operation-id-based module invocation as a prerequisite for the Phase 6 `task` / `operation` merge.
 
 ### Engineering Notes
 
 - The user can see two labels.
 - The runtime should not need two separate extension systems.
+- Current `SKILL.md` behavior should be treated as implementation history, not as the Phase 5 target contract.
+- The new module contract must express risk level, parameter schema, execution style, and session result ownership outside free-form prompt text.
 
 ### Deliverables
 
 - unified extension contract
 - skill/module vocabulary mapping
 - execution integration rules
+- migration and rewrite notes for existing `SKILL.md` files
 
 ### Exit Criteria
 
 - a module can run once or inside a session
 - skills and modules share a coherent runtime contract
+- the target design no longer depends on operation-id-based skill workflow commands
 
 ### Test Focus
 
@@ -504,6 +570,7 @@ Provide one extensible capability system that supports both general-purpose skil
 - parameter validation
 - tool visibility narrowing
 - risk-level propagation
+- migration behavior for existing built-in skills
 
 ## Phase 6: Session Storage Split
 
@@ -530,11 +597,18 @@ This phase is a storage model rewrite for the persistent red-team product. Do no
    - report to findings and artifacts
 5. Define retention and retrieval rules.
 6. Ensure session-level record lookup can locate all four layers.
+7. Start the physical merge of overlapping legacy top-level containers:
+   - re-own task checkpoints and run records under `session`
+   - re-own operation jobs, events, evidence, and findings under `session`
+   - convert remaining `TaskService` and `OperationService` usage into migration-only or read-only adapters where deletion is not immediately safe
+   - delete legacy services once no primary runtime path depends on them
 
 ### Engineering Notes
 
 - `memory/` is for AI reasoning support.
 - Execution results must not be collapsed into a single undifferentiated memory file.
+- Phase 6 is the first phase where full physical `task` / `operation` merge is in scope.
+- Phase 6 should not preserve `task` and `operation` as parallel top-level containers after their data ownership has moved to `session`.
 
 ### Deliverables
 
@@ -546,6 +620,8 @@ This phase is a storage model rewrite for the persistent red-team product. Do no
 
 - persistent red-team sessions store data in four distinct layers
 - AI memory and analyst-facing outputs are cleanly separated
+- primary runtime storage ownership moves to `session`, not `task` or `operation`
+- remaining `TaskService` and `OperationService` usage is migration-only, read-only, or removed
 
 ### Test Focus
 
@@ -553,6 +629,7 @@ This phase is a storage model rewrite for the persistent red-team product. Do no
 - metadata round-trip behavior
 - cross-layer linking
 - retrieval by session
+- migration or deletion coverage for legacy task and operation storage ownership
 
 ## Phase 7: Record Retrieval and Report Flows
 
@@ -679,8 +756,11 @@ The following concepts should be planned for removal from the final product-faci
 - `/operation` as a primary user workflow
 - the assumption that a red-team run must be started by manual operator command sequences
 - ID-first interaction for common user flows
+- operation-id-based `/skill plan` and `/skill apply` as the primary red-team module workflow
 
 Deletion should happen deliberately and early enough to prevent duplicate architecture from surviving.
+
+Do not use Phase 4 as the full deletion phase for `task` and `operation`. Phase 4 should only remove their policy-related leakage from the new session flow. Phase 5 removes operation-id-based module dependencies, and Phase 6 is the fixed phase where physical storage ownership and service cleanup begin. Phase 7 record retrieval must not depend on `TaskService` or `OperationService` as primary runtime services.
 
 ## Recommended First Implementation Milestone
 

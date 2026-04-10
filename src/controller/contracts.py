@@ -81,6 +81,27 @@ class ExecutionBridge:
     prompt_text: str
 
 
+class ConfirmationDecisionValue(StrEnum):
+    APPROVE = "approve"
+    DENY = "deny"
+
+
+@dataclass(slots=True)
+class ConfirmationRequest:
+    action_name: str
+    risk_level: str
+    target_summary: str | None
+    reason: str
+    message: str
+    request_id: str = field(default_factory=lambda: str(uuid4()))
+
+
+@dataclass(slots=True)
+class ConfirmationDecision:
+    request_id: str
+    decision: ConfirmationDecisionValue
+
+
 @dataclass(slots=True)
 class ControllerRequest:
     raw_input: str
@@ -104,6 +125,7 @@ class ControllerResult:
     message: str | None = None
     session_summary: SessionSummary | None = None
     clarification_request: ClarificationRequest | None = None
+    confirmation_request: ConfirmationRequest | None = None
     execution_bridge: ExecutionBridge | None = None
     bind_session: bool = False
 

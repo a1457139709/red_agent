@@ -67,58 +67,14 @@ Describe what you want in plain language first. Examples:
 
 `Start a recon session for example.com` now starts (or reuses) a redteam session and immediately executes in the current interactive flow with progress visibility.
 
-Use slash commands for advanced and debug workflows. Legacy `/task` and `/operation` commands remain available for migration and explicit operator control, but they do not take over the default plain-language entry flow.
+Use slash commands for skill and shell-level control. Legacy `/task` and `/operation` command families are no longer part of the default user-facing flow.
 
 - `/help`
-- `/help operation`
-- `/help job`
-- `/help finding`
-- `/help evidence`
-- `/help dashboard`
-- `/help task`
 - `/help skill`
 - `/clear`
-- `/operation create`
-- `/operation list [status] [limit]`
-- `/operation show <operation_id>`
-- `/operation pause <operation_id>`
-- `/operation resume <operation_id>`
-- `/job create <operation_id>`
-- `/job list <operation_id> [status] [limit]`
-- `/job show <job_id>`
-- `/job cancel <job_id>`
-- `/finding list <operation_id> [limit]`
-- `/finding show <finding_id>`
-- `/finding confirm <finding_id>`
-- `/finding dismiss <finding_id>`
-- `/evidence list <operation_id> [limit]`
-- `/evidence show <evidence_id>`
-- `/dashboard [operation_id]`
-- `/planner plan <operation_id>`
-- `/planner apply <plan_id> [1,3,...]`
-- `/task create`
-- `/task list [status] [limit]`
-- `/task recent [limit]`
-- `/task find <query> [limit]`
-- `/task show <task_id>`
-- `/task status <task_id>`
-- `/task checkpoints <task_id> [limit]`
-- `/task checkpoint <checkpoint_id>`
-- `/task runs <task_id> [limit]`
-- `/task run <run_id>`
-- `/task logs <task_id> [limit]`
-- `/task resume <task_id>`
-- `/task detach`
-- `/task complete`
-- `/task help`
-
-Use `latest` or `last` in task-facing commands to target the most recently updated task.
-
 - `/skill list`
 - `/skill show <name>`
 - `/skill use <name>`
-- `/skill plan <name> <operation_id>`
-- `/skill apply <name> <operation_id>`
 - `/skill reload`
 - `/skill clear`
 - `/skill current`
@@ -126,8 +82,8 @@ Use `latest` or `last` in task-facing commands to target the most recently updat
 - `/skill-name <prompt>`
 
 `/help` now leads with natural-language examples and keeps command groups in advanced help topics.
-Use `/help operation`, `/help job`, `/help task`, and `/help skill` for detailed command help.
-`/clear` resets only the in-memory context and clears the screen while preserving any active session binding, active task binding, or active shell skill.
+Use `/help skill` for detailed command help.
+`/clear` resets only the in-memory context and clears the screen while preserving active session binding and active shell skill.
 
 ## Red-Team Runtime Status
 
@@ -159,6 +115,8 @@ Phase 2 through Phase 7 currently deliver:
 - foreground execution closure for session-first requests via `ExecutionService` and `ForegroundRunner`
 - structured execution progress events for in-session rendering (`execution_started`, step events, terminal events)
 - redteam requests that execute in the current session by default (no manual secondary run stage)
+- deterministic risk policy loading from `.red-code/config/risk-policy.json` with built-in defaults
+- structured confirmation events (`confirmation_required`, `confirmation_approved`, `confirmation_denied`) and execution blocking on denied confirmations
 
 The current runtime still intentionally does not yet deliver:
 

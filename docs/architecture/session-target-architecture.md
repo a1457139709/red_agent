@@ -216,6 +216,40 @@ Session Service 统一替代当前 `task` 与 `operation` 的顶层职责。
 - 单次执行
 - 挂接到持久化 redteam session
 
+### 9.1 当前 `SKILL.md` 设计的边界
+
+当前已有 `SKILL.md` 机制只能作为现状参考，不能作为目标架构模板。
+
+当前设计主要围绕：
+
+- prompt body 注入
+- `allowed-tools` 工具可见性
+- 显式 `/skill` 命令激活
+- task 绑定
+- workflow skill 通过 `operation_id` 计划和应用 jobs
+
+这些能力与目标架构存在明显差距：
+
+- 目标架构以自然语言和 Agent Controller 为主入口，不以 `/skill` 命令为主入口
+- 目标架构以 `session` 为顶层上下文，不以 `task` 或 `operation_id` 为用户入口
+- 红队 module 需要风险等级、参数模式、执行方式、结果归属和确认策略
+- 红队执行应通过 `ExecutionService` 和 typed security tools 闭环，而不是由当前 workflow skill 暴露的 plan/apply 命令塑造用户流程
+
+因此 Phase 5 需要重写 skill/module 目标契约。
+
+可以复用：
+
+- `SKILL.md` 文件作为本地能力描述载体的经验
+- `allowed-tools` 对可见工具进行收窄的能力
+- `references/` 与 `scripts/` 的组织方式
+
+不应复用为目标路径：
+
+- 以 `/skill plan <name> <operation_id>` 作为主流程
+- 以 `/skill apply <name> <operation_id>` 作为主流程
+- 依赖 `operation_id` 的 workflow skill 用户模型
+- 仅靠 prompt body 表达红队 module 的风险与执行语义
+
 ## 10. Execution Architecture
 
 ### 10.1 Foreground-First Execution
@@ -393,6 +427,24 @@ Session Service 统一替代当前 `task` 与 `operation` 的顶层职责。
 - task/operation dual service model
 - user-facing identifier model
 - execution closure
+- current `SKILL.md` workflow model if it is used as the basis for redteam modules
+
+### 14.4 `task` / `operation` 合并时机
+
+`task` 和 `operation` 作为旧顶层容器存在明显重合，但不应在 Phase 4 完成物理合并。
+
+固定时机如下：
+
+- Phase 4：只移除 policy 相关泄漏，将 operation-level confirmation fields 从主 session 流程降级
+- Phase 5：移除 operation-id-based skill/module workflow 依赖，避免 module 继续要求 `operation_id`
+- Phase 6：开始物理合并，将 task checkpoints、task runs、operation jobs、events、evidence、findings 等所有权迁移到 `session`
+- Phase 7：记录查询与报告生成主路径不应再依赖 `TaskService` 或 `OperationService`
+
+这意味着：
+
+- `TaskService` 与 `OperationService` 可以在 Phase 4 之后短期作为迁移或只读适配器存在
+- 它们不应作为 Phase 7 之后的主要 runtime service
+- 最终架构仍必须移除 `task` 与 `operation` 作为并列顶层概念
 
 ## 15. Migration Direction
 

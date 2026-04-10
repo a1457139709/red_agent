@@ -4,6 +4,7 @@ from importlib import import_module
 
 __all__ = [
     "CheckpointService",
+    "ConfirmationPolicyService",
     "DashboardService",
     "ExecutionService",
     "EvidenceService",
@@ -16,10 +17,12 @@ __all__ = [
     "SessionService",
     "ScopePolicyService",
     "TaskService",
+    "ToolAccessPolicyService",
 ]
 
 _EXPORTS = {
     "CheckpointService": ".checkpoint_service",
+    "ConfirmationPolicyService": ".confirmation_policy_service",
     "DashboardService": ".dashboard_service",
     "ExecutionService": ".execution_service",
     "EvidenceService": ".evidence_service",
@@ -32,6 +35,7 @@ _EXPORTS = {
     "SessionService": ".session_service",
     "ScopePolicyService": ".scope_policy_service",
     "TaskService": ".task_service",
+    "ToolAccessPolicyService": ".tool_access_policy_service",
 }
 
 

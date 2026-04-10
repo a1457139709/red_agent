@@ -27,8 +27,29 @@ def test_execution_progress_event_to_dict_includes_required_fields():
         "step_label": "http_probe",
         "target_summary": "example.com",
         "message": "running",
+        "action_name": None,
+        "risk_level": None,
+        "reason": None,
         "timestamp": "2026-04-09T10:00:00+00:00",
     }
+
+
+def test_execution_progress_event_supports_confirmation_fields():
+    event = ExecutionProgressEvent(
+        event_type=ExecutionEventType.CONFIRMATION_REQUIRED,
+        session_id="session-1",
+        session_public_id="S0001",
+        action_name="poc_execute",
+        risk_level="dangerous",
+        reason="requires explicit approval",
+    )
+
+    payload = event.to_dict()
+
+    assert payload["event_type"] == "confirmation_required"
+    assert payload["action_name"] == "poc_execute"
+    assert payload["risk_level"] == "dangerous"
+    assert payload["reason"] == "requires explicit approval"
 
 
 def test_execution_outcome_is_completed_only_for_success():

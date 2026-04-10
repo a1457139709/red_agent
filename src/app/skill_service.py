@@ -92,8 +92,8 @@ class SkillService:
             if skill.manifest.workflow_profile:
                 raise ValueError(
                     f"Skill '{skill.manifest.name}' disables direct model invocation. "
-                    f"Use /skill plan {skill.manifest.name} <operation_id> or "
-                    f"/skill apply {skill.manifest.name} <operation_id>."
+                    "This workflow-only skill is not exposed through slash-command planning in the "
+                    "session-first flow."
                 )
             raise ValueError(f"Skill '{skill.manifest.name}' disables direct model invocation.")
         normalized_shell = self._normalize_shell(skill.manifest.shell)
