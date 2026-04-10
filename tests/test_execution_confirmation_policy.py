@@ -5,7 +5,7 @@ from agent.settings import Settings
 from agent.state import SessionState
 from app.execution_service import ExecutionService
 from app.session_service import SessionService
-from models.risk_policy import ConfirmationRequestPayload
+from models.risk_policy import ConfirmationRequestPayload, RiskLevel
 from models.session import SessionMode, SessionStatus
 from runtime.execution_events import ExecutionEventType
 from tools.executor import ToolExecutor
@@ -158,3 +158,60 @@ def test_execution_service_resumes_when_confirmation_is_approved(tmp_path):
 
     assert outcome.status == "completed"
     assert ExecutionEventType.CONFIRMATION_APPROVED in [event.event_type for event in events]
+
+
+def test_execution_service_requires_confirmation_for_unknown_redteam_action(tmp_path):
+    settings = build_settings(tmp_path)
+    session_service = SessionService.from_settings(settings)
+    session = session_service.create_session(
+        title="Redteam Session",
+        goal="Run unknown action",
+        mode=SessionMode.REDTEAM,
+        status=SessionStatus.ACTIVE,
+    )
+
+    async def fake_agent_loop(question, state, runtime_executor, current_settings, **kwargs):
+        runtime_executor.execute("unknown_new_action", {"target": "example.com"})
+        return {"status": "completed", "response": "done", "messages": [], "usage": {}}
+
+    async def fake_apply_result_to_session(**kwargs):
+        return None
+
+    from runtime.foreground_runner import ForegroundRunner
+
+    execution_service = ExecutionService(
+        session_service=session_service,
+        foreground_runner=ForegroundRunner(
+            agent_loop_fn=fake_agent_loop,
+            apply_result_to_session_fn=fake_apply_result_to_session,
+        ),
+        confirmation_policy_service=ExecutionService.from_settings(settings).confirmation_policy_service,
+        tool_access_policy_service=ExecutionService.from_settings(settings).tool_access_policy_service,
+    )
+    events = []
+    confirmations: list[ConfirmationRequestPayload] = []
+
+    outcome = asyncio.run(
+        execution_service.execute_session(
+            session_identifier=session.id,
+            prompt_text="run unknown action",
+            session_state=SessionState(),
+            skill_service=FakeSkillService(["unknown_new_action"]),
+            tool_executor=ToolExecutor({"unknown_new_action": FakeTool("unknown_new_action")}),
+            settings=settings,
+            on_progress=events.append,
+            on_confirmation=lambda payload: (confirmations.append(payload) or False),
+        )
+    )
+
+    assert outcome.status == "blocked"
+    assert len(confirmations) == 1
+    assert confirmations[0].action_name == "unknown_new_action"
+    assert confirmations[0].risk_level == RiskLevel.ELEVATED
+    assert [event.event_type for event in events if event.event_type in {
+        ExecutionEventType.CONFIRMATION_REQUIRED,
+        ExecutionEventType.CONFIRMATION_DENIED,
+    }] == [
+        ExecutionEventType.CONFIRMATION_REQUIRED,
+        ExecutionEventType.CONFIRMATION_DENIED,
+    ]

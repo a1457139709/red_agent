@@ -22,6 +22,11 @@ TOOL_CAPABILITIES: dict[str, CapabilityTier] = {
     "edit_file": CapabilityTier.WRITE,
     "bash": CapabilityTier.EXECUTE,
     "delete_file": CapabilityTier.DESTRUCTIVE,
+    "dns_lookup": CapabilityTier.EXECUTE,
+    "http_probe": CapabilityTier.EXECUTE,
+    "tls_inspect": CapabilityTier.EXECUTE,
+    "banner_grab": CapabilityTier.EXECUTE,
+    "port_scan": CapabilityTier.EXECUTE,
 }
 
 

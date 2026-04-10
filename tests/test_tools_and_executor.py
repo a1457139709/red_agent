@@ -4,7 +4,7 @@ from pathlib import Path
 import tools.bash as bash_module
 import tools.webFetch as web_fetch_module
 import tools.webSearch as web_search_module
-from tools import build_tool_registry, get_tools
+from tools import build_tool_registry, get_runtime_tools
 from tools.executor import ToolExecutionError, ToolExecutor
 from tools.policy import CapabilityTier
 from tools.search import search
@@ -14,7 +14,7 @@ from tools.shells import ShellSpec
 def test_build_tool_registry_matches_available_tools():
     registry = build_tool_registry()
 
-    assert set(registry.keys()) == {tool.name for tool in get_tools()}
+    assert set(registry.keys()) == {tool.name for tool in get_runtime_tools()}
 
 
 def test_tool_executor_handles_block_and_confirm():

@@ -10,7 +10,13 @@ import pytest
 
 from models.scope_policy import ScopePolicy
 from orchestration.scope_validator import AdmissionRequest, ScopeValidator, TargetDescriptor
-from tools import build_security_tool_registry, build_tool_registry, get_security_tools, get_tools
+from tools import (
+    build_security_tool_registry,
+    build_tool_registry,
+    get_runtime_tools,
+    get_security_tools,
+    get_tools,
+)
 from tools.security.banner_grab import BannerGrabSecurityTool
 from tools.security.dns_lookup import DnsLookupSecurityTool, _build_query
 from tools.security.http_probe import HttpProbeSecurityTool
@@ -111,10 +117,12 @@ def build_dns_response() -> bytes:
 
 def test_security_tool_registry_keeps_legacy_and_v2_families_separate():
     legacy_names = {tool.name for tool in get_tools()}
+    runtime_names = {tool.name for tool in get_runtime_tools()}
     security_names = {tool.name for tool in get_security_tools()}
 
-    assert set(build_tool_registry()) == legacy_names
+    assert set(build_tool_registry()) == runtime_names
     assert set(build_security_tool_registry()) == security_names
+    assert runtime_names == legacy_names.union(security_names)
     assert security_names == {
         "dns_lookup",
         "http_probe",

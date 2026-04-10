@@ -36,6 +36,7 @@ The repository now contains two parallel runtime families:
 - scope-aware target validation for the v2 red-team runtime
 - a durable scheduler/worker runtime with job queueing, leases, heartbeats, retries, and cooperative cancellation
 - pure-Python typed security tools for DNS, HTTP, TLS, banner grabbing, and TCP port scans
+- session runtime exposure of typed security tools via LangChain-compatible adapters
 - structured typed-tool results with evidence and finding candidates
 - automatic persistence of typed-tool evidence artifacts and finding records
 - evidence-to-finding traceability links for structured review and export
@@ -99,7 +100,7 @@ Phase 2 through Phase 7 currently deliver:
 - a v2-only scoped execution service that hard-blocks out-of-scope work before execution
 - a job orchestration layer that queues dependency-ready jobs, recovers stale leases, blocks failed dependency chains, and applies cooperative cancellation
 - a worker runtime with atomic job leasing, heartbeat refresh, retry backoff, timeout handling, and `drain()` support for sequential background-style execution
-- a dedicated typed-security tool registry separated from the legacy LangChain tool registry
+- a dedicated typed-security tool registry for operation/job execution, plus session-facing adapter tools in the runtime registry
 - pure-Python typed security tools: `dns_lookup`, `http_probe`, `tls_inspect`, `banner_grab`, and `port_scan`
 - `dns_lookup` validates both the resolver egress target and the queried logical name against scope
 - `http_probe` captures only the first HTTP response and does not auto-follow redirects
