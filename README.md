@@ -65,6 +65,8 @@ Describe what you want in plain language first. Examples:
 - `Start a recon session for example.com`
 - `What did you already do?`
 
+`Start a recon session for example.com` now starts (or reuses) a redteam session and immediately executes in the current interactive flow with progress visibility.
+
 Use slash commands for advanced and debug workflows. Legacy `/task` and `/operation` commands remain available for migration and explicit operator control, but they do not take over the default plain-language entry flow.
 
 - `/help`
@@ -154,6 +156,9 @@ Phase 2 through Phase 7 currently deliver:
 - persisted planner plans and proposal application flows for `/planner`
 - `/operation resume` context summaries built from structured state rather than transcript replay
 - planner write-back of newly derived stable facts into structured memory
+- foreground execution closure for session-first requests via `ExecutionService` and `ForegroundRunner`
+- structured execution progress events for in-session rendering (`execution_started`, step events, terminal events)
+- redteam requests that execute in the current session by default (no manual secondary run stage)
 
 The current runtime still intentionally does not yet deliver:
 

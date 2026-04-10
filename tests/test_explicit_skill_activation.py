@@ -22,6 +22,7 @@ from main import (
     parse_skill_shorthand,
     run_interactive_shell,
 )
+from runtime.execution_events import ExecutionOutcome
 from skills.registry import SkillRegistry
 from runtime.task_runner import TaskRunner
 from tools import build_tool_registry
@@ -448,7 +449,7 @@ def test_run_interactive_shell_clear_preserves_active_skill_and_clears_screen(
     skill_service = create_skill_service()
     task_runner = TaskRunner(task_service, run_service, skill_service)
     tool_executor = ToolExecutor(build_tool_registry())
-    captured = {"prompts": [], "clears": 0, "answers": []}
+    captured = {"calls": [], "clears": 0, "answers": []}
     responses = iter([
         "/clear",
         "inspect configs",
@@ -458,34 +459,18 @@ def test_run_interactive_shell_clear_preserves_active_skill_and_clears_screen(
     def fake_input(_prompt):
         return next(responses)
 
-    async def fake_agent_loop(
-        question,
-        state,
-        tool_executor,
-        current_settings,
-        *,
-        system_prompt=None,
-        tools=None,
-    ):
-        captured["prompts"].append((question, system_prompt, [tool.name for tool in tools or []]))
-        return {
-            "status": "completed",
-            "response": "done",
-            "messages": [
-                AIMessage(
-                    content="done",
-                    tool_calls=[],
-                    usage_metadata={
-                        "input_tokens": 4,
-                        "output_tokens": 4,
-                        "total_tokens": 8,
-                    },
+    class FakeExecutionService:
+        async def execute_session(self, **kwargs):
+            captured["calls"].append(
+                (
+                    kwargs["prompt_text"],
+                    kwargs["skill_name"],
                 )
-            ],
-            "usage": {"input_tokens": 4, "output_tokens": 4, "total_tokens": 8},
-        }
+            )
+            return ExecutionOutcome(status="completed", response="done")
 
-    monkeypatch.setattr(main_module, "agent_loop", fake_agent_loop)
+    execution_service = FakeExecutionService()
+
     monkeypatch.setattr(main_module.ColoredOutput, "clear_screen", lambda: captured.__setitem__("clears", captured["clears"] + 1))
     monkeypatch.setattr(main_module.ColoredOutput, "print_final_answer", captured["answers"].append)
     monkeypatch.setattr(main_module.ColoredOutput, "print_error", captured["answers"].append)
@@ -496,6 +481,7 @@ def test_run_interactive_shell_clear_preserves_active_skill_and_clears_screen(
             session_state=session_state,
             shell_state=shell_state,
             tool_executor=tool_executor,
+            execution_service=execution_service,
             task_service=task_service,
             run_service=run_service,
             task_runner=task_runner,
@@ -504,10 +490,9 @@ def test_run_interactive_shell_clear_preserves_active_skill_and_clears_screen(
         )
     )
 
-    question, system_prompt, tool_names = captured["prompts"][0]
-    assert question == "inspect configs"
-    assert "Security Audit" in system_prompt
-    assert tool_names == ["bash", "list_dir", "read_file", "search"]
+    prompt_text, skill_name = captured["calls"][0]
+    assert prompt_text == "inspect configs"
+    assert skill_name == "security-audit"
     assert captured["clears"] == 1
     assert shell_state.active_skill_name == "security-audit"
     assert build_prompt(shell_state) == "\nskill:security-audit > "

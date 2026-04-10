@@ -5,6 +5,7 @@ from importlib import import_module
 __all__ = [
     "CheckpointService",
     "DashboardService",
+    "ExecutionService",
     "EvidenceService",
     "FindingService",
     "JobService",
@@ -20,6 +21,7 @@ __all__ = [
 _EXPORTS = {
     "CheckpointService": ".checkpoint_service",
     "DashboardService": ".dashboard_service",
+    "ExecutionService": ".execution_service",
     "EvidenceService": ".evidence_service",
     "FindingService": ".finding_service",
     "JobService": ".job_service",

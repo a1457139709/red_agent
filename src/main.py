@@ -12,6 +12,7 @@ from agent.state import SessionState
 from app.checkpoint_service import CheckpointService
 from app.dashboard_service import DashboardService
 from app.evidence_service import EvidenceService
+from app.execution_service import ExecutionService
 from app.finding_service import FindingService
 from app.job_service import JobService
 from app.operation_service import OperationService
@@ -725,36 +726,45 @@ async def execute_controller_bridge(
     skill_service: SkillService,
     tool_executor: ToolExecutor,
     settings: Settings,
+    execution_service: ExecutionService,
+    ui: CliPresenter,
 ) -> None:
     if result.execution_bridge is None:
         return
 
+    session_identifier = (
+        result.session_summary.id
+        if result.session_summary is not None
+        else shell_state.active_session_id
+    )
+    if session_identifier is None:
+        ui.show_error("Execution bridge is missing an active session binding.")
+        return
+
     reset_steps()
-    if result.execution_bridge.kind == ExecutionBridgeKind.ACTIVE_SKILL_RUNTIME:
-        runtime_config = await skill_service.build_skill_runtime_config(
-            skill_name=shell_state.active_skill_name,
-            context_summary=session_state.context_summary,
-        )
-    else:
-        runtime_config = await skill_service.build_base_runtime_config(
-            context_summary=session_state.context_summary,
-        )
-    result_payload = await run_prompt_with_runtime(
-        question=result.execution_bridge.prompt_text,
-        runtime_config=runtime_config,
+    skill_name = (
+        shell_state.active_skill_name
+        if result.execution_bridge.kind == ExecutionBridgeKind.ACTIVE_SKILL_RUNTIME
+        else None
+    )
+    outcome = await execution_service.execute_session(
+        session_identifier=session_identifier,
+        prompt_text=result.execution_bridge.prompt_text,
         session_state=session_state,
+        skill_service=skill_service,
         tool_executor=tool_executor,
         settings=settings,
+        skill_name=skill_name,
+        on_progress=ui.show_execution_progress,
         on_info=ColoredOutput.print_info,
         on_error=ColoredOutput.print_error,
     )
 
-    text = result_payload["response"]
-    status = result_payload.get("status", "completed")
-    if status == "completed":
+    text = outcome.response
+    if outcome.is_completed:
         ColoredOutput.print_final_answer(text)
     else:
-        ColoredOutput.print_error(text)
+        ColoredOutput.print_error(outcome.error or text)
 
 
 async def run_prompt_with_runtime(
@@ -1551,6 +1561,7 @@ async def run_interactive_shell(
     dashboard_service: DashboardService | None = None,
     session_service: SessionService | None = None,
     controller: AgentController | None = None,
+    execution_service: ExecutionService | None = None,
     task_service: TaskService,
     run_service: RunService,
     checkpoint_service: CheckpointService | None = None,
@@ -1568,6 +1579,10 @@ async def run_interactive_shell(
     dashboard_service = dashboard_service or DashboardService.from_settings(settings)
     session_service = session_service or SessionService.from_settings(settings)
     controller = controller or AgentController.from_session_service(session_service)
+    execution_service = execution_service or ExecutionService.from_settings(
+        settings,
+        session_service=session_service,
+    )
     ui = get_presenter()
     while True:
         try:
@@ -1738,6 +1753,8 @@ async def run_interactive_shell(
                 skill_service=skill_service,
                 tool_executor=tool_executor,
                 settings=settings,
+                execution_service=execution_service,
+                ui=ui,
             )
         except Exception as exc:
             ColoredOutput.print_error(str(exc))
@@ -1750,6 +1767,10 @@ async def main() -> None:
     operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     session_service = SessionService.from_settings(settings)
+    execution_service = ExecutionService.from_settings(
+        settings,
+        session_service=session_service,
+    )
     task_service = TaskService.from_settings(settings)
     run_service = RunService.from_settings(settings)
     checkpoint_service = CheckpointService.from_settings(settings)
@@ -1776,6 +1797,7 @@ async def main() -> None:
         job_service=job_service,
         session_service=session_service,
         controller=controller,
+        execution_service=execution_service,
         task_service=task_service,
         run_service=run_service,
         checkpoint_service=checkpoint_service,

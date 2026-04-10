@@ -32,6 +32,7 @@ from models.run import Run, TaskLogEntry
 from models.skill import LoadedSkill
 from models.scope_policy import ScopePolicy
 from models.task import Task
+from runtime.execution_events import ExecutionEventType, ExecutionProgressEvent
 
 
 SinkFn = Callable[[str], None]
@@ -216,7 +217,7 @@ class CliPresenter:
         examples.add_column("Example", style="bold green", no_wrap=True)
         examples.add_column("What Happens", style="white")
         examples.add_row("Summarize this repository structure", "Starts or reuses a normal session and runs the normal prompt flow.")
-        examples.add_row("Start a recon session for example.com", "Starts or reuses a redteam session and shows the session summary.")
+        examples.add_row("Start a recon session for example.com", "Starts or reuses a redteam session, executes in foreground, and renders progress in-session.")
         examples.add_row("What did you already do?", "Looks up the current or requested session context.")
 
         topics = Table(box=ASCII_BOX, expand=True, header_style="bold")
@@ -1155,6 +1156,73 @@ class CliPresenter:
                 )
             renderables.append(skipped_table)
         self._emit(Group(*renderables))
+
+    def show_execution_progress(self, event: ExecutionProgressEvent) -> None:
+        if event.event_type == ExecutionEventType.STEP_STARTED:
+            label = event.step_label or "step"
+            self._emit(
+                Rule(
+                    f" session {event.session_public_id} | {label} started ",
+                    style="cyan",
+                    characters="-",
+                ),
+                kind="info",
+            )
+            return
+
+        if event.event_type == ExecutionEventType.STEP_COMPLETED:
+            label = event.step_label or "step"
+            message = event.message or "completed"
+            self._emit(
+                Panel(
+                    Text(f"{label}: {message}"),
+                    title=f"Step Completed ({event.session_public_id})",
+                    border_style="green",
+                    box=ASCII_BOX,
+                ),
+                kind="success",
+            )
+            return
+
+        if event.event_type == ExecutionEventType.STEP_FAILED:
+            label = event.step_label or "step"
+            message = event.message or "failed"
+            self._emit(
+                Panel(
+                    Text(f"{label}: {message}"),
+                    title=f"Step Failed ({event.session_public_id})",
+                    border_style="red",
+                    box=ASCII_BOX,
+                ),
+                kind="error",
+            )
+            return
+
+        title_style = {
+            ExecutionEventType.EXECUTION_STARTED: ("Execution Started", "blue", "info"),
+            ExecutionEventType.EXECUTION_PAUSED: ("Execution Paused", "yellow", "info"),
+            ExecutionEventType.EXECUTION_COMPLETED: ("Execution Completed", "green", "success"),
+            ExecutionEventType.EXECUTION_FAILED: ("Execution Failed", "red", "error"),
+        }.get(event.event_type, ("Execution Event", "blue", "info"))
+        title, border_style, sink_kind = title_style
+        details = [
+            f"Session: {event.session_public_id}",
+            f"Event: {event.event_type.value}",
+        ]
+        if event.target_summary:
+            details.append(f"Target: {event.target_summary}")
+        if event.message:
+            details.append(f"Message: {event.message}")
+        details.append(f"At: {self._format_timestamp_compact(event.timestamp)}")
+        self._emit(
+            Panel(
+                Text("\n".join(details)),
+                title=title,
+                border_style=border_style,
+                box=ASCII_BOX,
+            ),
+            kind=sink_kind,
+        )
 
     def show_info(self, message: str) -> None:
         self._emit(Panel(Text(message), title="Info", border_style="blue", box=ASCII_BOX), kind="info")

@@ -50,7 +50,7 @@ class AgentController:
                 request=request,
                 classification=classification,
                 mode=SessionMode.REDTEAM,
-                execute=False,
+                execute=True,
             )
         return self._handle_session_request(
             request=request,
@@ -174,14 +174,20 @@ class AgentController:
         )
         summary = SessionSummary.from_session(session, reused=reused)
         if execute:
+            intent = (
+                ControllerIntent.NORMAL_REQUEST
+                if mode == SessionMode.NORMAL
+                else ControllerIntent.REDTEAM_REQUEST
+            )
+            session_label = "normal" if mode == SessionMode.NORMAL else "redteam"
             bridge_kind = (
                 ExecutionBridgeKind.ACTIVE_SKILL_RUNTIME
                 if request.active_skill_name
                 else ExecutionBridgeKind.BASE_RUNTIME
             )
-            message = None if reused else f"Started normal session {summary.public_id}: {summary.title}"
+            message = None if reused else f"Started {session_label} session {summary.public_id}: {summary.title}"
             return ControllerResult.handled(
-                intent=ControllerIntent.NORMAL_REQUEST,
+                intent=intent,
                 message=message,
                 session_summary=summary,
                 execution_bridge=ExecutionBridge(

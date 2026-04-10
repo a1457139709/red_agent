@@ -59,6 +59,12 @@ Development docs describe planning, review, and iteration guidance.
 10. `development/session-phase-2-finalization.en.md`
    Finalized Phase 2 baseline that freezes the controller boundary, intent model, clarification
    policy, CLI role, and the rewrite requirement for `src/main.py`.
+11. `development/session-phase-3-implementation-checklist.en.md`
+   Implementation-ready checklist for Phase 3, covering foreground execution closure, execution
+   services, progress events, controller integration, and the rejection of manual multi-step execution UX.
+12. `development/session-phase-3-finalization.en.md`
+   Finalized Phase 3 baseline that freezes the foreground-first execution model, execution service
+   boundary, progress event model, and the demotion of worker-facing execution from the main product path.
 
 ## Read These First
 

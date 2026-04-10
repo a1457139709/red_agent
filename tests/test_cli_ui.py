@@ -7,6 +7,7 @@ from models.checkpoint import CheckpointSummary
 from models.run import Run, RunStatus, TaskLogEntry, TaskLogLevel
 from models.skill import LoadedSkill, SkillManifest
 from models.task import Task, TaskStatus
+from runtime.execution_events import ExecutionEventType, ExecutionProgressEvent
 
 
 def build_presenter(outputs: list[str]) -> CliPresenter:
@@ -200,3 +201,54 @@ def test_presenter_detail_views_include_key_fields_without_blob_internals():
     assert "Final Answer" in merged and "Completed successfully." in merged
     assert "Error" in merged and "Something failed." in merged
     assert "Success" in merged and "Saved." in merged
+
+
+def test_presenter_renders_structured_execution_progress_events():
+    outputs: list[str] = []
+    presenter = build_presenter(outputs)
+
+    presenter.show_execution_progress(
+        ExecutionProgressEvent(
+            event_type=ExecutionEventType.EXECUTION_STARTED,
+            session_id="session-1",
+            session_public_id="S0001",
+            message="Foreground execution started.",
+            timestamp="2026-04-09T10:00:00+00:00",
+        )
+    )
+    presenter.show_execution_progress(
+        ExecutionProgressEvent(
+            event_type=ExecutionEventType.STEP_STARTED,
+            session_id="session-1",
+            session_public_id="S0001",
+            step_type="tool",
+            step_label="http_probe",
+            timestamp="2026-04-09T10:00:01+00:00",
+        )
+    )
+    presenter.show_execution_progress(
+        ExecutionProgressEvent(
+            event_type=ExecutionEventType.STEP_COMPLETED,
+            session_id="session-1",
+            session_public_id="S0001",
+            step_type="tool",
+            step_label="http_probe",
+            message="ok",
+            timestamp="2026-04-09T10:00:02+00:00",
+        )
+    )
+    presenter.show_execution_progress(
+        ExecutionProgressEvent(
+            event_type=ExecutionEventType.EXECUTION_FAILED,
+            session_id="session-1",
+            session_public_id="S0001",
+            message="boom",
+            timestamp="2026-04-09T10:00:03+00:00",
+        )
+    )
+
+    merged = "\n\n".join(outputs)
+    assert "Execution Started" in merged
+    assert "session S0001 | http_probe started" in merged
+    assert "Step Completed (S0001)" in merged
+    assert "Execution Failed" in merged

@@ -1,6 +1,7 @@
 import asyncio
 
 import main as main_module
+from runtime.execution_events import ExecutionOutcome
 from agent.settings import Settings
 from agent.state import SessionState
 from app.run_service import RunService
@@ -27,6 +28,35 @@ from models.session import SessionMode
 from runtime.task_runner import TaskRunner
 from tools import build_tool_registry
 from tools.executor import ToolExecutor
+
+
+class FakeExecutionService:
+    def __init__(self, *, outcome: ExecutionOutcome | None = None) -> None:
+        self.calls: list[dict[str, str | None]] = []
+        self.outcome = outcome or ExecutionOutcome(status="completed", response="done")
+
+    async def execute_session(
+        self,
+        *,
+        session_identifier: str,
+        prompt_text: str,
+        session_state,
+        skill_service,
+        tool_executor,
+        settings,
+        skill_name: str | None = None,
+        on_progress=None,
+        on_info=None,
+        on_error=None,
+    ) -> ExecutionOutcome:
+        self.calls.append(
+            {
+                "session_identifier": session_identifier,
+                "prompt_text": prompt_text,
+                "skill_name": skill_name,
+            }
+        )
+        return self.outcome
 
 
 def build_settings(tmp_path):
@@ -63,7 +93,7 @@ def test_agent_controller_creates_and_reuses_normal_session(tmp_path):
     assert second.session_summary.reused
 
 
-def test_agent_controller_starts_redteam_session_without_execution_bridge(tmp_path):
+def test_agent_controller_starts_redteam_session_with_execution_bridge(tmp_path):
     settings = build_settings(tmp_path)
     session_service = SessionService.from_settings(settings)
     controller = AgentController.from_session_service(session_service)
@@ -74,7 +104,8 @@ def test_agent_controller_starts_redteam_session_without_execution_bridge(tmp_pa
 
     assert result.status == ControllerResultStatus.HANDLED
     assert result.intent == ControllerIntent.REDTEAM_REQUEST
-    assert result.execution_bridge is None
+    assert result.execution_bridge is not None
+    assert result.execution_bridge.kind == ExecutionBridgeKind.BASE_RUNTIME
     assert result.session_summary is not None
     assert result.session_summary.mode.value == "redteam"
     assert result.bind_session
@@ -179,7 +210,8 @@ def test_agent_controller_active_task_does_not_override_record_lookup_or_redteam
     assert record_result.intent == ControllerIntent.RECORD_LOOKUP_REQUEST
     assert record_result.execution_bridge is None
     assert redteam_result.intent == ControllerIntent.REDTEAM_REQUEST
-    assert redteam_result.execution_bridge is None
+    assert redteam_result.execution_bridge is not None
+    assert redteam_result.execution_bridge.kind == ExecutionBridgeKind.BASE_RUNTIME
     assert clarification_result.status == ControllerResultStatus.CLARIFICATION_REQUIRED
     assert clarification_result.execution_bridge is None
 
@@ -236,31 +268,14 @@ def test_run_interactive_shell_routes_plain_text_through_controller_and_skill_br
     controller = AgentController.from_session_service(session_service)
     skill_service = main_module.create_skill_service()
     task_runner = TaskRunner(task_service, run_service, skill_service)
+    execution_service = FakeExecutionService()
     tool_executor = ToolExecutor(build_tool_registry())
-    captured = {"prompts": [], "answers": []}
+    captured = {"answers": []}
     responses = iter(["inspect the configs", "/quit"])
 
     def fake_input(_prompt):
         return next(responses)
 
-    async def fake_agent_loop(
-        question,
-        state,
-        runtime_executor,
-        current_settings,
-        *,
-        system_prompt=None,
-        tools=None,
-    ):
-        captured["prompts"].append((question, system_prompt, [tool.name for tool in tools or []]))
-        return {
-            "status": "completed",
-            "response": "done",
-            "messages": [],
-            "usage": {"total_tokens": 8},
-        }
-
-    monkeypatch.setattr(main_module, "agent_loop", fake_agent_loop)
     monkeypatch.setattr(main_module.ColoredOutput, "print_final_answer", captured["answers"].append)
     monkeypatch.setattr(main_module.ColoredOutput, "print_error", captured["answers"].append)
     monkeypatch.setattr(main_module.ColoredOutput, "print_info", captured["answers"].append)
@@ -271,23 +286,25 @@ def test_run_interactive_shell_routes_plain_text_through_controller_and_skill_br
             session_state=session_state,
             shell_state=shell_state,
             tool_executor=tool_executor,
-            session_service=session_service,
-            controller=controller,
-            task_service=task_service,
-            run_service=run_service,
-            task_runner=task_runner,
+                session_service=session_service,
+                controller=controller,
+                execution_service=execution_service,
+                task_service=task_service,
+                run_service=run_service,
+                task_runner=task_runner,
             skill_service=skill_service,
             input_func=fake_input,
         )
     )
 
-    question, system_prompt, _tool_names = captured["prompts"][0]
-    assert question == "inspect the configs"
-    assert "Security Audit" in system_prompt
+    assert len(execution_service.calls) == 1
+    assert execution_service.calls[0]["prompt_text"] == "inspect the configs"
+    assert execution_service.calls[0]["skill_name"] == "security-audit"
     assert shell_state.active_session_mode is not None
     assert shell_state.active_session_mode.value == "normal"
     assert shell_state.active_session_public_id is not None
     assert build_prompt(shell_state) == "\nskill:security-audit > "
+    assert "done" in captured["answers"]
 
 
 def test_run_interactive_shell_keeps_plain_text_on_session_flow_with_active_task_binding(
@@ -296,38 +313,22 @@ def test_run_interactive_shell_keeps_plain_text_on_session_flow_with_active_task
 ):
     settings = build_settings(tmp_path)
     session_state = SessionState()
-    shell_state = ShellState(active_task_id="task-1", active_task_public_id="T0001")
     task_service = TaskService.from_settings(settings)
     run_service = RunService.from_settings(settings)
+    task = task_service.create_task(title="Task", goal="Goal")
+    shell_state = ShellState(active_task_id=task.id, active_task_public_id=task.public_id)
     session_service = SessionService.from_settings(settings)
     controller = AgentController.from_session_service(session_service)
     skill_service = main_module.create_skill_service()
     task_runner = TaskRunner(task_service, run_service, skill_service)
+    execution_service = FakeExecutionService()
     tool_executor = ToolExecutor(build_tool_registry())
-    captured = {"prompts": [], "answers": []}
+    captured = {"answers": []}
     responses = iter(["inspect the configs", "/quit"])
 
     def fake_input(_prompt):
         return next(responses)
 
-    async def fake_agent_loop(
-        question,
-        state,
-        runtime_executor,
-        current_settings,
-        *,
-        system_prompt=None,
-        tools=None,
-    ):
-        captured["prompts"].append((question, system_prompt))
-        return {
-            "status": "completed",
-            "response": "done",
-            "messages": [],
-            "usage": {"total_tokens": 8},
-        }
-
-    monkeypatch.setattr(main_module, "agent_loop", fake_agent_loop)
     monkeypatch.setattr(main_module.ColoredOutput, "print_final_answer", captured["answers"].append)
     monkeypatch.setattr(main_module.ColoredOutput, "print_error", captured["answers"].append)
     monkeypatch.setattr(main_module.ColoredOutput, "print_info", captured["answers"].append)
@@ -338,26 +339,28 @@ def test_run_interactive_shell_keeps_plain_text_on_session_flow_with_active_task
             session_state=session_state,
             shell_state=shell_state,
             tool_executor=tool_executor,
-            session_service=session_service,
-            controller=controller,
-            task_service=task_service,
-            run_service=run_service,
-            task_runner=task_runner,
+                session_service=session_service,
+                controller=controller,
+                execution_service=execution_service,
+                task_service=task_service,
+                run_service=run_service,
+                task_runner=task_runner,
             skill_service=skill_service,
             input_func=fake_input,
         )
     )
 
-    assert len(captured["prompts"]) == 1
-    assert captured["prompts"][0][0] == "inspect the configs"
-    assert shell_state.active_task_id == "task-1"
-    assert shell_state.active_task_public_id == "T0001"
+    assert len(execution_service.calls) == 1
+    assert execution_service.calls[0]["prompt_text"] == "inspect the configs"
+    assert shell_state.active_task_id is None
+    assert shell_state.active_task_public_id is None
     assert shell_state.active_session_mode == SessionMode.NORMAL
     assert shell_state.active_session_public_id is not None
     assert build_prompt(shell_state).startswith("\nnormal:")
+    assert "done" in captured["answers"]
 
 
-def test_run_interactive_shell_redteam_startup_binds_session_without_agent_execution(
+def test_run_interactive_shell_redteam_startup_executes_in_foreground(
     monkeypatch,
     tmp_path,
 ):
@@ -370,16 +373,12 @@ def test_run_interactive_shell_redteam_startup_binds_session_without_agent_execu
     controller = AgentController.from_session_service(session_service)
     skill_service = main_module.create_skill_service()
     task_runner = TaskRunner(task_service, run_service, skill_service)
+    execution_service = FakeExecutionService()
     tool_executor = ToolExecutor(build_tool_registry())
     responses = iter(["Start a recon session for example.com", "/quit"])
 
     def fake_input(_prompt):
         return next(responses)
-
-    async def fail_agent_loop(*args, **kwargs):
-        raise AssertionError("agent_loop should not run for Phase 2 redteam startup")
-
-    monkeypatch.setattr(main_module, "agent_loop", fail_agent_loop)
 
     asyncio.run(
         run_interactive_shell(
@@ -389,6 +388,7 @@ def test_run_interactive_shell_redteam_startup_binds_session_without_agent_execu
             tool_executor=tool_executor,
             session_service=session_service,
             controller=controller,
+            execution_service=execution_service,
             task_service=task_service,
             run_service=run_service,
             task_runner=task_runner,
@@ -400,6 +400,8 @@ def test_run_interactive_shell_redteam_startup_binds_session_without_agent_execu
     assert shell_state.active_session_mode is not None
     assert shell_state.active_session_mode.value == "redteam"
     assert build_prompt(shell_state).startswith("\nredteam:")
+    assert len(execution_service.calls) == 1
+    assert execution_service.calls[0]["prompt_text"] == "Start a recon session for example.com"
 
 
 def test_build_controller_request_and_clear_command_preserve_session_binding(tmp_path):
