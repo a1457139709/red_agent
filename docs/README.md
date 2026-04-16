@@ -72,6 +72,12 @@ Development docs describe planning, review, and iteration guidance.
 14. `development/session-phase-4-finalization.en.md`
    Finalized Phase 4 baseline that freezes the three-level risk model, `.red-code/config/risk-policy.json`
    override path, confirmation service boundary, and the policy/scope/tool-access separation.
+15. `development/session-phase-5-implementation-checklist.en.md`
+   Implementation-ready checklist for Phase 5, covering the shared capability manifest, skill/module
+   vocabulary split, module invocation without `operation_id`, and migration away from current `SKILL.md` workflows.
+16. `development/session-phase-5-finalization.en.md`
+   Finalized Phase 5 baseline that freezes `capability.json` as the target manifest direction,
+   the `skill`/`module` capability contract, execution styles, and operation-id workflow rejection.
 
 ## Read These First
 

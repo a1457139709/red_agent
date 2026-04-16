@@ -467,17 +467,30 @@ Session Service 统一替代当前 `task` 与 `operation` 的顶层职责。
 - 增加前台同步执行闭环
 - 将内部 job engine 下沉为实现细节
 
-### Phase 4. Module/Skill Unification
+### Phase 4. Risk Policy and Confirmation
+
+- 定义风险等级与确认策略
+- 将 operation-level confirmation fields 从主 session 流程降级
+- 确保高风险动作通过配置化策略触发确认
+
+### Phase 5. Module/Skill Unification
 
 - 统一 skill/module 元数据与运行时
 - 调整用户侧术语呈现
+- 移除 operation-id-based skill/module workflow 依赖
 
-### Phase 5. Storage Refactor
+### Phase 6. Storage Refactor
 
 - 拆分 memory / artifacts / findings / reports
 - 建立用户可检索的执行记录
+- 开始 `task` / `operation` 物理合并
 
-### Phase 6. Web Adapter
+### Phase 7. Record Retrieval and Report Flows
+
+- 通过自然语言检索执行记录、artifacts、findings 与 reports
+- 主路径不再依赖 `TaskService` 或 `OperationService`
+
+### Phase 8. Web Adapter
 
 - 在不改变核心服务层的前提下接入 Web UI
 

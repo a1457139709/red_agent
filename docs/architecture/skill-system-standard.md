@@ -2,7 +2,9 @@
 
 ## Summary
 
-`red-code` uses the standard `SKILL.md` format as the skill artifact.
+`red-code` uses the standard `SKILL.md` format for legacy prompt-assist skill artifacts.
+Phase 5 executable modules use `capability.json` instead of extending
+`SKILL.md` frontmatter into the target module contract.
 
 ### Target Architecture Warning
 
@@ -24,7 +26,7 @@ Do not treat these as the target Phase 5 design:
 - prompt-body-only red-team module semantics
 - `/skill plan <name> <operation_id>` and `/skill apply <name> <operation_id>` as the main red-team workflow
 
-The target architecture requires a unified skill/module contract with parameters, risk metadata, execution style, session integration, and execution-service routing.
+The target architecture now uses a unified `capability.json` skill/module contract with parameters, risk metadata, execution style, session integration, and execution-service routing.
 
 The compatibility strategy remains:
 
@@ -218,7 +220,13 @@ Supported interaction patterns:
 - `/skill reload`
 - `/skill-name <prompt>`
 
-Current built-in skills include:
+Phase 5 module interaction patterns:
+
+- `/module list`
+- `/module show <name>`
+- `/module run <name> <target> [json_overrides]`
+
+Current built-in prompt-assist skills include:
 
 - `development-default`
 - `git-auto-commit`
@@ -226,6 +234,10 @@ Current built-in skills include:
 - `surface-recon`
 - `web-enum`
 - `weather-query-example`
+
+`surface-recon` and `web-enum` also have Phase 5 module manifests under
+`src/capabilities/`. Their legacy `SKILL.md` files are migration/debug prompt
+bridges and should not be used as the target module runtime contract.
 
 ## Runtime Integration Rules
 
