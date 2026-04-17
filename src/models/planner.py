@@ -41,7 +41,7 @@ class PlannerMemoryWritebackStatus(StrEnum):
 class PlannerPlan:
     id: str
     public_id: str
-    operation_id: str
+    session_id: str
     status: PlannerPlanStatus
     planning_mode: str
     context_hash: str
@@ -57,7 +57,8 @@ class PlannerPlan:
     def create(
         cls,
         *,
-        operation_id: str,
+        session_id: str | None = None,
+        operation_id: str | None = None,
         planning_mode: str,
         context_hash: str,
         summary: str,
@@ -66,10 +67,13 @@ class PlannerPlan:
         model_name: str | None = None,
         status: PlannerPlanStatus = PlannerPlanStatus.PROPOSED,
     ) -> "PlannerPlan":
+        resolved_session_id = session_id or operation_id
+        if not resolved_session_id:
+            raise ValueError("session_id is required.")
         return cls(
             id=str(uuid4()),
             public_id="",
-            operation_id=operation_id,
+            session_id=resolved_session_id,
             status=status,
             planning_mode=planning_mode,
             context_hash=context_hash,
@@ -84,7 +88,7 @@ class PlannerPlan:
         return cls(
             id=row["id"],
             public_id=row.get("public_id") or "",
-            operation_id=row["operation_id"],
+            session_id=row["session_id"],
             status=PlannerPlanStatus(row["status"]),
             planning_mode=row["planning_mode"],
             context_hash=row["context_hash"],
@@ -101,7 +105,7 @@ class PlannerPlan:
         return {
             "id": self.id,
             "public_id": self.public_id,
-            "operation_id": self.operation_id,
+            "session_id": self.session_id,
             "status": self.status.value,
             "planning_mode": self.planning_mode,
             "context_hash": self.context_hash,
@@ -113,6 +117,14 @@ class PlannerPlan:
             "updated_at": self.updated_at,
             "applied_at": self.applied_at,
         }
+
+    @property
+    def operation_id(self) -> str:
+        return self.session_id
+
+    @operation_id.setter
+    def operation_id(self, value: str) -> None:
+        self.session_id = value
 
 
 @dataclass(slots=True)
@@ -211,13 +223,17 @@ class PlannerProposal:
 
 @dataclass(frozen=True, slots=True)
 class OperationContextSummary:
-    operation_id: str
+    session_id: str
     summary: str
     scope_summary: str
     findings_summary: str
     evidence_summary: str
     memory_summary: str
     next_step_hint: str
+
+    @property
+    def operation_id(self) -> str:
+        return self.session_id
 
 
 @dataclass(frozen=True, slots=True)

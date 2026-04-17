@@ -5,71 +5,85 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from agent.settings import Settings, get_settings
-from models.evidence import Evidence
+from models.artifact import Artifact
 from models.finding import Finding
 from models.job import Job
-from models.operation import Operation
-from models.operation_event import OperationEvent, OperationEventType
+from models.operation import Operation, OperationStatus
+from models.session import Session, SessionMode, SessionStatus
+from models.session_event import SessionEvent
 from models.scope_policy import ScopePolicy
 
-from .evidence_service import EvidenceService
-from .finding_service import FindingService
-from .job_service import JobService
-from .operation_event_service import OperationEventService
 from .operation_service import OperationService
+from .scope_policy_service import ScopePolicyService
+from .session_record_locator import SessionRecordLocator
+from .session_scope import resolve_session_identifier
+from .session_service import SessionService
 
 
 @dataclass(frozen=True, slots=True)
-class OperationDashboard:
+class SessionDashboard:
+    session: Session
     operation: Operation
     policy: ScopePolicy
     job_counts: dict[str, int]
     flagged_jobs: list[Job]
     finding_counts: dict[str, int]
     recent_findings: list[Finding]
-    evidence_count: int
-    recent_evidence: list[Evidence]
+    artifact_count: int
+    recent_artifacts: list[Artifact]
+    report_count: int
     event_counts: dict[str, int]
-    recent_events: list[OperationEvent]
+    recent_events: list[SessionEvent]
+
+    @property
+    def evidence_count(self) -> int:
+        return self.artifact_count
+
+    @property
+    def recent_evidence(self) -> list[Artifact]:
+        return self.recent_artifacts
+
+
+OperationDashboard = SessionDashboard
 
 
 class DashboardService:
     def __init__(
         self,
         *,
+        session_service: SessionService,
         operation_service: OperationService,
-        job_service: JobService,
-        finding_service: FindingService,
-        evidence_service: EvidenceService,
-        operation_event_service: OperationEventService,
+        scope_policy_service: ScopePolicyService,
+        session_record_locator: SessionRecordLocator,
         settings: Settings,
     ) -> None:
+        self.session_service = session_service
         self.operation_service = operation_service
-        self.job_service = job_service
-        self.finding_service = finding_service
-        self.evidence_service = evidence_service
-        self.operation_event_service = operation_event_service
+        self.scope_policy_service = scope_policy_service
+        self.session_record_locator = session_record_locator
         self.settings = settings
 
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> "DashboardService":
         settings = settings or get_settings()
         return cls(
+            session_service=SessionService.from_settings(settings),
             operation_service=OperationService.from_settings(settings),
-            job_service=JobService.from_settings(settings),
-            finding_service=FindingService.from_settings(settings),
-            evidence_service=EvidenceService.from_settings(settings),
-            operation_event_service=OperationEventService.from_settings(settings),
+            scope_policy_service=ScopePolicyService.from_settings(settings),
+            session_record_locator=SessionRecordLocator.from_settings(settings),
             settings=settings,
         )
 
-    def build_dashboard(self, operation_identifier: str | None = None) -> OperationDashboard:
-        operation = self._resolve_operation(operation_identifier)
-        policy = self.operation_service.require_scope_policy(operation.id)
-        jobs = self.job_service.list_jobs(operation.id, limit=None)
-        findings = self.finding_service.list_findings(operation.id, limit=None)
-        evidence = self.evidence_service.list_evidence(operation.id, limit=None)
-        events = self.operation_event_service.list_events(operation.id, limit=None)
+    def build_dashboard(self, session_identifier: str | None = None) -> SessionDashboard:
+        session = self._resolve_session(session_identifier)
+        policy = self.scope_policy_service.get_scope_policy_for_session(session.id)
+        if policy is None:
+            raise ValueError(f"Scope policy not found for session: {session.public_id or session.id}")
+        jobs = self.session_record_locator.list_jobs(session.id, limit=None)
+        findings = self.session_record_locator.list_findings(session.id, limit=None)
+        artifacts = self.session_record_locator.list_artifacts(session.id, limit=None)
+        reports = self.session_record_locator.list_reports(session.id, limit=None)
+        events = self.session_record_locator.list_events(session.id, limit=None)
 
         job_counts = dict(Counter(job.status.value for job in jobs))
         finding_counts = dict(Counter(finding.status.value for finding in findings))
@@ -78,56 +92,86 @@ class DashboardService:
         flagged_statuses = {"failed", "timed_out", "blocked"}
         flagged_jobs = [job for job in jobs if job.status.value in flagged_statuses][:10]
         recent_findings = findings[:10]
-        recent_evidence = evidence[:10]
+        recent_artifacts = artifacts[:10]
         recent_events = events[:10]
+        operation = self._resolve_operation_for_session(session, policy)
 
-        return OperationDashboard(
+        return SessionDashboard(
+            session=session,
             operation=operation,
             policy=policy,
             job_counts=job_counts,
             flagged_jobs=flagged_jobs,
             finding_counts=finding_counts,
             recent_findings=recent_findings,
-            evidence_count=len(evidence),
-            recent_evidence=recent_evidence,
-            event_counts={
-                OperationEventType.ADMISSION_DENIED.value: event_counts.get(
-                    OperationEventType.ADMISSION_DENIED.value,
-                    0,
-                ),
-                OperationEventType.CONFIRMATION_DENIED.value: event_counts.get(
-                    OperationEventType.CONFIRMATION_DENIED.value,
-                    0,
-                ),
-                OperationEventType.EXECUTION_FAILED.value: event_counts.get(
-                    OperationEventType.EXECUTION_FAILED.value,
-                    0,
-                ),
-            },
+            artifact_count=len(artifacts),
+            recent_artifacts=recent_artifacts,
+            report_count=len(reports),
+            event_counts=event_counts,
             recent_events=recent_events,
         )
 
-    def _resolve_operation(self, operation_identifier: str | None) -> Operation:
-        if operation_identifier:
-            return self.operation_service.require_operation(operation_identifier)
+    def _resolve_session(self, identifier: str | None) -> Session:
+        if identifier:
+            session_id = resolve_session_identifier(
+                self.session_service,
+                identifier,
+                operation_repository=self.operation_service.operation_repository,
+            )
+            return self.session_service.require_session(session_id)
 
-        operations = self.operation_service.list_operations(limit=None)
-        if not operations:
-            raise ValueError("No operations found for /dashboard.")
-        return max(operations, key=self._operation_activity_key)
+        sessions = self.session_service.list_sessions(mode=SessionMode.REDTEAM, limit=None)
+        if not sessions:
+            raise ValueError("No redteam sessions found for /dashboard.")
+        return max(sessions, key=self._session_activity_key)
 
-    def _operation_activity_key(self, operation: Operation) -> datetime:
-        timestamps = [operation.updated_at, operation.created_at]
-        jobs = self.job_service.list_jobs(operation.id, limit=1)
-        findings = self.finding_service.list_findings(operation.id, limit=1)
-        evidence = self.evidence_service.list_evidence(operation.id, limit=1)
-        events = self.operation_event_service.list_events(operation.id, limit=1)
+    def _session_activity_key(self, session: Session) -> tuple[int, datetime]:
+        session_timestamps = [session.updated_at, session.created_at]
+        runtime_timestamps: list[str] = []
+        jobs = self.session_record_locator.list_jobs(session.id, limit=1)
+        findings = self.session_record_locator.list_findings(session.id, limit=1)
+        artifacts = self.session_record_locator.list_artifacts(session.id, limit=1)
+        reports = self.session_record_locator.list_reports(session.id, limit=1)
+        events = self.session_record_locator.list_events(session.id, limit=1)
         if jobs:
-            timestamps.append(jobs[0].updated_at)
+            runtime_timestamps.append(jobs[0].updated_at)
         if findings:
-            timestamps.append(findings[0].updated_at)
-        if evidence:
-            timestamps.append(evidence[0].captured_at)
+            runtime_timestamps.append(findings[0].updated_at)
+        if artifacts:
+            runtime_timestamps.append(artifacts[0].captured_at)
+        if reports:
+            runtime_timestamps.append(reports[0].created_at)
         if events:
-            timestamps.append(events[0].created_at)
-        return max(datetime.fromisoformat(timestamp) for timestamp in timestamps)
+            runtime_timestamps.append(events[0].created_at)
+        timestamps = runtime_timestamps or session_timestamps
+        return (1 if runtime_timestamps else 0, max(datetime.fromisoformat(timestamp) for timestamp in timestamps))
+
+    def _resolve_operation_for_session(self, session: Session, policy: ScopePolicy) -> Operation:
+        operation = self.operation_service.get_operation(session.id)
+        if operation is not None:
+            return operation
+        return Operation(
+            id=session.id,
+            public_id=session.public_id,
+            title=session.title,
+            objective=session.goal,
+            workspace=session.workspace,
+            scope_policy_id=policy.id,
+            status=_session_status_to_operation_status(session.status),
+            created_at=session.created_at,
+            updated_at=session.updated_at,
+            closed_at=session.closed_at,
+            last_error=session.last_error,
+        )
+
+
+def _session_status_to_operation_status(status: SessionStatus) -> OperationStatus:
+    mapping = {
+        SessionStatus.DRAFT: OperationStatus.DRAFT,
+        SessionStatus.ACTIVE: OperationStatus.RUNNING,
+        SessionStatus.PAUSED: OperationStatus.PAUSED,
+        SessionStatus.COMPLETED: OperationStatus.COMPLETED,
+        SessionStatus.FAILED: OperationStatus.FAILED,
+        SessionStatus.CANCELLED: OperationStatus.CANCELLED,
+    }
+    return mapping[status]

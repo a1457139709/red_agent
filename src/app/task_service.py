@@ -3,14 +3,23 @@ from __future__ import annotations
 """Legacy top-level task service kept stable during the session refactor."""
 
 from agent.settings import Settings, get_settings
+from models.session import SessionMode, SessionStatus
 from models.task import Task, TaskStatus
 from storage.sqlite import SQLiteStorage
 from storage.tasks import TaskRepository
 
+from .session_service import SessionService
+
 
 class TaskService:
-    def __init__(self, repository: TaskRepository, settings: Settings) -> None:
+    def __init__(
+        self,
+        repository: TaskRepository,
+        session_service: SessionService,
+        settings: Settings,
+    ) -> None:
         self.repository = repository
+        self.session_service = session_service
         self.settings = settings
 
     @classmethod
@@ -18,7 +27,7 @@ class TaskService:
         settings = settings or get_settings()
         storage = SQLiteStorage(settings.sqlite_path)
         repository = TaskRepository(storage)
-        return cls(repository, settings)
+        return cls(repository, SessionService.from_settings(settings), settings)
 
     def create_task(
         self,
@@ -31,11 +40,22 @@ class TaskService:
         priority: int = 0,
         metadata: dict | None = None,
     ) -> Task:
+        resolved_session_id = session_id
+        if resolved_session_id is None:
+            session = self.session_service.create_session(
+                title=title,
+                goal=goal,
+                mode=SessionMode.NORMAL,
+                workspace=workspace or str(self.settings.working_directory),
+                status=SessionStatus.ACTIVE,
+                metadata={"legacy_container": "task"},
+            )
+            resolved_session_id = session.id
         task = Task.create(
             title=title,
             goal=goal,
             workspace=workspace or str(self.settings.working_directory),
-            session_id=session_id,
+            session_id=resolved_session_id,
             skill_profile=skill_profile,
             priority=priority,
             metadata=metadata,

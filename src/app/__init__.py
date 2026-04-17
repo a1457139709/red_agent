@@ -3,6 +3,7 @@ from __future__ import annotations
 from importlib import import_module
 
 __all__ = [
+    "ArtifactService",
     "CheckpointService",
     "ConfirmationPolicyService",
     "DashboardService",
@@ -13,7 +14,10 @@ __all__ = [
     "MemoryService",
     "OperationService",
     "OperationEventService",
+    "ReportService",
     "RunService",
+    "SessionEventService",
+    "SessionRecordLocator",
     "SessionService",
     "ScopePolicyService",
     "TaskService",
@@ -21,6 +25,7 @@ __all__ = [
 ]
 
 _EXPORTS = {
+    "ArtifactService": ".artifact_service",
     "CheckpointService": ".checkpoint_service",
     "ConfirmationPolicyService": ".confirmation_policy_service",
     "DashboardService": ".dashboard_service",
@@ -31,7 +36,10 @@ _EXPORTS = {
     "MemoryService": ".memory_service",
     "OperationService": ".operation_service",
     "OperationEventService": ".operation_event_service",
+    "ReportService": ".report_service",
     "RunService": ".run_service",
+    "SessionEventService": ".session_event_service",
+    "SessionRecordLocator": ".session_record_locator",
     "SessionService": ".session_service",
     "ScopePolicyService": ".scope_policy_service",
     "TaskService": ".task_service",

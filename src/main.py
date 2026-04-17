@@ -9,6 +9,7 @@ from agent.logger import ColoredOutput, reset_steps
 from agent.loop import agent_loop
 from agent.settings import Settings, get_settings
 from agent.state import SessionState
+from app.artifact_service import ArtifactService
 from app.checkpoint_service import CheckpointService
 from app.dashboard_service import DashboardService
 from app.evidence_service import EvidenceService
@@ -17,6 +18,7 @@ from app.finding_service import FindingService
 from app.job_service import JobService
 from app.operation_service import OperationService
 from app.planner_service import PlannerService
+from app.report_service import ReportService
 from app.run_service import RunService
 from app.session_service import SessionService
 from app.skill_service import SkillService
@@ -165,6 +167,28 @@ def parse_evidence_command(command: str) -> tuple[str, list[str]] | None:
     return parts[1], parts[2:]
 
 
+def parse_artifact_command(command: str) -> tuple[str, list[str]] | None:
+    stripped = command.strip()
+    if not stripped.startswith("/artifact"):
+        return None
+
+    parts = stripped.split()
+    if len(parts) == 1:
+        return "", []
+    return parts[1], parts[2:]
+
+
+def parse_report_command(command: str) -> tuple[str, list[str]] | None:
+    stripped = command.strip()
+    if not stripped.startswith("/report"):
+        return None
+
+    parts = stripped.split()
+    if len(parts) == 1:
+        return "", []
+    return parts[1], parts[2:]
+
+
 def parse_dashboard_command(command: str) -> list[str] | None:
     stripped = command.strip()
     if not stripped.startswith("/dashboard"):
@@ -200,6 +224,8 @@ def parse_skill_shorthand(
     skill_service: SkillService,
 ) -> tuple[str, str] | None:
     stripped = command.strip()
+    # Reserve the built-in slash commands first. Any other `/name ...` form can
+    # become a shorthand skill invocation if `name` resolves to a known skill.
     if (
         not stripped.startswith("/")
         or stripped.startswith("/skill")
@@ -207,6 +233,8 @@ def parse_skill_shorthand(
         or stripped.startswith("/operation")
         or stripped.startswith("/job")
         or stripped.startswith("/finding")
+        or stripped.startswith("/artifact")
+        or stripped.startswith("/report")
         or stripped.startswith("/evidence")
         or stripped.startswith("/dashboard")
         or stripped.startswith("/planner")
@@ -231,6 +259,8 @@ def _confirm_choice(input_func: InputFn, prompt: str) -> bool:
 
 
 def _workflow_plan_rows(plan: SkillWorkflowPlan) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    # Normalize plan objects into presenter-friendly rows once so the CLI and
+    # callback renderers show the same workflow preview.
     planned_rows = [
         {
             "type": job.job_type,
@@ -516,7 +546,7 @@ def _parse_job_list_args(args: list[str]) -> tuple[JobStatus | None, int]:
             return None, _parse_limit(args[0])
     if len(args) == 2:
         return JobStatus(args[0].lower()), _parse_limit(args[1])
-    raise ValueError("Usage: /job list <operation_id> [status] [limit]")
+    raise ValueError("Usage: /job list <session_id> [status] [limit]")
 
 
 def _parse_optional_limit_arg(args: list[str], *, usage: str) -> int:
@@ -751,6 +781,9 @@ async def run_prompt_with_runtime(
     try:
         visible_executor = tool_executor.restricted_to(runtime_config.allowed_tools)
     except ValueError:
+        # Some callers inject an executor that is already narrowed and does not
+        # expose the runtime's symbolic tool list. If there is no overlap, keep
+        # that executor instead of failing at this adapter layer.
         if tool_executor.tool_names.isdisjoint(runtime_config.allowed_tools):
             visible_executor = tool_executor
         else:
@@ -770,6 +803,8 @@ async def run_prompt_with_runtime(
             tools=runtime_executor.get_tools(),
         )
     except TypeError as exc:
+        # Preserve compatibility with older `agent_loop` implementations that do
+        # not yet accept the newer runtime injection parameters.
         if "unexpected keyword argument 'system_prompt'" not in str(exc):
             raise
         result = await agent_loop(question, session_state, runtime_executor, effective_settings)
@@ -1024,13 +1059,13 @@ def handle_planner_command(
 
         if action == "plan":
             if len(args) != 1:
-                ui.show_error("Usage: /planner plan <operation_id>")
+                ui.show_error("Usage: /planner plan <session_id>")
                 return True
             bundle = planner_service.create_plan(args[0])
-            operation = planner_service.operation_service.require_operation(bundle.plan.operation_id)
+            session = planner_service.session_service.require_session(bundle.plan.session_id)
             ui.show_planner_plan(
                 plan=bundle.plan,
-                operation_label=operation.public_id or operation.id,
+                operation_label=session.public_id or session.id,
                 proposals=bundle.proposals,
                 memory_writeback=bundle.memory_writeback,
             )
@@ -1046,8 +1081,8 @@ def handle_planner_command(
                 ui.show_success(
                     f"Applied {len(result.applied_jobs)} planner proposal(s) from {result.plan.public_id}."
                 )
-                operation = planner_service.operation_service.require_operation(result.plan.operation_id)
-                ui.show_job_list(result.applied_jobs, operation_label=operation.public_id or operation.id)
+                session = planner_service.session_service.require_session(result.plan.session_id)
+                ui.show_job_list(result.applied_jobs, operation_label=session.public_id or session.id)
             else:
                 ui.show_info(f"No planner proposals were applied from {result.plan.public_id}.")
             for proposal in result.skipped_proposals:
@@ -1229,11 +1264,11 @@ def handle_job_command(
 
         if action == "create":
             if len(args) != 1:
-                ui.show_error("Usage: /job create <operation_id>")
+                ui.show_error("Usage: /job create <session_id>")
                 return True
             operation = operation_service.get_operation(args[0])
             if operation is None:
-                ui.show_error(f"Operation not found: {args[0]}")
+                ui.show_error(f"Session not found: {args[0]}")
                 return True
 
             job_type = input_func("Job type: ").strip()
@@ -1255,7 +1290,7 @@ def handle_job_command(
                 return True
 
             job = job_service.create_job(
-                operation_identifier=operation.id,
+                session_identifier=operation.id,
                 job_type=job_type,
                 target_ref=target_ref,
                 arguments=arguments,
@@ -1268,11 +1303,11 @@ def handle_job_command(
 
         if action == "list":
             if not args or len(args) > 3:
-                ui.show_error("Usage: /job list <operation_id> [status] [limit]")
+                ui.show_error("Usage: /job list <session_id> [status] [limit]")
                 return True
             operation = operation_service.get_operation(args[0])
             if operation is None:
-                ui.show_error(f"Operation not found: {args[0]}")
+                ui.show_error(f"Session not found: {args[0]}")
                 return True
             status, limit = _parse_job_list_args(args[1:])
             jobs = job_service.list_jobs(operation.id, status=status, limit=limit)
@@ -1350,9 +1385,9 @@ def handle_finding_command(
 
         if action == "list":
             if not args or len(args) > 2:
-                ui.show_error("Usage: /finding list <operation_id> [limit]")
+                ui.show_error("Usage: /finding list <session_id> [limit]")
                 return True
-            limit = _parse_optional_limit_arg(args[1:], usage="Usage: /finding list <operation_id> [limit]")
+            limit = _parse_optional_limit_arg(args[1:], usage="Usage: /finding list <session_id> [limit]")
             findings = finding_service.list_findings(args[0], limit=limit)
             ui.show_finding_list(findings, operation_label=args[0])
             return True
@@ -1362,13 +1397,13 @@ def handle_finding_command(
                 ui.show_error("Usage: /finding show <finding_id>")
                 return True
             finding = finding_service.require_finding(args[0])
-            links = finding_service.list_evidence_links_for_finding(finding.id)
-            evidence_service = EvidenceService.from_settings(finding_service.settings)
-            linked_evidence_ids = [
-                evidence_service.require_evidence(link.evidence_id).public_id
+            links = finding_service.list_artifact_links_for_finding(finding.id)
+            artifact_service = ArtifactService.from_settings(finding_service.settings)
+            linked_artifact_ids = [
+                artifact_service.require_artifact(link.artifact_id).public_id
                 for link in links
             ]
-            ui.show_finding_detail(finding, linked_evidence_ids=linked_evidence_ids)
+            ui.show_finding_detail(finding, linked_evidence_ids=linked_artifact_ids)
             return True
 
         if action == "confirm":
@@ -1409,6 +1444,161 @@ def handle_evidence_command(
     error_output: OutputFn | None = None,
     success_output: OutputFn | None = None,
 ) -> bool:
+    return handle_artifact_command(
+        command.replace("/evidence", "/artifact", 1),
+        artifact_service=ArtifactService.from_settings(evidence_service.settings),
+        finding_service=finding_service,
+        presenter=presenter,
+        text_output=text_output,
+        info_output=info_output,
+        error_output=error_output,
+        success_output=success_output,
+    )
+
+
+def handle_artifact_command(
+    command: str,
+    *,
+    artifact_service: ArtifactService,
+    finding_service: FindingService,
+    presenter: CliPresenter | None = None,
+    text_output: OutputFn | None = None,
+    info_output: OutputFn | None = None,
+    error_output: OutputFn | None = None,
+    success_output: OutputFn | None = None,
+) -> bool:
+    parsed = parse_artifact_command(command)
+    if parsed is None:
+        return False
+
+    ui = _resolve_presenter(
+        presenter,
+        text_output=text_output,
+        info_output=info_output,
+        error_output=error_output,
+        success_output=success_output,
+    )
+    action, args = parsed
+
+    try:
+        if action in {"", "help"}:
+            ui.show_help("artifact")
+            return True
+
+        if action == "list":
+            if not args or len(args) > 2:
+                ui.show_error("Usage: /artifact list <session_id> [limit]")
+                return True
+            limit = _parse_optional_limit_arg(args[1:], usage="Usage: /artifact list <session_id> [limit]")
+            artifacts = artifact_service.list_artifacts(args[0], limit=limit)
+            ui.show_artifact_list(artifacts, session_label=args[0])
+            return True
+
+        if action == "show":
+            if len(args) != 1:
+                ui.show_error("Usage: /artifact show <artifact_id>")
+                return True
+            artifact = artifact_service.require_artifact(args[0])
+            links = finding_service.list_finding_links_for_artifact(artifact.id)
+            linked_finding_ids = [
+                finding_service.require_finding(link.finding_id).public_id
+                for link in links
+            ]
+            ui.show_artifact_detail(artifact, linked_finding_ids=linked_finding_ids)
+            return True
+
+        ui.show_error(f"Unknown artifact command: {action}")
+        return True
+    except ValueError as exc:
+        ui.show_error(str(exc))
+        return True
+    except Exception as exc:
+        ui.show_error(f"Artifact command failed: {exc}")
+        return True
+
+
+def handle_report_command(
+    command: str,
+    *,
+    report_service: ReportService,
+    artifact_service: ArtifactService,
+    finding_service: FindingService,
+    presenter: CliPresenter | None = None,
+    text_output: OutputFn | None = None,
+    info_output: OutputFn | None = None,
+    error_output: OutputFn | None = None,
+    success_output: OutputFn | None = None,
+) -> bool:
+    parsed = parse_report_command(command)
+    if parsed is None:
+        return False
+
+    ui = _resolve_presenter(
+        presenter,
+        text_output=text_output,
+        info_output=info_output,
+        error_output=error_output,
+        success_output=success_output,
+    )
+    action, args = parsed
+
+    try:
+        if action in {"", "help"}:
+            ui.show_help("report")
+            return True
+
+        if action == "list":
+            if not args or len(args) > 2:
+                ui.show_error("Usage: /report list <session_id> [limit]")
+                return True
+            limit = _parse_optional_limit_arg(args[1:], usage="Usage: /report list <session_id> [limit]")
+            reports = report_service.list_reports(args[0], limit=limit)
+            ui.show_report_list(reports, session_label=args[0])
+            return True
+
+        if action == "show":
+            if len(args) != 1:
+                ui.show_error("Usage: /report show <report_id>")
+                return True
+            report = report_service.require_report(args[0])
+            artifact_links = report_service.list_artifact_links(report.id)
+            finding_links = report_service.list_finding_links(report.id)
+            linked_artifact_ids = [
+                artifact_service.require_artifact(link.artifact_id).public_id
+                for link in artifact_links
+            ]
+            linked_finding_ids = [
+                finding_service.require_finding(link.finding_id).public_id
+                for link in finding_links
+            ]
+            ui.show_report_detail(
+                report,
+                linked_artifact_ids=linked_artifact_ids,
+                linked_finding_ids=linked_finding_ids,
+            )
+            return True
+
+        ui.show_error(f"Unknown report command: {action}")
+        return True
+    except ValueError as exc:
+        ui.show_error(str(exc))
+        return True
+    except Exception as exc:
+        ui.show_error(f"Report command failed: {exc}")
+        return True
+
+
+def _handle_evidence_command_legacy(
+    command: str,
+    *,
+    evidence_service: EvidenceService,
+    finding_service: FindingService,
+    presenter: CliPresenter | None = None,
+    text_output: OutputFn | None = None,
+    info_output: OutputFn | None = None,
+    error_output: OutputFn | None = None,
+    success_output: OutputFn | None = None,
+) -> bool:
     parsed = parse_evidence_command(command)
     if parsed is None:
         return False
@@ -1429,9 +1619,9 @@ def handle_evidence_command(
 
         if action == "list":
             if not args or len(args) > 2:
-                ui.show_error("Usage: /evidence list <operation_id> [limit]")
+                ui.show_error("Usage: /evidence list <session_id> [limit]")
                 return True
-            limit = _parse_optional_limit_arg(args[1:], usage="Usage: /evidence list <operation_id> [limit]")
+            limit = _parse_optional_limit_arg(args[1:], usage="Usage: /evidence list <session_id> [limit]")
             evidence = evidence_service.list_evidence(args[0], limit=limit)
             ui.show_evidence_list(evidence, operation_label=args[0])
             return True
@@ -1483,7 +1673,7 @@ def handle_dashboard_command(
 
     try:
         if len(args) > 1:
-            ui.show_error("Usage: /dashboard [operation_id]")
+            ui.show_error("Usage: /dashboard [session_id]")
             return True
         dashboard = dashboard_service.build_dashboard(args[0] if args else None)
         ui.show_dashboard(dashboard)
@@ -1534,6 +1724,23 @@ async def run_interactive_shell(
         settings,
         session_service=session_service,
     )
+    task_service = TaskService.from_settings(settings)
+    run_service = RunService.from_settings(settings)
+    checkpoint_service = CheckpointService.from_settings(settings)
+    task_runner = TaskRunner(
+        task_service=task_service,
+        run_service=run_service,
+        skill_service=skill_service,
+        checkpoint_service=checkpoint_service,
+    )
+    operation_service = OperationService.from_settings(settings)
+    planner_service = PlannerService.from_settings(settings)
+    job_service = JobService.from_settings(settings)
+    finding_service = FindingService.from_settings(settings)
+    artifact_service = ArtifactService.from_settings(settings)
+    report_service = ReportService.from_settings(settings)
+    evidence_service = EvidenceService.from_settings(settings)
+    dashboard_service = DashboardService.from_settings(settings)
     ui = get_presenter()
     while True:
         try:
@@ -1616,6 +1823,71 @@ async def run_interactive_shell(
                             ColoredOutput.print_error(text)
                     except Exception as exc:
                         ColoredOutput.print_error(str(exc))
+                    continue
+
+                if handle_task_command(
+                    question,
+                    shell_state=shell_state,
+                    session_state=session_state,
+                    task_service=task_service,
+                    run_service=run_service,
+                    checkpoint_service=checkpoint_service,
+                    task_runner=task_runner,
+                ):
+                    continue
+
+                if handle_operation_command(
+                    question,
+                    operation_service=operation_service,
+                    planner_service=planner_service,
+                ):
+                    continue
+
+                if handle_job_command(
+                    question,
+                    job_service=job_service,
+                    operation_service=operation_service,
+                ):
+                    continue
+
+                if handle_finding_command(
+                    question,
+                    finding_service=finding_service,
+                ):
+                    continue
+
+                if handle_artifact_command(
+                    question,
+                    artifact_service=artifact_service,
+                    finding_service=finding_service,
+                ):
+                    continue
+
+                if handle_report_command(
+                    question,
+                    report_service=report_service,
+                    artifact_service=artifact_service,
+                    finding_service=finding_service,
+                ):
+                    continue
+
+                if _handle_evidence_command_legacy(
+                    question,
+                    evidence_service=evidence_service,
+                    finding_service=finding_service,
+                ):
+                    continue
+
+                if handle_dashboard_command(
+                    question,
+                    dashboard_service=dashboard_service,
+                ):
+                    continue
+
+                if handle_planner_command(
+                    question,
+                    planner_service=planner_service,
+                ):
                     continue
 
                 ui.show_error(f"Unknown command: {question}")

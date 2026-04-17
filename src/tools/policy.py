@@ -47,6 +47,8 @@ class RuntimeSafetyPolicy:
     ) -> "RuntimeSafetyPolicy":
         allowed = frozenset(capabilities_for_tools(tool_names))
         if base_policy is not None:
+            # Skills can only narrow the already-approved capability set; they do
+            # not get to re-enable capabilities the base runtime omitted.
             allowed = frozenset(base_policy.allowed_capabilities.intersection(allowed))
         return cls(allowed_capabilities=allowed)
 

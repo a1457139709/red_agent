@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from models.scope_policy import ScopePolicy
+from storage.schema_guard import ensure_phase6_clean_runtime_reset
 from storage.sqlite import SQLiteStorage
+
+from .operations import OperationRepository
 
 
 SCOPE_POLICIES_SCHEMA = """
 CREATE TABLE IF NOT EXISTS scope_policies (
     id TEXT PRIMARY KEY,
-    operation_id TEXT NOT NULL UNIQUE,
+    session_id TEXT NOT NULL UNIQUE,
     allowed_hosts TEXT NOT NULL DEFAULT '[]',
     allowed_domains TEXT NOT NULL DEFAULT '[]',
     allowed_cidrs TEXT NOT NULL DEFAULT '[]',
@@ -20,10 +23,10 @@ CREATE TABLE IF NOT EXISTS scope_policies (
     confirmation_required_actions TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    FOREIGN KEY(operation_id) REFERENCES operations(id)
+    FOREIGN KEY(session_id) REFERENCES operations(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_scope_policies_operation_id ON scope_policies(operation_id);
+CREATE INDEX IF NOT EXISTS idx_scope_policies_session_id ON scope_policies(session_id);
 """
 
 
@@ -46,13 +49,16 @@ class ScopePolicyRepository:
             ).fetchone()
         return ScopePolicy.from_row(dict(row)) if row else None
 
-    def get_by_operation_id(self, operation_id: str) -> ScopePolicy | None:
+    def get_by_session_id(self, session_id: str) -> ScopePolicy | None:
         with self.storage.connect() as connection:
             row = connection.execute(
-                "SELECT * FROM scope_policies WHERE operation_id = ?",
-                (operation_id,),
+                "SELECT * FROM scope_policies WHERE session_id = ?",
+                (session_id,),
             ).fetchone()
         return ScopePolicy.from_row(dict(row)) if row else None
+
+    def get_by_operation_id(self, operation_id: str) -> ScopePolicy | None:
+        return self.get_by_session_id(operation_id)
 
     def list(self, *, limit: int | None = 50) -> list[ScopePolicy]:
         query = "SELECT * FROM scope_policies ORDER BY updated_at DESC"
@@ -74,11 +80,11 @@ class ScopePolicyRepository:
         connection.execute(
             """
             INSERT INTO scope_policies (
-                id, operation_id, allowed_hosts, allowed_domains, allowed_cidrs, allowed_ports,
+                id, session_id, allowed_hosts, allowed_domains, allowed_cidrs, allowed_ports,
                 allowed_protocols, denied_targets, allowed_tool_categories, max_concurrency,
                 rate_limit_per_minute, confirmation_required_actions, created_at, updated_at
             ) VALUES (
-                :id, :operation_id, :allowed_hosts, :allowed_domains, :allowed_cidrs, :allowed_ports,
+                :id, :session_id, :allowed_hosts, :allowed_domains, :allowed_cidrs, :allowed_ports,
                 :allowed_protocols, :denied_targets, :allowed_tool_categories, :max_concurrency,
                 :rate_limit_per_minute, :confirmation_required_actions, :created_at, :updated_at
             )
@@ -92,7 +98,7 @@ class ScopePolicyRepository:
             """
             UPDATE scope_policies
             SET
-                operation_id = :operation_id,
+                session_id = :session_id,
                 allowed_hosts = :allowed_hosts,
                 allowed_domains = :allowed_domains,
                 allowed_cidrs = :allowed_cidrs,
@@ -112,6 +118,8 @@ class ScopePolicyRepository:
         return policy
 
     def _ensure_schema(self) -> None:
+        OperationRepository(self.storage)
         with self.storage.connect() as connection:
+            ensure_phase6_clean_runtime_reset(connection, app_data_dir=self.storage.db_path.parent)
             connection.executescript(SCOPE_POLICIES_SCHEMA)
             connection.commit()

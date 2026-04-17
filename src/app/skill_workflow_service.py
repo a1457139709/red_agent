@@ -170,6 +170,9 @@ class SkillWorkflowService:
         skipped_jobs: list[SkillWorkflowSkippedJob] = []
         for template in templates:
             try:
+                # Validate against the concrete security tool contract first, then
+                # run the resulting normalized admission request through scope
+                # policy checks before creating any jobs.
                 tool = self.security_tool_executor.get_tool(template.job_type)
                 invocation = self.security_tool_executor.validate(
                     template.job_type,
@@ -351,6 +354,8 @@ class SkillWorkflowService:
             tool_category="recon",
             raw_target=raw_target,
         )
+        # Reuse the runtime target parser so workflow planning and execution
+        # interpret the same user input the same way.
         descriptor = self.scope_validator.describe_target(request)
         if "://" in raw_target:
             parsed = urlsplit(raw_target)
@@ -375,6 +380,8 @@ class SkillWorkflowService:
     def _derive_probe_urls(self, target: _WorkflowTarget) -> list[str]:
         if target.is_url and target.base_url is not None:
             return [target.base_url]
+        # Bare hosts expand to both schemes so recon workflows discover whichever
+        # service is actually present without guessing first.
         if target.port is None:
             return [
                 _build_url("http", target.host, None),
@@ -494,6 +501,8 @@ def _dedupe_templates(templates: list[SkillWorkflowJobTemplate]) -> list[SkillWo
     deduped: list[SkillWorkflowJobTemplate] = []
     seen: set[tuple[str, str, tuple[tuple[str, str], ...], int | None, int]] = set()
     for template in templates:
+        # Use the fully materialized job shape as the signature so repeated URL
+        # derivations do not create duplicate jobs.
         signature = (
             template.job_type,
             template.target_ref,

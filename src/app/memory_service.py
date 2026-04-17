@@ -7,16 +7,21 @@ from storage.repositories.memory import MemoryRepository
 from storage.repositories.operations import OperationRepository
 from storage.sqlite import SQLiteStorage
 
+from .session_scope import resolve_session_identifier
+from .session_service import SessionService
+
 
 class MemoryService:
     def __init__(
         self,
         repository: MemoryRepository,
+        session_service: SessionService,
         operation_repository: OperationRepository,
         job_repository: JobRepository,
         settings: Settings,
     ) -> None:
         self.repository = repository
+        self.session_service = session_service
         self.operation_repository = operation_repository
         self.job_repository = job_repository
         self.settings = settings
@@ -27,6 +32,7 @@ class MemoryService:
         storage = SQLiteStorage(settings.sqlite_path)
         return cls(
             MemoryRepository(storage),
+            SessionService.from_settings(settings),
             OperationRepository(storage),
             JobRepository(storage),
             settings,
@@ -35,27 +41,26 @@ class MemoryService:
     def create_memory_entry(
         self,
         *,
-        operation_identifier: str,
+        session_identifier: str | None = None,
+        operation_identifier: str | None = None,
         entry_type: str,
         key: str,
         value,
         summary: str,
         source_job_identifier: str | None = None,
     ) -> MemoryEntry:
-        operation = self.operation_repository.get(operation_identifier)
-        if operation is None:
-            raise ValueError(f"Operation not found: {operation_identifier}")
+        session_id = self._resolve_session_id(session_identifier or operation_identifier)
         source_job_id: str | None = None
         if source_job_identifier is not None:
             job = self.job_repository.get(source_job_identifier)
             if job is None:
                 raise ValueError(f"Job not found: {source_job_identifier}")
-            if job.operation_id != operation.id:
-                raise ValueError("Memory source job must belong to the same operation.")
+            if job.session_id != session_id:
+                raise ValueError("Memory source job must belong to the same session.")
             source_job_id = job.id
 
         entry = MemoryEntry.create(
-            operation_id=operation.id,
+            session_id=session_id,
             source_job_id=source_job_id,
             entry_type=entry_type,
             key=key,
@@ -73,11 +78,17 @@ class MemoryService:
             raise ValueError(f"Memory entry not found: {identifier}")
         return entry
 
-    def list_memory_entries(self, operation_identifier: str, *, limit: int | None = 50) -> list[MemoryEntry]:
-        operation = self.operation_repository.get(operation_identifier)
-        if operation is None:
-            raise ValueError(f"Operation not found: {operation_identifier}")
-        return self.repository.list(operation.id, limit=limit)
+    def list_memory_entries(self, session_identifier: str, *, limit: int | None = 50) -> list[MemoryEntry]:
+        return self.repository.list(self._resolve_session_id(session_identifier), limit=limit)
 
     def save_memory_entry(self, entry: MemoryEntry) -> MemoryEntry:
         return self.repository.update(entry)
+
+    def _resolve_session_id(self, identifier: str | None) -> str:
+        if not identifier:
+            raise ValueError("session_identifier is required.")
+        return resolve_session_identifier(
+            self.session_service,
+            identifier,
+            operation_repository=self.operation_repository,
+        )

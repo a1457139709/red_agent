@@ -9,13 +9,13 @@ import json
 
 from agent.provider import create_model
 from agent.settings import Settings, get_settings
-from app.evidence_service import EvidenceService
+from app.artifact_service import ArtifactService
 from app.finding_service import FindingService
 from app.job_service import JobService
 from app.memory_service import MemoryService
 from app.operation_service import OperationService
 from langchain_core.messages import HumanMessage, SystemMessage
-from models.evidence import Evidence
+from models.artifact import Artifact
 from models.finding import Finding, FindingStatus
 from models.job import Job, JobStatus
 from models.memory import MemoryEntry
@@ -52,10 +52,14 @@ class PlannerContext:
     operation: Operation
     policy: ScopePolicy
     successful_jobs: list[Job]
-    evidence_items: list[Evidence]
+    evidence_items: list[Artifact]
     open_findings: list[Finding]
     memory_entries: list[MemoryEntry]
     context_hash: str
+
+    @property
+    def artifact_items(self) -> list[Artifact]:
+        return self.evidence_items
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,16 +206,27 @@ class PlannerRuntime:
         *,
         operation_service: OperationService,
         job_service: JobService,
-        evidence_service: EvidenceService,
         finding_service: FindingService,
         memory_service: MemoryService,
         settings: Settings,
+        artifact_service: ArtifactService | None = None,
+        evidence_service: Any | None = None,
         security_tool_executor: SecurityToolExecutor | None = None,
         scope_validator: ScopeValidator | None = None,
         model_factory: Callable[[Settings], Any] | None = None,
     ) -> None:
         self.operation_service = operation_service
         self.job_service = job_service
+        resolved_artifact_service = artifact_service
+        if resolved_artifact_service is None and evidence_service is not None:
+            resolved_artifact_service = getattr(evidence_service, "artifact_service", None)
+        if resolved_artifact_service is None:
+            resolved_artifact_service = ArtifactService.from_settings(settings)
+        self.artifact_service = resolved_artifact_service
+        if evidence_service is None:
+            from app.evidence_service import EvidenceService
+
+            evidence_service = EvidenceService(resolved_artifact_service, settings)
         self.evidence_service = evidence_service
         self.finding_service = finding_service
         self.memory_service = memory_service
@@ -226,17 +241,17 @@ class PlannerRuntime:
         return cls(
             operation_service=OperationService.from_settings(settings),
             job_service=JobService.from_settings(settings),
-            evidence_service=EvidenceService.from_settings(settings),
+            artifact_service=ArtifactService.from_settings(settings),
             finding_service=FindingService.from_settings(settings),
             memory_service=MemoryService.from_settings(settings),
             settings=settings,
         )
 
-    def build_context(self, operation_identifier: str) -> PlannerContext:
-        operation = self.operation_service.require_operation(operation_identifier)
+    def build_context(self, session_identifier: str) -> PlannerContext:
+        operation = self.operation_service.require_operation(session_identifier)
         policy = self.operation_service.require_scope_policy(operation.id)
         jobs = self.job_service.list_jobs(operation.id, limit=50)
-        evidence_items = self.evidence_service.list_evidence(operation.id, limit=20)
+        artifact_items = self.artifact_service.list_artifacts(operation.id, limit=20)
         findings = self.finding_service.list_findings(operation.id, limit=20)
         memory_entries = self.memory_service.list_memory_entries(operation.id, limit=20)
         successful_jobs = [job for job in jobs if job.status == JobStatus.SUCCEEDED][:10]
@@ -267,15 +282,15 @@ class PlannerRuntime:
                 }
                 for job in successful_jobs
             ],
-            "evidence": [
+            "artifacts": [
                 {
-                    "public_id": evidence.public_id,
-                    "evidence_type": evidence.evidence_type,
-                    "target_ref": evidence.target_ref,
-                    "title": evidence.title,
-                    "captured_at": evidence.captured_at,
+                    "public_id": artifact.public_id,
+                    "artifact_type": artifact.artifact_type,
+                    "target_ref": artifact.target_ref,
+                    "title": artifact.title,
+                    "captured_at": artifact.captured_at,
                 }
-                for evidence in evidence_items
+                for artifact in artifact_items
             ],
             "findings": [
                 {
@@ -306,14 +321,14 @@ class PlannerRuntime:
             operation=operation,
             policy=policy,
             successful_jobs=successful_jobs,
-            evidence_items=evidence_items,
+            evidence_items=artifact_items,
             open_findings=open_findings,
             memory_entries=memory_entries,
             context_hash=context_hash,
         )
 
-    def create_plan(self, operation_identifier: str) -> PlannerRuntimeResult:
-        context = self.build_context(operation_identifier)
+    def create_plan(self, session_identifier: str) -> PlannerRuntimeResult:
+        context = self.build_context(session_identifier)
         model_result = self._try_model_plan(context)
         if model_result is not None and any(
             proposal.proposal_kind == PlannerProposalKind.PROPOSED
@@ -322,8 +337,8 @@ class PlannerRuntime:
             return model_result
         return self._build_fallback_plan(context)
 
-    def derive_memory_candidates(self, operation_identifier: str) -> PlannerDerivedMemoryResult:
-        context = self.build_context(operation_identifier)
+    def derive_memory_candidates(self, session_identifier: str) -> PlannerDerivedMemoryResult:
+        context = self.build_context(session_identifier)
         return self.derive_memory_candidates_from_context(context)
 
     def derive_memory_candidates_from_context(self, context: PlannerContext) -> PlannerDerivedMemoryResult:
@@ -348,14 +363,14 @@ class PlannerRuntime:
 
         for job in context.successful_jobs:
             append_candidate(self._candidate_from_job(job))
-        for evidence in context.evidence_items:
-            append_candidate(self._candidate_from_evidence(evidence))
+        for artifact in context.artifact_items:
+            append_candidate(self._candidate_from_evidence(artifact))
         for finding in context.open_findings:
             append_candidate(self._candidate_from_finding(finding))
         return PlannerDerivedMemoryResult(candidates=candidates, skipped_count=skipped_count)
 
-    def build_operation_context_summary(self, operation_identifier: str) -> OperationContextSummary:
-        context = self.build_context(operation_identifier)
+    def build_operation_context_summary(self, session_identifier: str) -> OperationContextSummary:
+        context = self.build_context(session_identifier)
         fallback = self._build_fallback_plan(context)
         next_steps = [
             proposal.summary
@@ -363,11 +378,11 @@ class PlannerRuntime:
             if proposal.proposal_kind == PlannerProposalKind.PROPOSED
         ][:2]
         return OperationContextSummary(
-            operation_id=context.operation.public_id or context.operation.id,
+            session_id=context.operation.public_id or context.operation.id,
             summary=fallback.summary,
             scope_summary=self._build_scope_summary(context.policy),
             findings_summary=self._build_findings_summary(context.open_findings),
-            evidence_summary=self._build_evidence_summary(context.evidence_items),
+            evidence_summary=self._build_evidence_summary(context.artifact_items),
             memory_summary=self._build_memory_summary(context.memory_entries),
             next_step_hint=(
                 "; ".join(next_steps)
@@ -733,36 +748,36 @@ class PlannerRuntime:
                         )
                     )
 
-        for evidence in context.evidence_items[:MAX_CONTEXT_ITEMS]:
-            if evidence.evidence_type == "http_response" and _looks_like_url(evidence.target_ref):
+        for artifact in context.artifact_items[:MAX_CONTEXT_ITEMS]:
+            if artifact.evidence_type == "http_response" and _looks_like_url(artifact.target_ref):
                 append_candidate(
                     PlannerRuntimeCandidate(
                         job_type="http_probe",
-                        target_ref=evidence.target_ref,
+                        target_ref=artifact.target_ref,
                         arguments={"method": "GET"},
-                        summary=f"Refresh HTTP evidence for {evidence.target_ref}.",
-                        rationale=f"Recent evidence '{evidence.title}' indicates this web target remains relevant.",
+                        summary=f"Refresh HTTP artifact coverage for {artifact.target_ref}.",
+                        rationale=f"Recent artifact '{artifact.title}' indicates this web target remains relevant.",
                     )
                 )
-                tls_target = _tls_target_from_value(evidence.target_ref)
-                if evidence.target_ref.startswith("https://") and tls_target is not None:
+                tls_target = _tls_target_from_value(artifact.target_ref)
+                if artifact.target_ref.startswith("https://") and tls_target is not None:
                     append_candidate(
                         PlannerRuntimeCandidate(
                             job_type="tls_inspect",
                             target_ref=tls_target,
-                            summary=f"Refresh TLS evidence for {tls_target}.",
-                            rationale=f"Recent HTTPS evidence '{evidence.title}' should be paired with current certificate details.",
+                            summary=f"Refresh TLS artifact coverage for {tls_target}.",
+                            rationale=f"Recent HTTPS artifact '{artifact.title}' should be paired with current certificate details.",
                         )
                     )
-            elif evidence.evidence_type == "tls_certificate":
-                tls_target = _tls_target_from_value(evidence.target_ref)
+            elif artifact.evidence_type == "tls_certificate":
+                tls_target = _tls_target_from_value(artifact.target_ref)
                 if tls_target is not None:
                     append_candidate(
                         PlannerRuntimeCandidate(
                             job_type="tls_inspect",
                             target_ref=tls_target,
                             summary=f"Verify TLS details for {tls_target}.",
-                            rationale=f"Recent certificate evidence '{evidence.title}' should be checked for drift.",
+                            rationale=f"Recent certificate artifact '{artifact.title}' should be checked for drift.",
                         )
                     )
 
@@ -858,7 +873,7 @@ class PlannerRuntime:
                 f"Operation objective: {context.operation.objective}.",
                 self._build_scope_summary(context.policy),
                 self._build_findings_summary(context.open_findings),
-                self._build_evidence_summary(context.evidence_items),
+            self._build_evidence_summary(context.artifact_items),
                 self._build_memory_summary(context.memory_entries),
             ]
             if part
@@ -872,8 +887,8 @@ class PlannerRuntime:
         reasons: list[str] = []
         if context.open_findings:
             reasons.append("Open findings are prioritized so unresolved risk can be revalidated.")
-        if context.evidence_items:
-            reasons.append("Recent evidence is reused to avoid replaying transcript history.")
+        if context.artifact_items:
+            reasons.append("Recent artifacts are reused to avoid replaying transcript history.")
         if any(self._memory_family(entry) in ALLOWED_MEMORY_FAMILIES for entry in context.memory_entries):
             reasons.append("Structured memory contributes stable target facts and workflow hints.")
         if not reasons:
@@ -900,14 +915,14 @@ class PlannerRuntime:
         )
         return f"{len(findings)} open finding(s): {highlights}."
 
-    def _build_evidence_summary(self, evidence_items: Sequence[Evidence]) -> str:
+    def _build_evidence_summary(self, evidence_items: Sequence[Artifact]) -> str:
         if not evidence_items:
-            return "No recent evidence is stored yet."
+            return "No recent artifacts are stored yet."
         highlights = ", ".join(
             _truncate_text(f"{item.title} on {item.target_ref}", limit=80)
             for item in evidence_items[:3]
         )
-        return f"{len(evidence_items)} recent evidence item(s): {highlights}."
+        return f"{len(evidence_items)} recent artifact item(s): {highlights}."
 
     def _build_memory_summary(self, memory_entries: Sequence[MemoryEntry]) -> str:
         if not memory_entries:
@@ -966,7 +981,7 @@ class PlannerRuntime:
             source_job_identifier=job.id,
         )
 
-    def _candidate_from_evidence(self, evidence: Evidence) -> PlannerDerivedMemoryCandidate | None:
+    def _candidate_from_evidence(self, evidence: Artifact) -> PlannerDerivedMemoryCandidate | None:
         source_type_map = {
             "dns_response": "host",
             "http_response": "web",
@@ -979,7 +994,7 @@ class PlannerRuntime:
             return None
         return self._build_memory_candidate(
             source_type=source_type,
-            origin_kind="evidence",
+            origin_kind="artifact",
             origin_ref=evidence.public_id or evidence.id,
             target_ref=evidence.target_ref,
             source_job_identifier=evidence.job_id,
@@ -1110,14 +1125,14 @@ class PlannerRuntime:
                 }
                 for job in context.successful_jobs[:MAX_CONTEXT_ITEMS]
             ],
-            "recent_evidence": [
+            "recent_artifacts": [
                 {
-                    "evidence_type": evidence.evidence_type,
-                    "target_ref": evidence.target_ref,
-                    "title": evidence.title,
-                    "summary": evidence.summary,
+                    "artifact_type": artifact.evidence_type,
+                    "target_ref": artifact.target_ref,
+                    "title": artifact.title,
+                    "summary": artifact.summary,
                 }
-                for evidence in context.evidence_items[:MAX_CONTEXT_ITEMS]
+                for artifact in context.artifact_items[:MAX_CONTEXT_ITEMS]
             ],
             "open_findings": [
                 {

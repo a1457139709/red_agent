@@ -2,21 +2,23 @@ from __future__ import annotations
 
 from agent.settings import Settings, get_settings
 from models.operation_event import OperationEvent, OperationEventLevel, OperationEventType
+from models.session_event import SessionEventLevel, SessionEventType
 from storage.repositories.jobs import JobRepository
-from storage.repositories.operation_events import OperationEventRepository
 from storage.repositories.operations import OperationRepository
 from storage.sqlite import SQLiteStorage
+
+from .session_event_service import SessionEventService
 
 
 class OperationEventService:
     def __init__(
         self,
-        repository: OperationEventRepository,
+        session_event_service: SessionEventService,
         operation_repository: OperationRepository,
         job_repository: JobRepository,
         settings: Settings,
     ) -> None:
-        self.repository = repository
+        self.session_event_service = session_event_service
         self.operation_repository = operation_repository
         self.job_repository = job_repository
         self.settings = settings
@@ -26,7 +28,7 @@ class OperationEventService:
         settings = settings or get_settings()
         storage = SQLiteStorage(settings.sqlite_path)
         return cls(
-            OperationEventRepository(storage),
+            SessionEventService.from_settings(settings),
             OperationRepository(storage),
             JobRepository(storage),
             settings,
@@ -47,39 +49,52 @@ class OperationEventService:
         payload: dict | None = None,
         created_at: str | None = None,
     ) -> OperationEvent:
-        operation = self.operation_repository.get(operation_identifier)
-        if operation is None:
-            raise ValueError(f"Operation not found: {operation_identifier}")
-
-        job_id: str | None = None
-        if job_identifier is not None:
-            job = self.job_repository.get(job_identifier)
-            if job is None:
-                raise ValueError(f"Job not found: {job_identifier}")
-            if job.operation_id != operation.id:
-                raise ValueError("Operation event job must belong to the same operation.")
-            job_id = job.id
-
-        event = OperationEvent.create(
-            operation_id=operation.id,
-            job_id=job_id,
-            event_type=event_type,
-            level=level,
+        event = self.session_event_service.create_event(
+            operation_identifier=operation_identifier,
+            event_type=SessionEventType(event_type.value),
+            level=SessionEventLevel(level.value),
             tool_name=tool_name,
             tool_category=tool_category,
             target_ref=target_ref,
+            job_identifier=job_identifier,
             reason_code=reason_code,
             message=message,
             payload=payload,
             created_at=created_at,
         )
-        return self.repository.create(event)
+        return OperationEvent(
+            id=event.id,
+            operation_id=event.session_id,
+            job_id=event.job_id,
+            event_type=OperationEventType(event.event_type.value),
+            level=OperationEventLevel(event.level.value),
+            tool_name=event.tool_name,
+            tool_category=event.tool_category,
+            target_ref=event.target_ref,
+            reason_code=event.reason_code,
+            message=event.message,
+            payload=event.payload,
+            created_at=event.created_at,
+        )
 
     def list_events(self, operation_identifier: str, *, limit: int | None = 50) -> list[OperationEvent]:
-        operation = self.operation_repository.get(operation_identifier)
-        if operation is None:
-            raise ValueError(f"Operation not found: {operation_identifier}")
-        return self.repository.list(operation.id, limit=limit)
+        return [
+            OperationEvent(
+                id=event.id,
+                operation_id=event.session_id,
+                job_id=event.job_id,
+                event_type=OperationEventType(event.event_type.value),
+                level=OperationEventLevel(event.level.value),
+                tool_name=event.tool_name,
+                tool_category=event.tool_category,
+                target_ref=event.target_ref,
+                reason_code=event.reason_code,
+                message=event.message,
+                payload=event.payload,
+                created_at=event.created_at,
+            )
+            for event in self.session_event_service.list_events(operation_identifier, limit=limit)
+        ]
 
     def count_events_since(
         self,
@@ -88,7 +103,8 @@ class OperationEventService:
         event_type: OperationEventType | None = None,
         since: str | None = None,
     ) -> int:
-        operation = self.operation_repository.get(operation_identifier)
-        if operation is None:
-            raise ValueError(f"Operation not found: {operation_identifier}")
-        return self.repository.count_since(operation.id, event_type=event_type, since=since)
+        return self.session_event_service.count_events_since(
+            operation_identifier,
+            event_type=SessionEventType(event_type.value) if event_type is not None else None,
+            since=since,
+        )

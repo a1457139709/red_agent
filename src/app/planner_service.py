@@ -6,6 +6,7 @@ from agent.settings import Settings, get_settings
 from app.job_service import JobService
 from app.memory_service import MemoryService
 from app.operation_service import OperationService
+from app.session_service import SessionService
 from models.job import Job
 from models.planner import (
     PlannerMemoryWritebackStatus,
@@ -45,10 +46,12 @@ class PlannerService:
         job_service: JobService,
         memory_service: MemoryService,
         settings: Settings,
+        session_service: SessionService | None = None,
     ) -> None:
         self.repository = repository
         self.runtime = runtime
         self.operation_service = operation_service
+        self.session_service = session_service or SessionService.from_settings(settings)
         self.job_service = job_service
         self.memory_service = memory_service
         self.settings = settings
@@ -63,15 +66,16 @@ class PlannerService:
             repository=PlannerRepository(storage),
             runtime=PlannerRuntime.from_settings(settings),
             operation_service=operation_service,
+            session_service=SessionService.from_settings(settings),
             job_service=job_service,
             memory_service=MemoryService.from_settings(settings),
             settings=settings,
         )
 
-    def create_plan(self, operation_identifier: str) -> PlannerPlanBundle:
-        result = self.runtime.create_plan(operation_identifier)
+    def create_plan(self, session_identifier: str) -> PlannerPlanBundle:
+        result = self.runtime.create_plan(session_identifier)
         plan = PlannerPlan.create(
-            operation_id=result.context.operation.id,
+            session_id=result.context.operation.id,
             planning_mode=result.planning_mode,
             context_hash=result.context.context_hash,
             summary=result.summary,
@@ -101,7 +105,7 @@ class PlannerService:
         selected_indices: list[int] | None = None,
     ) -> PlannerApplyResult:
         bundle = self.get_plan_bundle(identifier)
-        operation = self.operation_service.require_operation(bundle.plan.operation_id)
+        operation = self.operation_service.require_operation(bundle.plan.session_id)
         policy = self.operation_service.require_scope_policy(operation.id)
         selectable = [
             proposal
@@ -132,7 +136,7 @@ class PlannerService:
                 continue
 
             job = self.job_service.create_job(
-                operation_identifier=operation.id,
+                session_identifier=bundle.plan.session_id,
                 job_type=proposal.job_type,
                 target_ref=proposal.target_ref,
                 arguments=dict(proposal.arguments),
@@ -160,16 +164,16 @@ class PlannerService:
             skipped_proposals=skipped_proposals,
         )
 
-    def build_operation_context_summary(self, operation_identifier: str):
-        return self.runtime.build_operation_context_summary(operation_identifier)
+    def build_operation_context_summary(self, session_identifier: str):
+        return self.runtime.build_operation_context_summary(session_identifier)
 
-    def _write_back_memory_candidates(self, operation_identifier: str) -> PlannerMemoryWritebackSummary:
+    def _write_back_memory_candidates(self, session_identifier: str) -> PlannerMemoryWritebackSummary:
         created_count = 0
         skipped_count = 0
         try:
-            result = self.runtime.derive_memory_candidates(operation_identifier)
+            result = self.runtime.derive_memory_candidates(session_identifier)
             for candidate in result.candidates:
-                if self._persist_candidate(operation_identifier, candidate):
+                if self._persist_candidate(session_identifier, candidate):
                     created_count += 1
             skipped_count = result.skipped_count
             return PlannerMemoryWritebackSummary(
@@ -187,11 +191,11 @@ class PlannerService:
 
     def _persist_candidate(
         self,
-        operation_identifier: str,
+        session_identifier: str,
         candidate: PlannerDerivedMemoryCandidate,
     ) -> bool:
         self.memory_service.create_memory_entry(
-            operation_identifier=operation_identifier,
+            session_identifier=session_identifier,
             entry_type=candidate.entry_type,
             key=candidate.key,
             value=dict(candidate.value),

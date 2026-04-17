@@ -3,16 +3,18 @@ from __future__ import annotations
 import sqlite3
 
 from models.planner import PlannerPlan, PlannerProposal
+from storage.schema_guard import ensure_phase6_clean_runtime_reset
 from storage.sqlite import SQLiteStorage
 
 from ._common import allocate_public_id, get_row_by_identifier
+from .sessions import SessionRepository
 
 
 PLANNER_SCHEMA = """
 CREATE TABLE IF NOT EXISTS planner_plans (
     id TEXT PRIMARY KEY,
     public_id TEXT,
-    operation_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
     status TEXT NOT NULL,
     planning_mode TEXT NOT NULL,
     context_hash TEXT NOT NULL,
@@ -23,12 +25,12 @@ CREATE TABLE IF NOT EXISTS planner_plans (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     applied_at TEXT,
-    FOREIGN KEY(operation_id) REFERENCES operations(id)
+    FOREIGN KEY(session_id) REFERENCES sessions(id)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_planner_plans_public_id ON planner_plans(public_id);
-CREATE INDEX IF NOT EXISTS idx_planner_plans_operation_updated_at
-    ON planner_plans(operation_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_planner_plans_session_updated_at
+    ON planner_plans(session_id, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS planner_proposals (
     id TEXT PRIMARY KEY,
@@ -100,7 +102,7 @@ class PlannerRepository:
                 """
                 UPDATE planner_plans
                 SET
-                    operation_id = :operation_id,
+                    session_id = :session_id,
                     status = :status,
                     planning_mode = :planning_mode,
                     context_hash = :context_hash,
@@ -151,10 +153,10 @@ class PlannerRepository:
         connection.execute(
             """
             INSERT INTO planner_plans (
-                id, public_id, operation_id, status, planning_mode, context_hash,
+                id, public_id, session_id, status, planning_mode, context_hash,
                 summary, rationale, planner_source, model_name, created_at, updated_at, applied_at
             ) VALUES (
-                :id, :public_id, :operation_id, :status, :planning_mode, :context_hash,
+                :id, :public_id, :session_id, :status, :planning_mode, :context_hash,
                 :summary, :rationale, :planner_source, :model_name, :created_at, :updated_at, :applied_at
             )
             """,
@@ -178,6 +180,8 @@ class PlannerRepository:
         )
 
     def _ensure_schema(self) -> None:
+        SessionRepository(self.storage)
         with self.storage.connect() as connection:
+            ensure_phase6_clean_runtime_reset(connection, app_data_dir=self.storage.db_path.parent)
             connection.executescript(PLANNER_SCHEMA)
             connection.commit()

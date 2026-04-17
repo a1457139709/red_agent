@@ -50,6 +50,8 @@ class SkillService:
         self.base_tool_names = list(base_tool_names or sorted(registry.known_tool_names))
         self.default_skill_name = default_skill_name
         self.default_task_skill_name = default_task_skill_name
+        # Base mode defines the maximum capability envelope. Individual skills
+        # can narrow that envelope, but they should not expand it.
         self.base_safety_policy = RuntimeSafetyPolicy.for_tool_names(self.base_tool_names)
 
     def list_skills(self) -> list[LoadedSkill]:
@@ -146,6 +148,8 @@ class SkillService:
             skill=skill,
             system_prompt=system_prompt,
             allowed_tools=list(skill.manifest.allowed_tools),
+            # Intersect the skill allowlist with the base policy so local skills
+            # cannot silently re-enable capabilities outside the default runtime.
             safety_policy=RuntimeSafetyPolicy.for_tool_names(
                 skill.manifest.allowed_tools,
                 base_policy=self.base_safety_policy,

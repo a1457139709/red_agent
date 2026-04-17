@@ -207,6 +207,8 @@ class ToolExecutor:
             args_summary=args_summary,
         )
 
+        # Emit the invocation before policy checks so blocked attempts still show
+        # up in the execution trail alongside their audit events.
         self._emit_tool_event(
             event_type="tool_invoked",
             tool_name=tool_name,
@@ -265,6 +267,8 @@ class ToolExecutor:
 
         self._warn_sensitive_read(target_path, capability)
 
+        # Reads only generate warnings. Everything that mutates state or executes
+        # code goes through confirmation or shell-risk checks first.
         if capability == CapabilityTier.WRITE and self._is_sensitive_target(target_path):
             denial = self._require_confirmation(
                 context,
@@ -450,6 +454,8 @@ class ToolExecutor:
             if not raw_path or not isinstance(raw_path, str):
                 continue
             try:
+                # Invalid or out-of-workspace paths are left as opaque targets so
+                # later checks can report a clear user-facing denial.
                 return resolve_safe_path(raw_path)
             except ValueError:
                 return None

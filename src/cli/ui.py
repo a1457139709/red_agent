@@ -14,12 +14,12 @@ from rich.table import Table
 from rich.text import Text
 
 from app.dashboard_service import OperationDashboard
+from models.artifact import Artifact
 from models.checkpoint import CheckpointSummary
 from models.evidence import Evidence
 from models.finding import Finding
 from models.job import Job
 from models.operation import Operation
-from models.operation_event import OperationEvent
 from models.planner import (
     OperationContextSummary,
     PlannerMemoryWritebackStatus,
@@ -28,6 +28,7 @@ from models.planner import (
     PlannerProposal,
     PlannerProposalKind,
 )
+from models.report import Report
 from models.run import Run, TaskLogEntry
 from models.skill import LoadedSkill
 from models.scope_policy import ScopePolicy
@@ -66,6 +67,8 @@ class CliPresenter:
         header_output: SinkFn | None = None,
         final_answer_output: SinkFn | None = None,
     ) -> "CliPresenter":
+        # Use a deterministic plain-text console when the presenter is wired into
+        # tests or callback hooks so output does not depend on terminal features.
         return cls(
             console=Console(width=120, soft_wrap=True, color_system=None, force_terminal=False),
             sinks=_PresenterSinks(
@@ -88,6 +91,8 @@ class CliPresenter:
             force_terminal=False,
             file=buffer,
         )
+        # Render through Rich even for callback sinks so every output path shares
+        # the same table wrapping and panel layout rules.
         console.print(renderable)
         return console.export_text().rstrip()
 
@@ -223,6 +228,14 @@ class CliPresenter:
         topics = Table(box=ASCII_BOX, expand=True, header_style="bold")
         topics.add_column("Topic", style="bold cyan", no_wrap=True)
         topics.add_column("Purpose", style="white")
+        topics.add_row("operation", "Legacy operation lifecycle and scope inspection")
+        topics.add_row("job", "Session-owned redteam jobs")
+        topics.add_row("finding", "Session-owned findings and artifact links")
+        topics.add_row("artifact", "Inspect raw session artifacts")
+        topics.add_row("report", "Inspect persisted session reports")
+        topics.add_row("dashboard", "Session runtime summary")
+        topics.add_row("planner", "Planner plan creation and application")
+        topics.add_row("task", "Legacy task debugging and recovery")
         topics.add_row("skill", "Skill activation, inspection, reload, and shorthand usage")
         return Group(
             Text("Describe what you want in plain language first. Slash commands are available for advanced and debug workflows.", style="dim"),
@@ -251,8 +264,8 @@ class CliPresenter:
             Text("Job help", style="dim"),
             Rule(style="grey50", characters="-"),
             self._command_panel("Job Commands", [
-                ("/job create <operation_id>", "Create a job inside an operation"),
-                ("/job list <operation_id> [status] [limit]", "List jobs for an operation"),
+                ("/job create <session_id>", "Create a job inside a session"),
+                ("/job list <session_id> [status] [limit]", "List jobs for a session"),
                 ("/job show <job_id>", "Show job details"),
                 ("/job cancel <job_id>", "Request cancellation for a queued or running job"),
             ], border_style="magenta"),
@@ -263,21 +276,35 @@ class CliPresenter:
             Text("Finding help", style="dim"),
             Rule(style="grey50", characters="-"),
             self._command_panel("Finding Commands", [
-                ("/finding list <operation_id> [limit]", "List findings for an operation"),
-                ("/finding show <finding_id>", "Show finding details and linked evidence"),
+                ("/finding list <session_id> [limit]", "List findings for a session"),
+                ("/finding show <finding_id>", "Show finding details and linked artifacts"),
                 ("/finding confirm <finding_id>", "Mark a finding as confirmed"),
                 ("/finding dismiss <finding_id>", "Dismiss a finding with an optional reason"),
             ], border_style="yellow"),
         )
 
-    def _help_evidence(self) -> Group:
+    def _help_artifact(self) -> Group:
         return Group(
-            Text("Evidence help", style="dim"),
+            Text("Artifact help", style="dim"),
             Rule(style="grey50", characters="-"),
-            self._command_panel("Evidence Commands", [
-                ("/evidence list <operation_id> [limit]", "List evidence for an operation"),
-                ("/evidence show <evidence_id>", "Show evidence details and linked findings"),
+            self._command_panel("Artifact Commands", [
+                ("/artifact list <session_id> [limit]", "List artifacts for a session"),
+                ("/artifact show <artifact_id>", "Show artifact details and linked findings"),
             ], border_style="green"),
+            Text("Deprecated alias: /evidence routes to the same session-owned artifact records.", style="dim"),
+        )
+
+    def _help_evidence(self) -> Group:
+        return self._help_artifact()
+
+    def _help_report(self) -> Group:
+        return Group(
+            Text("Report help", style="dim"),
+            Rule(style="grey50", characters="-"),
+            self._command_panel("Report Commands", [
+                ("/report list <session_id> [limit]", "List reports for a session"),
+                ("/report show <report_id>", "Show report details and linked artifacts/findings"),
+            ], border_style="bright_blue"),
         )
 
     def _help_dashboard(self) -> Group:
@@ -285,8 +312,8 @@ class CliPresenter:
             Text("Dashboard help", style="dim"),
             Rule(style="grey50", characters="-"),
             self._command_panel("Dashboard Commands", [
-                ("/dashboard", "Show the most recently updated operation dashboard"),
-                ("/dashboard <operation_id>", "Show the dashboard for one operation"),
+                ("/dashboard", "Show the most recently active redteam session dashboard"),
+                ("/dashboard <session_id>", "Show the dashboard for one session"),
             ], border_style="bright_blue"),
         )
 
@@ -295,11 +322,11 @@ class CliPresenter:
             Text("Planner help", style="dim"),
             Rule(style="grey50", characters="-"),
             self._command_panel("Planner Commands", [
-                ("/planner plan <operation_id>", "Create and preview a persisted planner plan"),
+                ("/planner plan <session_id>", "Create and preview a persisted planner plan"),
                 ("/planner apply <plan_id> [1,3,...]", "Create jobs from all or selected planner proposals"),
             ], border_style="bright_blue"),
             Text(
-                "Tip: /operation resume now shows a context summary and points you to /planner plan.",
+                "Tip: /operation resume now shows a session context summary and points you to /planner plan.",
                 style="dim",
             ),
         )
@@ -351,6 +378,33 @@ class CliPresenter:
         if topic is None:
             body = self._help_overview()
             title = "red-code"
+        elif topic == "operation":
+            body = self._help_operation()
+            title = "Help: operation"
+        elif topic == "job":
+            body = self._help_job()
+            title = "Help: job"
+        elif topic == "finding":
+            body = self._help_finding()
+            title = "Help: finding"
+        elif topic == "artifact":
+            body = self._help_artifact()
+            title = "Help: artifact"
+        elif topic == "evidence":
+            body = self._help_evidence()
+            title = "Help: evidence"
+        elif topic == "report":
+            body = self._help_report()
+            title = "Help: report"
+        elif topic == "dashboard":
+            body = self._help_dashboard()
+            title = "Help: dashboard"
+        elif topic == "planner":
+            body = self._help_planner()
+            title = "Help: planner"
+        elif topic == "task":
+            body = self._help_task()
+            title = "Help: task"
         elif topic == "skill":
             body = self._help_skill()
             title = "Help: skill"
@@ -370,6 +424,8 @@ class CliPresenter:
                 self.sinks.final_answer,
             )
         ):
+            # Callback presenters usually feed tests or logs, where clearing the
+            # screen would erase useful output instead of helping the operator.
             return
         file = self.console.file
         is_tty = callable(getattr(file, "isatty", None)) and bool(file.isatty())
@@ -463,15 +519,15 @@ class CliPresenter:
         self._emit(
             Panel(
                 self._detail_table([
-                    ("Operation", summary.operation_id),
+                    ("Session", summary.operation_id),
                     ("Summary", summary.summary),
                     ("Scope", summary.scope_summary),
                     ("Findings", summary.findings_summary),
-                    ("Evidence", summary.evidence_summary),
+                    ("Artifacts", summary.evidence_summary),
                     ("Memory", summary.memory_summary),
                     ("Suggested Next Step", summary.next_step_hint),
                 ]),
-                title="Operation Context Summary",
+                title="Session Context Summary",
                 border_style="bright_blue",
                 box=ASCII_BOX,
             )
@@ -504,7 +560,7 @@ class CliPresenter:
                 self._detail_table([
                     ("Job ID", job.public_id),
                     ("Internal ID", job.id),
-                    ("Operation ID", job.operation_id),
+                    ("Session ID", job.operation_id),
                     ("Type", job.job_type),
                     ("Target", job.target_ref),
                     ("Status", job.status.value),
@@ -562,7 +618,7 @@ class CliPresenter:
                 self._detail_table([
                     ("Finding ID", finding.public_id),
                     ("Internal ID", finding.id),
-                    ("Operation ID", finding.operation_id),
+                    ("Session ID", finding.operation_id),
                     ("Source Job ID", finding.source_job_id or "-"),
                     ("Type", finding.finding_type),
                     ("Title", finding.title),
@@ -574,7 +630,7 @@ class CliPresenter:
                     ("Impact", finding.impact or "-"),
                     ("Reproduction Notes", finding.reproduction_notes or "-"),
                     ("Next Action", finding.next_action or "-"),
-                    ("Linked Evidence IDs", ", ".join(linked_evidence_ids) or "-"),
+                    ("Linked Artifact IDs", ", ".join(linked_evidence_ids) or "-"),
                     ("Created At", finding.created_at),
                     ("Updated At", finding.updated_at),
                 ]),
@@ -585,48 +641,135 @@ class CliPresenter:
         )
 
     def show_evidence_list(self, evidence_items: list[Evidence], *, operation_label: str | None = None) -> None:
-        if not evidence_items:
+        artifacts = [
+            Artifact(
+                id=evidence.id,
+                public_id=evidence.public_id,
+                session_id=evidence.operation_id,
+                source_job_id=evidence.job_id,
+                artifact_type=evidence.evidence_type,
+                target_ref=evidence.target_ref,
+                title=evidence.title,
+                summary=evidence.summary,
+                artifact_path=evidence.artifact_path,
+                content_type=evidence.content_type,
+                hash_digest=evidence.hash_digest,
+                captured_at=evidence.captured_at,
+                metadata={},
+            )
+            for evidence in evidence_items
+        ]
+        self.show_artifact_list(artifacts, session_label=operation_label)
+
+    def show_evidence_detail(self, evidence: Evidence, *, linked_finding_ids: list[str]) -> None:
+        artifact = Artifact(
+            id=evidence.id,
+            public_id=evidence.public_id,
+            session_id=evidence.operation_id,
+            source_job_id=evidence.job_id,
+            artifact_type=evidence.evidence_type,
+            target_ref=evidence.target_ref,
+            title=evidence.title,
+            summary=evidence.summary,
+            artifact_path=evidence.artifact_path,
+            content_type=evidence.content_type,
+            hash_digest=evidence.hash_digest,
+            captured_at=evidence.captured_at,
+            metadata={},
+        )
+        self.show_artifact_detail(artifact, linked_finding_ids=linked_finding_ids)
+
+    def show_artifact_list(self, artifacts: list[Artifact], *, session_label: str | None = None) -> None:
+        if not artifacts:
             self._emit(
-                Panel(Text("No evidence found.", style="dim"), title="Evidence", border_style="yellow", box=ASCII_BOX)
+                Panel(Text("No artifacts found.", style="dim"), title="Artifacts", border_style="yellow", box=ASCII_BOX)
             )
             return
-        title = f"Evidence for {operation_label}" if operation_label else "Evidence"
+        title = f"Artifacts for {session_label}" if session_label else "Artifacts"
         table = Table(title=title, box=ASCII_BOX, expand=True, header_style="bold")
-        table.add_column("Evidence", style="cyan", no_wrap=True)
+        table.add_column("Artifact", style="cyan", no_wrap=True)
         table.add_column("Type", no_wrap=True)
         table.add_column("Target", overflow="fold")
         table.add_column("Captured", style="dim", no_wrap=True)
         table.add_column("Title", overflow="fold")
-        for evidence in evidence_items:
+        for artifact in artifacts:
             table.add_row(
-                evidence.public_id,
-                evidence.evidence_type,
-                evidence.target_ref,
-                self._format_timestamp_compact(evidence.captured_at),
-                evidence.title,
+                artifact.public_id,
+                artifact.artifact_type,
+                artifact.target_ref,
+                self._format_timestamp_compact(artifact.captured_at),
+                artifact.title,
             )
         self._emit(table)
 
-    def show_evidence_detail(self, evidence: Evidence, *, linked_finding_ids: list[str]) -> None:
+    def show_artifact_detail(self, artifact: Artifact, *, linked_finding_ids: list[str]) -> None:
         self._emit(
             Panel(
                 self._detail_table([
-                    ("Evidence ID", evidence.public_id),
-                    ("Internal ID", evidence.id),
-                    ("Operation ID", evidence.operation_id),
-                    ("Job ID", evidence.job_id or "-"),
-                    ("Type", evidence.evidence_type),
-                    ("Target", evidence.target_ref),
-                    ("Title", evidence.title),
-                    ("Summary", evidence.summary),
-                    ("Artifact Path", evidence.artifact_path or "-"),
-                    ("Content Type", evidence.content_type or "-"),
-                    ("Hash Digest", evidence.hash_digest or "-"),
+                    ("Artifact ID", artifact.public_id),
+                    ("Internal ID", artifact.id),
+                    ("Session ID", artifact.operation_id),
+                    ("Job ID", artifact.job_id or "-"),
+                    ("Type", artifact.artifact_type),
+                    ("Target", artifact.target_ref),
+                    ("Title", artifact.title),
+                    ("Summary", artifact.summary),
+                    ("Artifact Path", artifact.artifact_path or "-"),
+                    ("Content Type", artifact.content_type or "-"),
+                    ("Hash Digest", artifact.hash_digest or "-"),
                     ("Linked Finding IDs", ", ".join(linked_finding_ids) or "-"),
-                    ("Captured At", evidence.captured_at),
+                    ("Captured At", artifact.captured_at),
                 ]),
-                title="Evidence",
+                title="Artifact",
                 border_style="green",
+                box=ASCII_BOX,
+            )
+        )
+
+    def show_report_list(self, reports: list[Report], *, session_label: str | None = None) -> None:
+        if not reports:
+            self._emit(
+                Panel(Text("No reports found.", style="dim"), title="Reports", border_style="yellow", box=ASCII_BOX)
+            )
+            return
+        title = f"Reports for {session_label}" if session_label else "Reports"
+        table = Table(title=title, box=ASCII_BOX, expand=True, header_style="bold")
+        table.add_column("Report", style="cyan", no_wrap=True)
+        table.add_column("Type", no_wrap=True)
+        table.add_column("Created", style="dim", no_wrap=True)
+        table.add_column("Title", overflow="fold")
+        for report in reports:
+            table.add_row(
+                report.public_id,
+                report.report_type,
+                self._format_timestamp_compact(report.created_at),
+                report.title,
+            )
+        self._emit(table)
+
+    def show_report_detail(
+        self,
+        report: Report,
+        *,
+        linked_artifact_ids: list[str],
+        linked_finding_ids: list[str],
+    ) -> None:
+        self._emit(
+            Panel(
+                self._detail_table([
+                    ("Report ID", report.public_id),
+                    ("Internal ID", report.id),
+                    ("Session ID", report.session_id),
+                    ("Type", report.report_type),
+                    ("Title", report.title),
+                    ("Summary", report.summary),
+                    ("Output Path", report.artifact_path or "-"),
+                    ("Linked Artifact IDs", ", ".join(linked_artifact_ids) or "-"),
+                    ("Linked Finding IDs", ", ".join(linked_finding_ids) or "-"),
+                    ("Created At", report.created_at),
+                ]),
+                title="Report",
+                border_style="bright_blue",
                 box=ASCII_BOX,
             )
         )
@@ -634,16 +777,19 @@ class CliPresenter:
     def show_dashboard(self, dashboard: OperationDashboard) -> None:
         summary = Panel(
             self._detail_table([
-                ("Operation ID", dashboard.operation.public_id),
-                ("Title", dashboard.operation.title),
-                ("Objective", dashboard.operation.objective),
-                ("Status", dashboard.operation.status.value),
-                ("Workspace", dashboard.operation.workspace),
+                ("Session ID", dashboard.session.public_id),
+                ("Title", dashboard.session.title),
+                ("Goal", dashboard.session.goal),
+                ("Mode", dashboard.session.mode.value),
+                ("Status", dashboard.session.status.value),
+                ("Workspace", dashboard.session.workspace),
+                ("Target Summary", dashboard.session.target_summary or "-"),
                 ("Allowed Hosts", ", ".join(dashboard.policy.allowed_hosts) or "-"),
                 ("Allowed Domains", ", ".join(dashboard.policy.allowed_domains) or "-"),
                 ("Allowed Ports", ", ".join(str(port) for port in dashboard.policy.allowed_ports) or "-"),
                 ("Allowed Protocols", ", ".join(dashboard.policy.allowed_protocols) or "-"),
-                ("Evidence Total", str(dashboard.evidence_count)),
+                ("Artifact Total", str(dashboard.artifact_count)),
+                ("Report Total", str(dashboard.report_count)),
                 ("Admission Denied Events", str(dashboard.event_counts.get("admission_denied", 0))),
                 ("Confirmation Denied Events", str(dashboard.event_counts.get("confirmation_denied", 0))),
                 ("Execution Failed Events", str(dashboard.event_counts.get("execution_failed", 0))),
@@ -713,31 +859,31 @@ class CliPresenter:
                 box=ASCII_BOX,
             )
 
-        recent_evidence: RenderableType
-        if dashboard.recent_evidence:
-            recent_evidence = Table(title=f"Recent Evidence ({dashboard.evidence_count} total)", box=ASCII_BOX, expand=True, header_style="bold")
-            recent_evidence.add_column("Evidence", style="cyan", no_wrap=True)
-            recent_evidence.add_column("Type", no_wrap=True)
-            recent_evidence.add_column("Target", overflow="fold")
-            recent_evidence.add_column("Captured", style="dim", no_wrap=True)
-            for evidence in dashboard.recent_evidence:
-                recent_evidence.add_row(
-                    evidence.public_id,
-                    evidence.evidence_type,
-                    evidence.target_ref,
-                    self._format_timestamp_compact(evidence.captured_at),
+        recent_artifacts: RenderableType
+        if dashboard.recent_artifacts:
+            recent_artifacts = Table(title=f"Recent Artifacts ({dashboard.artifact_count} total)", box=ASCII_BOX, expand=True, header_style="bold")
+            recent_artifacts.add_column("Artifact", style="cyan", no_wrap=True)
+            recent_artifacts.add_column("Type", no_wrap=True)
+            recent_artifacts.add_column("Target", overflow="fold")
+            recent_artifacts.add_column("Captured", style="dim", no_wrap=True)
+            for artifact in dashboard.recent_artifacts:
+                recent_artifacts.add_row(
+                    artifact.public_id,
+                    artifact.artifact_type,
+                    artifact.target_ref,
+                    self._format_timestamp_compact(artifact.captured_at),
                 )
         else:
-            recent_evidence = Panel(
-                Text("No evidence found.", style="dim"),
-                title=f"Recent Evidence ({dashboard.evidence_count} total)",
+            recent_artifacts = Panel(
+                Text("No artifacts found.", style="dim"),
+                title=f"Recent Artifacts ({dashboard.artifact_count} total)",
                 border_style="yellow",
                 box=ASCII_BOX,
             )
 
         recent_events: RenderableType
         if dashboard.recent_events:
-            recent_events = Table(title="Recent Operation Events", box=ASCII_BOX, expand=True, header_style="bold")
+            recent_events = Table(title="Recent Session Events", box=ASCII_BOX, expand=True, header_style="bold")
             recent_events.add_column("Created", style="dim", no_wrap=True)
             recent_events.add_column("Event", no_wrap=True)
             recent_events.add_column("Target", overflow="fold")
@@ -754,13 +900,13 @@ class CliPresenter:
                 )
         else:
             recent_events = Panel(
-                Text("No operation events found.", style="dim"),
-                title="Recent Operation Events",
+                Text("No session events found.", style="dim"),
+                title="Recent Session Events",
                 border_style="yellow",
                 box=ASCII_BOX,
             )
 
-        self._emit(Group(summary, job_counts, finding_counts, flagged_jobs, recent_findings, recent_evidence, recent_events))
+        self._emit(Group(summary, job_counts, finding_counts, flagged_jobs, recent_findings, recent_artifacts, recent_events))
 
     def show_planner_plan(
         self,
@@ -781,7 +927,7 @@ class CliPresenter:
         summary = Panel(
             self._detail_table([
                 ("Plan ID", plan.public_id),
-                ("Operation", operation_label),
+                ("Session", operation_label),
                 ("Status", plan.status.value),
                 ("Planning Mode", plan.planning_mode),
                 ("Planner Source", plan.planner_source.value),

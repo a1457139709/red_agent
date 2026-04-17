@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 from models.finding import Finding
+from storage.schema_guard import ensure_phase6_clean_runtime_reset
 from storage.sqlite import SQLiteStorage
 
 from ._common import allocate_public_id, get_row_by_identifier
+from .sessions import SessionRepository
 
 
 FINDINGS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS findings (
     id TEXT PRIMARY KEY,
     public_id TEXT,
-    operation_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
     source_job_id TEXT,
     finding_type TEXT NOT NULL,
     title TEXT NOT NULL,
@@ -24,12 +26,12 @@ CREATE TABLE IF NOT EXISTS findings (
     next_action TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    FOREIGN KEY(operation_id) REFERENCES operations(id),
-    FOREIGN KEY(source_job_id) REFERENCES jobs(id)
+    FOREIGN KEY(session_id) REFERENCES sessions(id),
+    FOREIGN KEY(source_job_id) REFERENCES session_jobs(id)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_findings_public_id ON findings(public_id);
-CREATE INDEX IF NOT EXISTS idx_findings_operation_updated_at ON findings(operation_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_findings_session_updated_at ON findings(session_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_findings_status ON findings(status);
 """
 
@@ -45,11 +47,11 @@ class FindingRepository:
             connection.execute(
                 """
                 INSERT INTO findings (
-                    id, public_id, operation_id, source_job_id, finding_type, title, target_ref,
+                    id, public_id, session_id, source_job_id, finding_type, title, target_ref,
                     severity, confidence, status, summary, impact, reproduction_notes, next_action,
                     created_at, updated_at
                 ) VALUES (
-                    :id, :public_id, :operation_id, :source_job_id, :finding_type, :title, :target_ref,
+                    :id, :public_id, :session_id, :source_job_id, :finding_type, :title, :target_ref,
                     :severity, :confidence, :status, :summary, :impact, :reproduction_notes, :next_action,
                     :created_at, :updated_at
                 )
@@ -69,9 +71,9 @@ class FindingRepository:
             )
         return Finding.from_row(dict(row)) if row else None
 
-    def list(self, operation_id: str, *, limit: int | None = 50) -> list[Finding]:
-        query = "SELECT * FROM findings WHERE operation_id = ? ORDER BY updated_at DESC"
-        params: list[object] = [operation_id]
+    def list(self, session_id: str, *, limit: int | None = 50) -> list[Finding]:
+        query = "SELECT * FROM findings WHERE session_id = ? ORDER BY updated_at DESC"
+        params: list[object] = [session_id]
         if limit is not None:
             query += " LIMIT ?"
             params.append(limit)
@@ -86,7 +88,7 @@ class FindingRepository:
                 UPDATE findings
                 SET
                     public_id = :public_id,
-                    operation_id = :operation_id,
+                    session_id = :session_id,
                     source_job_id = :source_job_id,
                     finding_type = :finding_type,
                     title = :title,
@@ -108,6 +110,8 @@ class FindingRepository:
         return finding
 
     def _ensure_schema(self) -> None:
+        SessionRepository(self.storage)
         with self.storage.connect() as connection:
+            ensure_phase6_clean_runtime_reset(connection, app_data_dir=self.storage.db_path.parent)
             connection.executescript(FINDINGS_SCHEMA)
             connection.commit()

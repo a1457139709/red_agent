@@ -11,7 +11,7 @@ from .run import utc_now_iso
 @dataclass(slots=True)
 class ScopePolicy:
     id: str
-    operation_id: str
+    session_id: str
     allowed_hosts: list[str] = field(default_factory=list)
     allowed_domains: list[str] = field(default_factory=list)
     allowed_cidrs: list[str] = field(default_factory=list)
@@ -29,7 +29,8 @@ class ScopePolicy:
     def create(
         cls,
         *,
-        operation_id: str,
+        session_id: str | None = None,
+        operation_id: str | None = None,
         allowed_hosts: list[str] | None = None,
         allowed_domains: list[str] | None = None,
         allowed_cidrs: list[str] | None = None,
@@ -41,9 +42,12 @@ class ScopePolicy:
         rate_limit_per_minute: int | None = None,
         confirmation_required_actions: list[str] | None = None,
     ) -> "ScopePolicy":
+        resolved_session_id = session_id or operation_id
+        if not resolved_session_id:
+            raise ValueError("session_id is required.")
         return cls(
             id=str(uuid4()),
-            operation_id=operation_id,
+            session_id=resolved_session_id,
             allowed_hosts=list(allowed_hosts or []),
             allowed_domains=list(allowed_domains or []),
             allowed_cidrs=list(allowed_cidrs or []),
@@ -60,7 +64,7 @@ class ScopePolicy:
     def from_row(cls, row: dict[str, Any]) -> "ScopePolicy":
         return cls(
             id=row["id"],
-            operation_id=row["operation_id"],
+            session_id=row["session_id"],
             allowed_hosts=json.loads(row["allowed_hosts"]) if row.get("allowed_hosts") else [],
             allowed_domains=json.loads(row["allowed_domains"]) if row.get("allowed_domains") else [],
             allowed_cidrs=json.loads(row["allowed_cidrs"]) if row.get("allowed_cidrs") else [],
@@ -82,7 +86,7 @@ class ScopePolicy:
     def to_row(self) -> dict[str, Any]:
         return {
             "id": self.id,
-            "operation_id": self.operation_id,
+            "session_id": self.session_id,
             "allowed_hosts": json.dumps(self.allowed_hosts, ensure_ascii=False),
             "allowed_domains": json.dumps(self.allowed_domains, ensure_ascii=False),
             "allowed_cidrs": json.dumps(self.allowed_cidrs, ensure_ascii=False),
@@ -99,3 +103,11 @@ class ScopePolicy:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+
+    @property
+    def operation_id(self) -> str:
+        return self.session_id
+
+    @operation_id.setter
+    def operation_id(self, value: str) -> None:
+        self.session_id = value

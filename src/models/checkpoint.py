@@ -7,6 +7,7 @@ from uuid import uuid4
 import json
 
 from .run import utc_now_iso
+from storage.session_paths import checkpoint_blob_relative_path
 
 
 CHECKPOINT_SCHEMA_VERSION = 2
@@ -28,14 +29,16 @@ def history_text_bytes(payload: dict[str, Any]) -> int:
 
 
 def build_blob_relative_path(*, checkpoint_id: str, created_at: str) -> str:
-    created = datetime.fromisoformat(created_at)
-    return f"checkpoints/{created.year:04d}/{created.month:02d}/chk_{checkpoint_id}.json.gz"
+    return checkpoint_blob_relative_path(
+        checkpoint_id=checkpoint_id,
+        created_at=created_at,
+    )
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, init=False)
 class CheckpointRecord:
     id: str
-    task_id: str
+    session_id: str
     run_id: str | None
     created_at: str
     storage_kind: str = FILE_BLOB_STORAGE_KIND
@@ -43,11 +46,40 @@ class CheckpointRecord:
     blob_encoding: str | None = FILE_BLOB_ENCODING
     payload_digest: str | None = None
 
+    def __init__(
+        self,
+        *,
+        id: str,
+        session_id: str | None = None,
+        task_id: str | None = None,
+        run_id: str | None,
+        created_at: str,
+        storage_kind: str = FILE_BLOB_STORAGE_KIND,
+        blob_path: str | None = None,
+        blob_encoding: str | None = FILE_BLOB_ENCODING,
+        payload_digest: str | None = None,
+    ) -> None:
+        resolved_session_id = session_id or task_id
+        if not resolved_session_id:
+            raise ValueError("session_id is required.")
+        self.id = id
+        self.session_id = resolved_session_id
+        self.run_id = run_id
+        self.created_at = created_at
+        self.storage_kind = storage_kind
+        self.blob_path = blob_path
+        self.blob_encoding = blob_encoding
+        self.payload_digest = payload_digest
 
-@dataclass(slots=True)
+    @property
+    def task_id(self) -> str:
+        return self.session_id
+
+
+@dataclass(slots=True, init=False)
 class CheckpointSummary:
     id: str
-    task_id: str
+    session_id: str
     run_id: str | None
     created_at: str
     storage_kind: str
@@ -56,11 +88,42 @@ class CheckpointSummary:
     history_text_bytes: int
     has_compressed_summary: bool
 
+    def __init__(
+        self,
+        *,
+        id: str,
+        session_id: str | None = None,
+        task_id: str | None = None,
+        run_id: str | None,
+        created_at: str,
+        storage_kind: str,
+        payload_size_bytes: int,
+        history_message_count: int,
+        history_text_bytes: int,
+        has_compressed_summary: bool,
+    ) -> None:
+        resolved_session_id = session_id or task_id
+        if not resolved_session_id:
+            raise ValueError("session_id is required.")
+        self.id = id
+        self.session_id = resolved_session_id
+        self.run_id = run_id
+        self.created_at = created_at
+        self.storage_kind = storage_kind
+        self.payload_size_bytes = payload_size_bytes
+        self.history_message_count = history_message_count
+        self.history_text_bytes = history_text_bytes
+        self.has_compressed_summary = has_compressed_summary
+
+    @property
+    def task_id(self) -> str:
+        return self.session_id
+
 
 @dataclass(slots=True)
 class StoredCheckpoint:
     id: str
-    task_id: str
+    session_id: str
     run_id: str | None
     created_at: str = field(default_factory=utc_now_iso)
     storage_kind: str = FILE_BLOB_STORAGE_KIND
@@ -76,7 +139,8 @@ class StoredCheckpoint:
     def create(
         cls,
         *,
-        task_id: str,
+        session_id: str | None = None,
+        task_id: str | None = None,
         run_id: str | None = None,
         payload_size_bytes: int,
         payload_digest: str,
@@ -86,9 +150,12 @@ class StoredCheckpoint:
     ) -> "StoredCheckpoint":
         checkpoint_id = str(uuid4())
         created_at = utc_now_iso()
+        resolved_session_id = session_id or task_id
+        if not resolved_session_id:
+            raise ValueError("session_id is required.")
         return cls(
             id=checkpoint_id,
-            task_id=task_id,
+            session_id=resolved_session_id,
             run_id=run_id,
             created_at=created_at,
             blob_path=build_blob_relative_path(
@@ -106,7 +173,7 @@ class StoredCheckpoint:
     def from_row(cls, row: dict[str, Any]) -> "StoredCheckpoint":
         return cls(
             id=row["id"],
-            task_id=row["task_id"],
+            session_id=row["session_id"],
             run_id=row["run_id"],
             created_at=row["created_at"],
             storage_kind=row["storage_kind"],
@@ -122,7 +189,7 @@ class StoredCheckpoint:
     def to_row(self) -> dict[str, Any]:
         return {
             "id": self.id,
-            "task_id": self.task_id,
+            "session_id": self.session_id,
             "run_id": self.run_id,
             "created_at": self.created_at,
             "storage_kind": self.storage_kind,
@@ -138,7 +205,7 @@ class StoredCheckpoint:
     def to_record(self) -> CheckpointRecord:
         return CheckpointRecord(
             id=self.id,
-            task_id=self.task_id,
+            session_id=self.session_id,
             run_id=self.run_id,
             created_at=self.created_at,
             storage_kind=self.storage_kind,
@@ -150,7 +217,7 @@ class StoredCheckpoint:
     def to_summary(self) -> CheckpointSummary:
         return CheckpointSummary(
             id=self.id,
-            task_id=self.task_id,
+            session_id=self.session_id,
             run_id=self.run_id,
             created_at=self.created_at,
             storage_kind=self.storage_kind,
@@ -159,3 +226,11 @@ class StoredCheckpoint:
             history_text_bytes=self.history_text_bytes,
             has_compressed_summary=self.has_compressed_summary,
         )
+
+    @property
+    def task_id(self) -> str:
+        return self.session_id
+
+    @task_id.setter
+    def task_id(self, value: str) -> None:
+        self.session_id = value

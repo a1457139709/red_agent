@@ -20,7 +20,7 @@ class FindingStatus(StrEnum):
 class Finding:
     id: str
     public_id: str
-    operation_id: str
+    session_id: str
     source_job_id: str | None
     finding_type: str
     title: str
@@ -39,7 +39,8 @@ class Finding:
     def create(
         cls,
         *,
-        operation_id: str,
+        session_id: str | None = None,
+        operation_id: str | None = None,
         finding_type: str,
         title: str,
         target_ref: str,
@@ -52,10 +53,13 @@ class Finding:
         reproduction_notes: str = "",
         next_action: str = "",
     ) -> "Finding":
+        resolved_session_id = session_id or operation_id
+        if not resolved_session_id:
+            raise ValueError("session_id is required.")
         return cls(
             id=str(uuid4()),
             public_id="",
-            operation_id=operation_id,
+            session_id=resolved_session_id,
             source_job_id=source_job_id,
             finding_type=finding_type,
             title=title,
@@ -74,7 +78,7 @@ class Finding:
         return cls(
             id=row["id"],
             public_id=row.get("public_id") or "",
-            operation_id=row["operation_id"],
+            session_id=row["session_id"],
             source_job_id=row["source_job_id"],
             finding_type=row["finding_type"],
             title=row["title"],
@@ -94,7 +98,7 @@ class Finding:
         return {
             "id": self.id,
             "public_id": self.public_id,
-            "operation_id": self.operation_id,
+            "session_id": self.session_id,
             "source_job_id": self.source_job_id,
             "finding_type": self.finding_type,
             "title": self.title,
@@ -109,3 +113,11 @@ class Finding:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+
+    @property
+    def operation_id(self) -> str:
+        return self.session_id
+
+    @operation_id.setter
+    def operation_id(self, value: str) -> None:
+        self.session_id = value

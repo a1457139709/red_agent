@@ -38,6 +38,14 @@ class Settings:
         return self.app_data_dir / "checkpoints"
 
     @property
+    def sessions_dir(self) -> Path:
+        return self.app_data_dir / "sessions"
+
+    @property
+    def operations_dir(self) -> Path:
+        return self.app_data_dir / "operations"
+
+    @property
     def skills_dir(self) -> Path:
         return self.app_data_dir / "skills"
 

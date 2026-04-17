@@ -4,42 +4,42 @@ from dataclasses import dataclass, field
 from hashlib import sha256
 import json
 from pathlib import Path
-import re
 
 from agent.settings import Settings, get_settings
-from models.evidence import Evidence
+from models.artifact import Artifact
 from models.finding import Finding
 from models.job import Job
 from models.operation import Operation
 from models.run import utc_now_iso
 from tools.contracts import EvidenceCandidate, SecurityToolResult
 
-from .evidence_service import EvidenceService
+from .artifact_service import ArtifactService
 from .finding_service import FindingService
-
-
-def _slugify(value: str) -> str:
-    slug = re.sub(r"[^a-zA-Z0-9]+", "-", value.strip().lower()).strip("-")
-    return slug or "artifact"
+from .session_service import SessionService
 
 
 @dataclass(frozen=True, slots=True)
 class PersistedSecurityResult:
-    evidence: list[Evidence] = field(default_factory=list)
+    artifacts: list[Artifact] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
+
+    @property
+    def evidence(self) -> list[Artifact]:
+        return self.artifacts
 
 
 @dataclass(frozen=True, slots=True)
-class EvidenceArtifact:
+class ArtifactPayloadFile:
     relative_path: str
     hash_digest: str
     content_type: str
     captured_at: str
 
 
-class EvidenceArtifactManager:
-    def __init__(self, settings: Settings) -> None:
+class ArtifactPayloadManager:
+    def __init__(self, settings: Settings, session_service: SessionService) -> None:
         self.settings = settings
+        self.session_service = session_service
 
     def write_artifact(
         self,
@@ -50,19 +50,15 @@ class EvidenceArtifactManager:
         candidate: EvidenceCandidate,
         ordinal: int,
         captured_at: str,
-    ) -> EvidenceArtifact:
-        evidence_dir = (
-            self.settings.app_data_dir
-            / "operations"
-            / operation.public_id
-            / "evidence"
-        )
-        evidence_dir.mkdir(parents=True, exist_ok=True)
+    ) -> ArtifactPayloadFile:
+        artifact_dir = self.settings.working_directory / "artifacts"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
 
         job_label = job.public_id if job is not None and job.public_id else "manual"
-        file_name = f"{job_label}-{ordinal:02d}-{_slugify(candidate.evidence_type)}.json"
-        artifact_path = evidence_dir / file_name
+        file_name = f"{job_label}-{ordinal:02d}-{candidate.evidence_type}.json"
+        artifact_path = artifact_dir / file_name
         envelope = {
+            "artifact_type": candidate.evidence_type,
             "evidence_type": candidate.evidence_type,
             "target_ref": candidate.target_ref,
             "title": candidate.title,
@@ -75,10 +71,29 @@ class EvidenceArtifactManager:
         encoded = (json.dumps(envelope, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
         artifact_path.write_bytes(encoded)
         relative_path = artifact_path.relative_to(self.settings.working_directory).as_posix()
-        return EvidenceArtifact(
+        return ArtifactPayloadFile(
             relative_path=relative_path,
             hash_digest=f"sha256:{sha256(encoded).hexdigest()}",
             content_type="application/json",
+            captured_at=captured_at,
+        )
+
+    def write_payload(
+        self,
+        *,
+        operation: Operation,
+        job: Job | None,
+        tool_name: str,
+        candidate: EvidenceCandidate,
+        ordinal: int,
+        captured_at: str,
+    ) -> ArtifactPayloadFile:
+        return self.write_artifact(
+            operation=operation,
+            job=job,
+            tool_name=tool_name,
+            candidate=candidate,
+            ordinal=ordinal,
             captured_at=captured_at,
         )
 
@@ -87,12 +102,12 @@ class EvidencePipelineService:
     def __init__(
         self,
         *,
-        evidence_service: EvidenceService,
+        artifact_service: ArtifactService,
         finding_service: FindingService,
-        artifact_manager: EvidenceArtifactManager,
+        artifact_manager: ArtifactPayloadManager,
         settings: Settings,
     ) -> None:
-        self.evidence_service = evidence_service
+        self.artifact_service = artifact_service
         self.finding_service = finding_service
         self.artifact_manager = artifact_manager
         self.settings = settings
@@ -100,10 +115,11 @@ class EvidencePipelineService:
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> "EvidencePipelineService":
         settings = settings or get_settings()
+        session_service = SessionService.from_settings(settings)
         return cls(
-            evidence_service=EvidenceService.from_settings(settings),
+            artifact_service=ArtifactService.from_settings(settings),
             finding_service=FindingService.from_settings(settings),
-            artifact_manager=EvidenceArtifactManager(settings),
+            artifact_manager=ArtifactPayloadManager(settings, session_service),
             settings=settings,
         )
 
@@ -115,10 +131,10 @@ class EvidencePipelineService:
         tool_name: str,
         result: SecurityToolResult,
     ) -> PersistedSecurityResult:
-        evidence_records: list[Evidence] = []
+        artifact_records: list[Artifact] = []
         for index, candidate in enumerate(result.evidence_candidates, start=1):
             captured_at = utc_now_iso()
-            artifact = self.artifact_manager.write_artifact(
+            artifact_file = self.artifact_manager.write_artifact(
                 operation=operation,
                 job=job,
                 tool_name=tool_name,
@@ -126,26 +142,27 @@ class EvidencePipelineService:
                 ordinal=index,
                 captured_at=captured_at,
             )
-            evidence_records.append(
-                self.evidence_service.create_evidence(
-                    operation_identifier=operation.id,
-                    job_identifier=job.id,
-                    evidence_type=candidate.evidence_type,
+            artifact_records.append(
+                self.artifact_service.create_artifact(
+                    session_identifier=operation.id,
+                    source_job_identifier=job.id,
+                    artifact_type=candidate.evidence_type,
                     target_ref=candidate.target_ref,
                     title=candidate.title,
                     summary=candidate.summary,
-                    artifact_path=artifact.relative_path,
-                    content_type=artifact.content_type,
-                    hash_digest=artifact.hash_digest,
-                    captured_at=artifact.captured_at,
+                    artifact_path=artifact_file.relative_path,
+                    content_type=artifact_file.content_type,
+                    hash_digest=artifact_file.hash_digest,
+                    captured_at=artifact_file.captured_at,
+                    metadata={"source_tool": tool_name},
                 )
             )
 
         finding_records: list[Finding] = []
-        evidence_identifiers = [record.id for record in evidence_records]
+        artifact_identifiers = [record.id for record in artifact_records]
         for candidate in result.finding_candidates:
             finding = self.finding_service.create_finding(
-                operation_identifier=operation.id,
+                session_identifier=operation.id,
                 source_job_identifier=job.id,
                 finding_type=candidate.finding_type,
                 title=candidate.title,
@@ -157,14 +174,11 @@ class EvidencePipelineService:
                 reproduction_notes=candidate.reproduction_notes,
                 next_action=candidate.next_action,
             )
-            if evidence_identifiers:
-                self.finding_service.link_evidence(
-                    finding.id,
-                    evidence_identifiers,
-                )
+            if artifact_identifiers:
+                self.finding_service.link_artifacts(finding.id, artifact_identifiers)
             finding_records.append(finding)
 
         return PersistedSecurityResult(
-            evidence=evidence_records,
+            artifacts=artifact_records,
             findings=finding_records,
         )

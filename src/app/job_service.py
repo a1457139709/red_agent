@@ -6,6 +6,9 @@ from storage.repositories.jobs import JobRepository
 from storage.repositories.operations import OperationRepository
 from storage.sqlite import SQLiteStorage
 
+from .session_scope import resolve_session_identifier
+from .session_service import SessionService
+
 
 def _ensure_non_negative_int(value: int, *, field_name: str) -> None:
     if value < 0:
@@ -21,10 +24,12 @@ class JobService:
     def __init__(
         self,
         repository: JobRepository,
+        session_service: SessionService,
         operation_repository: OperationRepository,
         settings: Settings,
     ) -> None:
         self.repository = repository
+        self.session_service = session_service
         self.operation_repository = operation_repository
         self.settings = settings
 
@@ -32,12 +37,18 @@ class JobService:
     def from_settings(cls, settings: Settings | None = None) -> "JobService":
         settings = settings or get_settings()
         storage = SQLiteStorage(settings.sqlite_path)
-        return cls(JobRepository(storage), OperationRepository(storage), settings)
+        return cls(
+            JobRepository(storage),
+            SessionService.from_settings(settings),
+            OperationRepository(storage),
+            settings,
+        )
 
     def create_job(
         self,
         *,
-        operation_identifier: str,
+        session_identifier: str | None = None,
+        operation_identifier: str | None = None,
         job_type: str,
         target_ref: str,
         arguments: dict | None = None,
@@ -46,9 +57,7 @@ class JobService:
         retry_limit: int = 0,
         status: JobStatus = JobStatus.PENDING,
     ) -> Job:
-        operation = self.operation_repository.get(operation_identifier)
-        if operation is None:
-            raise ValueError(f"Operation not found: {operation_identifier}")
+        session_id = self._resolve_session_id(session_identifier or operation_identifier)
         if timeout_seconds is not None:
             _ensure_positive_int(timeout_seconds, field_name="timeout_seconds")
         _ensure_non_negative_int(retry_limit, field_name="retry_limit")
@@ -58,12 +67,12 @@ class JobService:
             dependency = self.repository.get(dependency_identifier)
             if dependency is None:
                 raise ValueError(f"Dependency job not found: {dependency_identifier}")
-            if dependency.operation_id != operation.id:
-                raise ValueError("Dependency job must belong to the same operation.")
+            if dependency.session_id != session_id:
+                raise ValueError("Dependency job must belong to the same session.")
             resolved_dependency_ids.append(dependency.id)
 
         job = Job.create(
-            operation_id=operation.id,
+            session_id=session_id,
             job_type=job_type,
             target_ref=target_ref,
             status=status,
@@ -85,15 +94,12 @@ class JobService:
 
     def list_jobs(
         self,
-        operation_identifier: str,
+        session_identifier: str,
         *,
         status: JobStatus | None = None,
         limit: int | None = 50,
     ) -> list[Job]:
-        operation = self.operation_repository.get(operation_identifier)
-        if operation is None:
-            raise ValueError(f"Operation not found: {operation_identifier}")
-        return self.repository.list(operation.id, status=status, limit=limit)
+        return self.repository.list(self._resolve_session_id(session_identifier), status=status, limit=limit)
 
     def save_job(self, job: Job) -> Job:
         if job.timeout_seconds is not None:
@@ -122,3 +128,12 @@ class JobService:
     def list_logs(self, job_identifier: str, *, limit: int = 20) -> list[JobLogEntry]:
         job = self.require_job(job_identifier)
         return self.repository.list_logs(job.id, limit=limit)
+
+    def _resolve_session_id(self, identifier: str | None) -> str:
+        if not identifier:
+            raise ValueError("session_identifier is required.")
+        return resolve_session_identifier(
+            self.session_service,
+            identifier,
+            operation_repository=self.operation_repository,
+        )

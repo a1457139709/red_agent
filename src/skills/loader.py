@@ -92,6 +92,8 @@ def _parse_frontmatter(lines: list[str], *, source: str) -> dict[str, object]:
 
         index += 1
         block_lines: list[str] = []
+        # Keep the frontmatter format intentionally small: either a scalar on the
+        # same line or one flat indented block that becomes a list or mapping.
         while index < len(lines):
             block_line = lines[index]
             if not block_line.strip():
@@ -124,6 +126,8 @@ def _parse_block_value(block_lines: list[str], *, source: str, key: str) -> obje
         return values
 
     mapping: dict[str, object] = {}
+    # Nested mappings are rejected on purpose so skills stay easy to diff and
+    # validate without depending on a full YAML parser.
     for line in block_lines:
         current = line[2:]
         if current.startswith(" "):

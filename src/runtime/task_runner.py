@@ -44,6 +44,8 @@ async def apply_result_to_session(
     session_state.append_messages(result["messages"])
     session_state.set_usage(usage)
 
+    # Compress only after the latest exchange has been appended so the next turn
+    # can resume from a summary that already includes this run.
     total_tokens = usage.get("total_tokens")
     if total_tokens is None or not should_compress(total_tokens, settings):
         return
@@ -127,6 +129,8 @@ class TaskRunner:
             try:
                 visible_executor = tool_executor.restricted_to(runtime_config.allowed_tools)
             except ValueError:
+                # If the executor does not recognize the runtime allowlist at all,
+                # trust the injected executor instead of failing closed here.
                 if tool_executor.tool_names.isdisjoint(runtime_config.allowed_tools):
                     visible_executor = tool_executor
                 else:
@@ -163,6 +167,8 @@ class TaskRunner:
                     tools=runtime_executor.get_tools(),
                 )
             except TypeError as exc:
+                # Preserve compatibility with older loop implementations that
+                # have not adopted `system_prompt` and `tools` yet.
                 if "unexpected keyword argument 'system_prompt'" not in str(exc):
                     await self._fail_run_and_task(
                         task=task,
@@ -236,6 +242,8 @@ class TaskRunner:
                     on_error=on_error,
                 )
 
+                # Save a checkpoint after every successful run so task resume and
+                # log inspection both point at the same recovered session state.
                 checkpoint = self.checkpoint_service.save_checkpoint(
                     task_id=task.id,
                     run_id=run.id,
@@ -423,6 +431,8 @@ class TaskRunner:
         observability: RunObservabilityState,
     ):
         def log_event(event: SafetyAuditEvent) -> None:
+            # Later exceptions can be generic; remember whether a policy denial
+            # happened so failures are classified accurately in run history.
             if event.event_type == "policy_denied":
                 observability.saw_policy_denied = True
             level = (

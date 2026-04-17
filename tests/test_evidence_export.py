@@ -82,11 +82,19 @@ def test_generate_operation_export_writes_json_summaries_with_traceability(tmp_p
     assert len(export.files) == 3
     for path in export.files:
         assert path.exists()
+        assert ".red-code" in str(path)
+        assert "sessions" in str(path)
+        assert "reports" in str(path)
 
-    summary = json.loads((export.export_dir / "operation-summary.json").read_text(encoding="utf-8"))
-    findings = json.loads((export.export_dir / "findings.json").read_text(encoding="utf-8"))
-    evidence = json.loads((export.export_dir / "evidence-index.json").read_text(encoding="utf-8"))
+    payloads_by_name = {
+        path.name: json.loads(path.read_text(encoding="utf-8"))
+        for path in export.files
+    }
+    summary = next(payload for name, payload in payloads_by_name.items() if "session_summary" in name)
+    findings = next(payload for name, payload in payloads_by_name.items() if "findings" in name)
+    artifacts = next(payload for name, payload in payloads_by_name.items() if "artifact_index" in name)
 
     assert summary["counts"]["findings"] == 1
-    assert findings[0]["evidence_public_ids"]
-    assert evidence[0]["finding_public_ids"]
+    assert summary["counts"]["artifacts"] == 1
+    assert findings[0]["artifact_public_ids"]
+    assert artifacts[0]["finding_public_ids"]

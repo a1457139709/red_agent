@@ -119,6 +119,9 @@ class ScopeValidator:
         requested_protocol = _normalize_protocol(request.protocol)
         requested_port = _coerce_port(request.port)
 
+        # URLs preserve their explicit scheme and implied default port, while
+        # host, host:port, and IP literals are normalized into one descriptor
+        # shape for the rest of the admission pipeline.
         if "://" in raw_target:
             parsed = urlsplit(raw_target)
             if not parsed.scheme or not parsed.hostname:
@@ -186,6 +189,8 @@ class ScopeValidator:
         target = primary_evaluation.target
         assert target is not None
 
+        # Secondary targets let one action declare related hosts or sockets up
+        # front. Any out-of-scope side target blocks the whole request.
         for additional_target in request.additional_targets:
             evaluation = self._evaluate_target_constraints(
                 policy=policy,
@@ -202,6 +207,8 @@ class ScopeValidator:
         if tool_category_denial is not None:
             return tool_category_denial
 
+        # Confirmation is the final gate: only requests that are already in scope
+        # and category-allowed can reach operator approval.
         if not request.skip_confirmation and request.tool_name in policy.confirmation_required_actions:
             return AdmissionDecision(
                 outcome=AdmissionOutcome.REQUIRES_CONFIRMATION,
@@ -384,6 +391,8 @@ class ScopeValidator:
             cidr_allowed = self._matches_allowed_cidrs(policy, target.ip)
             if host_allowed or cidr_allowed:
                 return None
+            # IP literals can satisfy host or CIDR rules directly, but admission
+            # does not reverse-resolve them into domain names.
             if policy.allowed_cidrs:
                 return AdmissionDecision(
                     outcome=AdmissionOutcome.DENIED,
@@ -421,6 +430,8 @@ class ScopeValidator:
         if policy.allowed_cidrs:
             return AdmissionDecision(
                 outcome=AdmissionOutcome.DENIED,
+                # Hostname scope checks stay textual here; resolving DNS during
+                # admission would make policy decisions depend on external state.
                 reason_code="cidr_out_of_scope",
                 message="CIDR scope only applies to explicit IP targets; hostname targets are not expanded.",
                 target=target,

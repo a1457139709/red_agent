@@ -4,6 +4,8 @@ from models.evidence import Evidence
 from storage.sqlite import SQLiteStorage
 
 from ._common import allocate_public_id, get_row_by_identifier
+from .jobs import JobRepository
+from .operations import OperationRepository
 
 
 EVIDENCE_SCHEMA = """
@@ -21,7 +23,7 @@ CREATE TABLE IF NOT EXISTS evidence (
     hash_digest TEXT,
     captured_at TEXT NOT NULL,
     FOREIGN KEY(operation_id) REFERENCES operations(id),
-    FOREIGN KEY(job_id) REFERENCES jobs(id)
+    FOREIGN KEY(job_id) REFERENCES session_jobs(id)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_evidence_public_id ON evidence(public_id);
@@ -97,6 +99,8 @@ class EvidenceRepository:
         return evidence
 
     def _ensure_schema(self) -> None:
+        OperationRepository(self.storage)
+        JobRepository(self.storage)
         with self.storage.connect() as connection:
             connection.executescript(EVIDENCE_SCHEMA)
             connection.commit()

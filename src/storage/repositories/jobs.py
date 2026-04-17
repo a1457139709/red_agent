@@ -4,17 +4,18 @@ import sqlite3
 from typing import Iterable
 
 from models.job import Job, JobLogEntry, JobStatus
-from models.operation import OperationStatus
+from storage.schema_guard import ensure_phase6_clean_runtime_reset
 from storage.sqlite import SQLiteStorage
 
 from ._common import allocate_public_id, get_row_by_identifier
+from .sessions import SessionRepository
 
 
 JOBS_SCHEMA = """
-CREATE TABLE IF NOT EXISTS jobs (
+CREATE TABLE IF NOT EXISTS session_jobs (
     id TEXT PRIMARY KEY,
     public_id TEXT,
-    operation_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
     job_type TEXT NOT NULL,
     target_ref TEXT NOT NULL,
     status TEXT NOT NULL,
@@ -36,27 +37,28 @@ CREATE TABLE IF NOT EXISTS jobs (
     retry_after TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    FOREIGN KEY(operation_id) REFERENCES operations(id)
+    FOREIGN KEY(session_id) REFERENCES sessions(id)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_public_id ON jobs(public_id);
-CREATE INDEX IF NOT EXISTS idx_jobs_operation_updated_at ON jobs(operation_id, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
-CREATE INDEX IF NOT EXISTS idx_jobs_queue ON jobs(status, retry_after, queued_at, created_at);
-CREATE INDEX IF NOT EXISTS idx_jobs_lease_expires_at ON jobs(status, lease_expires_at);
-CREATE INDEX IF NOT EXISTS idx_jobs_cancel_requested_at ON jobs(status, cancel_requested_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_session_jobs_public_id ON session_jobs(public_id);
+CREATE INDEX IF NOT EXISTS idx_session_jobs_session_updated_at ON session_jobs(session_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_session_jobs_status ON session_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_session_jobs_queue ON session_jobs(status, retry_after, queued_at, created_at);
+CREATE INDEX IF NOT EXISTS idx_session_jobs_lease_expires_at ON session_jobs(status, lease_expires_at);
+CREATE INDEX IF NOT EXISTS idx_session_jobs_cancel_requested_at ON session_jobs(status, cancel_requested_at);
 
-CREATE TABLE IF NOT EXISTS job_logs (
+CREATE TABLE IF NOT EXISTS session_job_logs (
     id TEXT PRIMARY KEY,
     job_id TEXT NOT NULL,
     level TEXT NOT NULL,
     message TEXT NOT NULL,
     payload TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
-    FOREIGN KEY(job_id) REFERENCES jobs(id)
+    FOREIGN KEY(job_id) REFERENCES session_jobs(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_job_logs_job_created_at ON job_logs(job_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_session_job_logs_job_created_at
+    ON session_job_logs(job_id, created_at DESC);
 """
 
 JOB_RUNTIME_COLUMNS: dict[str, str] = {
@@ -85,7 +87,7 @@ class JobRepository:
         with self.storage.connect() as connection:
             row = get_row_by_identifier(
                 connection,
-                table_name="jobs",
+                table_name="session_jobs",
                 identifier=identifier,
                 order_column="updated_at",
             )
@@ -93,13 +95,13 @@ class JobRepository:
 
     def list(
         self,
-        operation_id: str,
+        session_id: str,
         *,
         status: JobStatus | None = None,
         limit: int | None = 50,
     ) -> list[Job]:
-        query = "SELECT * FROM jobs WHERE operation_id = ?"
-        params: list[object] = [operation_id]
+        query = "SELECT * FROM session_jobs WHERE session_id = ?"
+        params: list[object] = [session_id]
         if status is not None:
             query += " AND status = ?"
             params.append(status.value)
@@ -121,7 +123,7 @@ class JobRepository:
         if not normalized_statuses:
             return []
         placeholders = ", ".join("?" for _ in normalized_statuses)
-        query = f"SELECT * FROM jobs WHERE status IN ({placeholders}) ORDER BY updated_at DESC"
+        query = f"SELECT * FROM session_jobs WHERE status IN ({placeholders}) ORDER BY updated_at DESC"
         params: list[object] = list(normalized_statuses)
         if limit is not None:
             query += " LIMIT ?"
@@ -140,7 +142,7 @@ class JobRepository:
         with self.storage.connect() as connection:
             connection.execute(
                 """
-                INSERT INTO job_logs (
+                INSERT INTO session_job_logs (
                     id, job_id, level, message, payload, created_at
                 ) VALUES (
                     :id, :job_id, :level, :message, :payload, :created_at
@@ -156,7 +158,7 @@ class JobRepository:
             rows = connection.execute(
                 """
                 SELECT *
-                FROM job_logs
+                FROM session_job_logs
                 WHERE job_id = ?
                 ORDER BY created_at DESC
                 LIMIT ?
@@ -165,32 +167,31 @@ class JobRepository:
             ).fetchall()
         return [JobLogEntry.from_row(dict(row)) for row in rows]
 
-    def count_running(self, operation_id: str, *, exclude_job_id: str | None = None) -> int:
+    def count_running(self, session_id: str, *, exclude_job_id: str | None = None) -> int:
         query = """
             SELECT COUNT(*) AS count
-            FROM jobs
-            WHERE operation_id = ? AND status = ?
+            FROM session_jobs
+            WHERE session_id = ? AND status = ?
         """
-        params: list[object] = [operation_id, JobStatus.RUNNING.value]
+        params: list[object] = [session_id, JobStatus.RUNNING.value]
         if exclude_job_id is not None:
             query += " AND id != ?"
             params.append(exclude_job_id)
         with self.storage.connect() as connection:
-            row = connection.execute(
-                query,
-                params,
-            ).fetchone()
+            row = connection.execute(query, params).fetchone()
         return int(row["count"]) if row is not None else 0
 
     def list_stale_leases(
         self,
         *,
         now: str,
+        session_id: str | None = None,
         operation_id: str | None = None,
     ) -> list[Job]:
+        resolved_session_id = session_id or operation_id
         query = """
             SELECT *
-            FROM jobs
+            FROM session_jobs
             WHERE status = ?
               AND (
                 lease_expires_at IS NULL
@@ -198,9 +199,9 @@ class JobRepository:
               )
         """
         params: list[object] = [JobStatus.RUNNING.value, now]
-        if operation_id is not None:
-            query += " AND operation_id = ?"
-            params.append(operation_id)
+        if resolved_session_id is not None:
+            query += " AND session_id = ?"
+            params.append(resolved_session_id)
         query += " ORDER BY lease_expires_at ASC, updated_at ASC"
         with self.storage.connect() as connection:
             rows = connection.execute(query, params).fetchall()
@@ -218,20 +219,19 @@ class JobRepository:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 """
-                SELECT jobs.id
-                FROM jobs
-                INNER JOIN operations ON operations.id = jobs.operation_id
-                WHERE jobs.status = ?
-                  AND (jobs.retry_after IS NULL OR jobs.retry_after <= ?)
-                  AND operations.status IN (?, ?)
-                ORDER BY jobs.queued_at ASC, jobs.created_at ASC, jobs.id ASC
+                SELECT session_jobs.id
+                FROM session_jobs
+                INNER JOIN sessions ON sessions.id = session_jobs.session_id
+                WHERE session_jobs.status = ?
+                  AND (session_jobs.retry_after IS NULL OR session_jobs.retry_after <= ?)
+                  AND sessions.status = ?
+                ORDER BY session_jobs.queued_at ASC, session_jobs.created_at ASC, session_jobs.id ASC
                 LIMIT 1
                 """,
                 (
                     JobStatus.QUEUED.value,
                     now,
-                    OperationStatus.READY.value,
-                    OperationStatus.RUNNING.value,
+                    "active",
                 ),
             ).fetchone()
             if row is None:
@@ -240,7 +240,7 @@ class JobRepository:
 
             updated = connection.execute(
                 """
-                UPDATE jobs
+                UPDATE session_jobs
                 SET
                     status = ?,
                     lease_owner = ?,
@@ -268,7 +268,7 @@ class JobRepository:
             if updated.rowcount != 1:
                 connection.commit()
                 return None
-            claimed = connection.execute("SELECT * FROM jobs WHERE id = ?", (row["id"],)).fetchone()
+            claimed = connection.execute("SELECT * FROM session_jobs WHERE id = ?", (row["id"],)).fetchone()
             connection.commit()
         return Job.from_row(dict(claimed)) if claimed else None
 
@@ -283,7 +283,7 @@ class JobRepository:
         with self.storage.connect() as connection:
             updated = connection.execute(
                 """
-                UPDATE jobs
+                UPDATE session_jobs
                 SET
                     last_heartbeat_at = ?,
                     lease_expires_at = ?,
@@ -304,22 +304,22 @@ class JobRepository:
             if updated.rowcount != 1:
                 connection.commit()
                 return None
-            row = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            row = connection.execute("SELECT * FROM session_jobs WHERE id = ?", (job_id,)).fetchone()
             connection.commit()
         return Job.from_row(dict(row)) if row else None
 
     def _create_with_connection(self, connection: sqlite3.Connection, job: Job) -> Job:
-        job.public_id = allocate_public_id(connection, table_name="jobs", prefix="J")
+        job.public_id = allocate_public_id(connection, table_name="session_jobs", prefix="J")
         connection.execute(
             """
-            INSERT INTO jobs (
-                id, public_id, operation_id, job_type, target_ref, status, arguments,
+            INSERT INTO session_jobs (
+                id, public_id, session_id, job_type, target_ref, status, arguments,
                 dependency_job_ids, timeout_seconds, retry_limit, retry_count, queued_at,
                 started_at, finished_at, last_error, lease_owner, lease_token,
                 lease_expires_at, last_heartbeat_at, cancel_requested_at, cancel_reason,
                 retry_after, created_at, updated_at
             ) VALUES (
-                :id, :public_id, :operation_id, :job_type, :target_ref, :status, :arguments,
+                :id, :public_id, :session_id, :job_type, :target_ref, :status, :arguments,
                 :dependency_job_ids, :timeout_seconds, :retry_limit, :retry_count, :queued_at,
                 :started_at, :finished_at, :last_error, :lease_owner, :lease_token,
                 :lease_expires_at, :last_heartbeat_at, :cancel_requested_at, :cancel_reason,
@@ -333,10 +333,10 @@ class JobRepository:
     def _update_with_connection(self, connection: sqlite3.Connection, job: Job) -> Job:
         connection.execute(
             """
-            UPDATE jobs
+            UPDATE session_jobs
             SET
                 public_id = :public_id,
-                operation_id = :operation_id,
+                session_id = :session_id,
                 job_type = :job_type,
                 target_ref = :target_ref,
                 status = :status,
@@ -365,15 +365,17 @@ class JobRepository:
         return job
 
     def _ensure_schema(self) -> None:
+        SessionRepository(self.storage)
         with self.storage.connect() as connection:
+            ensure_phase6_clean_runtime_reset(connection, app_data_dir=self.storage.db_path.parent)
             connection.executescript(JOBS_SCHEMA)
             self._ensure_runtime_columns(connection)
             connection.commit()
 
     def _ensure_runtime_columns(self, connection: sqlite3.Connection) -> None:
-        rows = connection.execute("PRAGMA table_info(jobs)").fetchall()
+        rows = connection.execute("PRAGMA table_info(session_jobs)").fetchall()
         existing_columns = {row["name"] for row in rows}
         for column_name, column_type in JOB_RUNTIME_COLUMNS.items():
             if column_name in existing_columns:
                 continue
-            connection.execute(f"ALTER TABLE jobs ADD COLUMN {column_name} {column_type}")
+            connection.execute(f"ALTER TABLE session_jobs ADD COLUMN {column_name} {column_type}")

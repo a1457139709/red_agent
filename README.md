@@ -31,17 +31,17 @@ The repository now contains two parallel runtime families:
 - persisted tasks, runs, checkpoints, and task logs
 - task-scoped safety audit logging
 - blob-backed checkpoint storage with metadata-only SQLite indexing
-- persisted operations, scope policies, jobs, evidence, findings, and memory entries
+- persisted operations, scope policies, session-owned jobs, artifacts, findings, reports, and memory entries
 - persisted operation-level admission and execution events
 - scope-aware target validation for the v2 red-team runtime
 - a durable scheduler/worker runtime with job queueing, leases, heartbeats, retries, and cooperative cancellation
 - pure-Python typed security tools for DNS, HTTP, TLS, banner grabbing, and TCP port scans
 - session runtime exposure of typed security tools via LangChain-compatible adapters
-- structured typed-tool results with evidence and finding candidates
-- automatic persistence of typed-tool evidence artifacts and finding records
-- evidence-to-finding traceability links for structured review and export
-- JSON export generation for operation summaries, findings, and evidence indexes
-- Phase 7 red-team CLI coverage for operations, jobs, findings, evidence, and dashboards
+- structured typed-tool results with artifact and finding candidates
+- automatic persistence of typed-tool artifact payloads, finding records, and indexed reports
+- artifact-to-finding traceability links for structured review and report generation
+- JSON report generation for session summaries, findings, and artifact indexes
+- Phase 6 red-team CLI coverage for operations, jobs, findings, artifacts, reports, and dashboards
 - isolated subprocess execution for typed security tools so timed-out or cancelled jobs can be terminated cleanly
 
 ## Run
@@ -90,7 +90,7 @@ Use `/help skill` for detailed command help.
 
 Phase 2 through Phase 7 currently deliver:
 
-- `Operation`, `ScopePolicy`, `Job`, `Evidence`, `Finding`, and `MemoryEntry` domain models
+- `Operation`, `ScopePolicy`, `Job`, `Artifact`, `Finding`, `Report`, and `MemoryEntry` domain models
 - SQLite-backed repositories and services for the v2 red-team runtime
 - atomic operation plus scope-policy creation
 - minimal `/operation` and `/job` CLI inspection flows
@@ -104,12 +104,12 @@ Phase 2 through Phase 7 currently deliver:
 - pure-Python typed security tools: `dns_lookup`, `http_probe`, `tls_inspect`, `banner_grab`, and `port_scan`
 - `dns_lookup` validates both the resolver egress target and the queried logical name against scope
 - `http_probe` captures only the first HTTP response and does not auto-follow redirects
-- structured typed-tool outputs that expose normalized payloads plus evidence and finding candidates
+- structured typed-tool outputs that expose normalized payloads plus artifact and finding candidates
 - isolated subprocess execution for typed security tools so timed-out or cancelled jobs do not continue uncontrolled in the background
-- automatic persistence of successful typed-job evidence into `.red-code/operations/<operation_public_id>/evidence/`
-- automatic persistence of finding candidates plus finding-to-evidence traceability links
-- JSON export generation under `.red-code/operations/<operation_public_id>/exports/<export_name>/`
-- CLI inspection and lifecycle flows for `/operation`, `/job`, `/finding`, `/evidence`, and `/dashboard`
+- automatic persistence of successful typed-job artifacts into `.red-code/sessions/<session_public_id>/artifacts/`
+- automatic persistence of finding candidates plus finding-to-artifact traceability links
+- indexed report generation under `.red-code/sessions/<session_public_id>/reports/`
+- CLI inspection and lifecycle flows for `/operation`, `/job`, `/finding`, `/artifact`, `/report`, and `/dashboard`
 - persisted planner plans and proposal application flows for `/planner`
 - `/operation resume` context summaries built from structured state rather than transcript replay
 - planner write-back of newly derived stable facts into structured memory
@@ -121,8 +121,8 @@ Phase 2 through Phase 7 currently deliver:
 
 The current runtime still intentionally does not yet deliver:
 
-- CLI-triggered export flows
-- planner-driven use of the structured evidence and finding store
+- natural-language retrieval over persisted artifacts/findings/reports
+- planner-driven use of the structured artifact and finding store
 
 Phase 6 now also delivers:
 
@@ -131,26 +131,27 @@ Phase 6 now also delivers:
 - workflow-only skills that generate bounded v2 job plans instead of freeform prompt execution
 - built-in `surface-recon` and `web-enum` workflow skills
 
-## Evidence and Export Layout
+## Session Storage Layout
 
-Successful v2 typed security jobs now write structured evidence artifacts and metadata under:
+Successful v2 typed security jobs now write structured session-owned runtime records under:
 
 ```text
 .red-code/
-  operations/
-    <operation_public_id>/
-      evidence/
-        <job_public_id>-<ordinal>-<evidence_type>.json
-      exports/
-        <export_name>/
-          operation-summary.json
-          findings.json
-          evidence-index.json
+  sessions/
+    <session_public_id>/
+      memory/
+        checkpoints/
+          YYYY/
+            MM/
+              chk_<checkpoint_id>.json.gz
+      artifacts/
+        ...
+      findings/
+      reports/
+        ...
 ```
 
-Each evidence artifact is stored as a JSON envelope with metadata plus the normalized tool payload. The persisted `Evidence` row keeps the relative artifact path, a SHA-256 digest, and `application/json` as the stored artifact content type.
-
-Programmatic export is available through `reporting.evidence_export.EvidenceExportService.generate_operation_export(...)`. Phase 5 intentionally stops short of adding new CLI commands for export or finding review.
+Each artifact payload is stored on disk under the owning session, while SQLite keeps only structured metadata and link tables. Report generation now persists indexed `Report` rows plus report-to-artifact and report-to-finding links. The legacy `EvidenceExportService` remains as a compatibility wrapper over the Phase 6 report pipeline.
 
 ## Skill Locations
 

@@ -25,7 +25,8 @@ class ScopePolicyService:
     def create_scope_policy(
         self,
         *,
-        operation_id: str,
+        operation_id: str | None = None,
+        session_id: str | None = None,
         allowed_hosts: list[str] | None = None,
         allowed_domains: list[str] | None = None,
         allowed_cidrs: list[str] | None = None,
@@ -42,7 +43,7 @@ class ScopePolicyService:
             _ensure_positive_int(rate_limit_per_minute, field_name="rate_limit_per_minute")
 
         policy = ScopePolicy.create(
-            operation_id=operation_id,
+            session_id=session_id or operation_id,
             allowed_hosts=allowed_hosts,
             allowed_domains=allowed_domains,
             allowed_cidrs=allowed_cidrs,
@@ -61,6 +62,9 @@ class ScopePolicyService:
 
     def get_scope_policy_for_operation(self, operation_id: str) -> ScopePolicy | None:
         return self.repository.get_by_operation_id(operation_id)
+
+    def get_scope_policy_for_session(self, session_id: str) -> ScopePolicy | None:
+        return self.repository.get_by_session_id(session_id)
 
     def require_scope_policy(self, policy_id: str) -> ScopePolicy:
         policy = self.get_scope_policy(policy_id)

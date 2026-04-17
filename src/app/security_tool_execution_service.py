@@ -116,7 +116,7 @@ class SecurityToolExecutionService:
                 message="security_tool_persistence_succeeded",
                 payload={
                     "tool_name": tool.name,
-                    "evidence_count": len(persisted.evidence),
+                    "artifact_count": len(persisted.artifacts),
                     "finding_count": len(persisted.findings),
                 },
             )

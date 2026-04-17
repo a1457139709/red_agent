@@ -77,6 +77,9 @@ class ScopedExecutionService:
             confirmation_result = self._handle_confirmation(context, request, confirm)
             if confirmation_result is not None:
                 return confirmation_result
+            # Operator approval only clears the human gate. Re-run admission so
+            # rate limits, concurrency, and other mutable constraints are checked
+            # again against the latest operation state.
             context = self._recheck_after_confirmation(context, request)
             decision = context.decision
             if decision.outcome == AdmissionOutcome.DENIED:
@@ -86,6 +89,8 @@ class ScopedExecutionService:
                     decision=decision,
                 )
 
+        # Emit a matched start/end event pair around the executor so operation
+        # history stays readable whether execution succeeds, fails, or times out.
         self.operation_event_service.create_event(
             operation_identifier=context.operation.id,
             job_identifier=context.job.id if context.job is not None else None,
@@ -241,6 +246,8 @@ class ScopedExecutionService:
         context: AdmissionContext,
         request: AdmissionRequest,
     ) -> AdmissionContext:
+        # Skip only the confirmation branch on re-entry. Every scope and policy
+        # rule should still be reevaluated after approval.
         recheck_request = replace(
             request,
             skip_confirmation=True,

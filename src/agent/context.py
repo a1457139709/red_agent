@@ -142,6 +142,8 @@ def render_history_for_compression(history: list[BaseMessage]) -> str:
     parts: list[str] = []
     tool_calls_by_id: dict[str, dict[str, Any]] = {}
 
+    # Flatten message objects into a compact transcript that still preserves the
+    # tool call -> tool result linkage needed for reliable summarization.
     for message in history:
         if isinstance(message, HumanMessage):
             parts.append(f"user\n{_truncate_text(_stringify_content(message.content), limit=MAX_MESSAGE_CONTENT_CHARS)}")
@@ -206,6 +208,8 @@ async def compress_context(
     history_text = render_history_for_compression(history)
 
     model = create_model(settings)
+    # Feed the model a stable text transcript instead of provider-specific
+    # message objects so compression behavior stays consistent.
     compressed = await model.ainvoke(
         [
             SystemMessage(content=COMPRESS_SYSTEM),
