@@ -86,8 +86,10 @@ def test_security_tool_execution_service_runs_job_through_scoped_runtime(tmp_pat
         }
         assert len(evidence) == 1
         assert evidence[0].hash_digest is not None
-        artifact_path = tmp_path / Path(evidence[0].artifact_path)
+        assert evidence[0].artifact_path.startswith("artifacts/")
+        artifact_path = settings.sessions_dir / operation.id / Path(evidence[0].artifact_path)
         assert artifact_path.exists()
+        assert not (tmp_path / "artifacts").exists()
         artifact_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
         assert artifact_payload["source_tool"] == "http_probe"
         assert artifact_payload["evidence_type"] == "http_response"

@@ -11,6 +11,7 @@ from models.finding import Finding
 from models.job import Job
 from models.operation import Operation
 from models.run import utc_now_iso
+from storage.session_paths import artifact_payload_relative_path, resolve_session_relative_path
 from tools.contracts import EvidenceCandidate, SecurityToolResult
 
 from .artifact_service import ArtifactService
@@ -51,12 +52,19 @@ class ArtifactPayloadManager:
         ordinal: int,
         captured_at: str,
     ) -> ArtifactPayloadFile:
-        artifact_dir = self.settings.working_directory / "artifacts"
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-
+        session = self.session_service.require_session(operation.id)
         job_label = job.public_id if job is not None and job.public_id else "manual"
-        file_name = f"{job_label}-{ordinal:02d}-{candidate.evidence_type}.json"
-        artifact_path = artifact_dir / file_name
+        relative_path = artifact_payload_relative_path(
+            source_job_label=job_label,
+            ordinal=ordinal,
+            artifact_type=candidate.evidence_type,
+        )
+        artifact_path = resolve_session_relative_path(
+            self.settings,
+            session_id=session.id,
+            relative_path=relative_path,
+        )
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
         envelope = {
             "artifact_type": candidate.evidence_type,
             "evidence_type": candidate.evidence_type,
@@ -70,7 +78,6 @@ class ArtifactPayloadManager:
         }
         encoded = (json.dumps(envelope, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
         artifact_path.write_bytes(encoded)
-        relative_path = artifact_path.relative_to(self.settings.working_directory).as_posix()
         return ArtifactPayloadFile(
             relative_path=relative_path,
             hash_digest=f"sha256:{sha256(encoded).hexdigest()}",
