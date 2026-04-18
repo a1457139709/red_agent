@@ -68,7 +68,7 @@ Describe what you want in plain language first. Examples:
 
 `Start a recon session for example.com` now starts (or reuses) a redteam session and immediately executes in the current interactive flow with progress visibility.
 
-Use slash commands for skill and shell-level control. Legacy `/task` and `/operation` command families are no longer part of the default user-facing flow.
+Use slash commands for skill and shell-level control. `/task` remains as a legacy debug path, while the old `/operation` and `/job` command families have been removed from the user-facing CLI.
 
 - `/help`
 - `/help skill`
@@ -93,7 +93,6 @@ Phase 2 through Phase 7 currently deliver:
 - `Operation`, `ScopePolicy`, `Job`, `Artifact`, `Finding`, `Report`, and `MemoryEntry` domain models
 - SQLite-backed repositories and services for the v2 red-team runtime
 - atomic operation plus scope-policy creation
-- minimal `/operation` and `/job` CLI inspection flows
 - operation-level admission and execution event persistence
 - scope-aware target, protocol, port, rate-limit, and confirmation checks
 - confirmation-gated executions are re-admitted before execution to re-check rate and concurrency limits
@@ -106,12 +105,13 @@ Phase 2 through Phase 7 currently deliver:
 - `http_probe` captures only the first HTTP response and does not auto-follow redirects
 - structured typed-tool outputs that expose normalized payloads plus artifact and finding candidates
 - isolated subprocess execution for typed security tools so timed-out or cancelled jobs do not continue uncontrolled in the background
-- automatic persistence of successful typed-job artifacts into `.red-code/sessions/<session_public_id>/artifacts/`
+- automatic persistence of successful typed-job artifacts into `.red-code/sessions/<session_id>/artifacts/`
 - automatic persistence of finding candidates plus finding-to-artifact traceability links
-- indexed report generation under `.red-code/sessions/<session_public_id>/reports/`
-- CLI inspection and lifecycle flows for `/operation`, `/job`, `/finding`, `/artifact`, `/report`, and `/dashboard`
+- indexed report generation under `.red-code/sessions/<session_id>/reports/`
+- atomic report creation that rolls back metadata and output files on failure
+- structured report-creation errors with user-facing messages plus AI-ready prompt/context fields
+- CLI inspection and lifecycle flows for `/finding`, `/artifact`, `/report`, and `/dashboard`
 - persisted planner plans and proposal application flows for `/planner`
-- `/operation resume` context summaries built from structured state rather than transcript replay
 - planner write-back of newly derived stable facts into structured memory
 - foreground execution closure for session-first requests via `ExecutionService` and `ForegroundRunner`
 - structured execution progress events for in-session rendering (`execution_started`, step events, terminal events)
@@ -138,7 +138,7 @@ Successful v2 typed security jobs now write structured session-owned runtime rec
 ```text
 .red-code/
   sessions/
-    <session_public_id>/
+    <session_id>/
       memory/
         checkpoints/
           YYYY/
@@ -151,7 +151,13 @@ Successful v2 typed security jobs now write structured session-owned runtime rec
         ...
 ```
 
-Each artifact payload is stored on disk under the owning session, while SQLite keeps only structured metadata and link tables. Report generation now persists indexed `Report` rows plus report-to-artifact and report-to-finding links. The legacy `EvidenceExportService` remains as a compatibility wrapper over the Phase 6 report pipeline.
+Each artifact payload is stored on disk under the owning session, while SQLite keeps only structured metadata and link tables. Report generation now persists indexed `Report` rows plus report-to-artifact and report-to-finding links. `ReportService.create_report(...)` validates linked records before commit and rolls back both database writes and output files if creation fails. The failure path exposes a user-facing error message together with AI-ready prompt/context fields for future assistant-driven remediation. The legacy `EvidenceExportService` remains as a compatibility wrapper over the Phase 6 report pipeline.
+
+Internal persisted session storage now uses the raw `session.id` directory name. Public IDs remain for user-facing commands and displays only. Checkpoint blobs are written under the owning session directory, and on startup the checkpoint runtime repairs older mistaken `.red-code/memory/checkpoints/...` and `.red-code/sessions/<session_public_id>/memory/checkpoints/...` blob paths by migrating them into `.red-code/sessions/<session_id>/memory/checkpoints/...` before checkpoint access continues.
+
+Artifact public IDs now use the Phase 6 `A0001` format. During repository initialization, historical `Exxxx` artifact rows are renumbered into a stable, continuous `Axxxx` sequence before artifact reads and writes continue.
+
+`SessionRecordLocator.get_layer_summary(...)` now returns exact per-layer counts backed by repository `COUNT(*)` queries. It is intended for accurate session health and retrieval summaries, while the separate `list_*` helpers remain available for preview-style record inspection.
 
 ## Skill Locations
 

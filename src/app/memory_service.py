@@ -81,6 +81,9 @@ class MemoryService:
     def list_memory_entries(self, session_identifier: str, *, limit: int | None = 50) -> list[MemoryEntry]:
         return self.repository.list(self._resolve_session_id(session_identifier), limit=limit)
 
+    def count_memory_entries(self, session_identifier: str) -> int:
+        return self.repository.count(self._resolve_session_id(session_identifier))
+
     def save_memory_entry(self, entry: MemoryEntry) -> MemoryEntry:
         return self.repository.update(entry)
 

@@ -127,3 +127,82 @@ def test_session_record_locator_aggregates_session_layers(tmp_path):
     assert summary.artifacts == 1
     assert summary.findings == 1
     assert summary.reports == 1
+
+
+def test_session_record_locator_summary_uses_count_queries_without_list_truncation(tmp_path):
+    settings = build_settings(tmp_path)
+    locator = SessionRecordLocator.from_settings(settings)
+
+    class StubRunService:
+        def count_runs(self, session_identifier: str) -> int:
+            assert session_identifier == "S0001"
+            return 20001
+
+        def count_logs(self, session_identifier: str) -> int:
+            assert session_identifier == "S0001"
+            return 30002
+
+        def list_runs(self, session_identifier: str, *, limit=20):
+            raise AssertionError("summary should not enumerate runs")
+
+        def list_logs(self, session_identifier: str, *, limit=20):
+            raise AssertionError("summary should not enumerate logs")
+
+    class StubCheckpointService:
+        def count_checkpoints(self, session_identifier: str) -> int:
+            assert session_identifier == "S0001"
+            return 40003
+
+        def list_checkpoints(self, session_identifier: str, *, limit=20):
+            raise AssertionError("summary should not enumerate checkpoints")
+
+    class StubJobService:
+        def count_jobs(self, session_identifier: str) -> int:
+            assert session_identifier == "S0001"
+            return 5
+
+    class StubSessionEventService:
+        def count_events(self, session_identifier: str) -> int:
+            assert session_identifier == "S0001"
+            return 6
+
+    class StubMemoryService:
+        def count_memory_entries(self, session_identifier: str) -> int:
+            assert session_identifier == "S0001"
+            return 7
+
+    class StubArtifactService:
+        def count_artifacts(self, session_identifier: str) -> int:
+            assert session_identifier == "S0001"
+            return 8
+
+    class StubFindingService:
+        def count_findings(self, session_identifier: str) -> int:
+            assert session_identifier == "S0001"
+            return 9
+
+    class StubReportService:
+        def count_reports(self, session_identifier: str) -> int:
+            assert session_identifier == "S0001"
+            return 10
+
+    locator.run_service = StubRunService()
+    locator.checkpoint_service = StubCheckpointService()
+    locator.job_service = StubJobService()
+    locator.session_event_service = StubSessionEventService()
+    locator.memory_service = StubMemoryService()
+    locator.artifact_service = StubArtifactService()
+    locator.finding_service = StubFindingService()
+    locator.report_service = StubReportService()
+
+    summary = locator.get_layer_summary("S0001")
+
+    assert summary.runs == 20001
+    assert summary.logs == 30002
+    assert summary.checkpoints == 40003
+    assert summary.jobs == 5
+    assert summary.events == 6
+    assert summary.memory_entries == 7
+    assert summary.artifacts == 8
+    assert summary.findings == 9
+    assert summary.reports == 10

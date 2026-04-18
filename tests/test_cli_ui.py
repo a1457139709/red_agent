@@ -31,6 +31,8 @@ def test_presenter_help_and_observation_render_clean_text():
     assert "Advanced Help Topics" in outputs[0]
     assert "Summarize this repository structure" in outputs[0]
     assert "skill" in outputs[0]
+    assert "operation" not in outputs[0]
+    assert "job" not in outputs[0]
     assert "/help skill" in outputs[0]
     assert "/clear" in outputs[0]
     assert "Skill Commands" in outputs[1]

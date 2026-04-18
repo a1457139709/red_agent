@@ -8,30 +8,35 @@ import re
 from agent.settings import Settings
 
 
-def session_root(settings: Settings, session_public_id: str) -> Path:
-    return settings.sessions_dir / session_public_id
+def session_root(settings: Settings, session_id: str) -> Path:
+    return settings.sessions_dir / session_id
 
 
-def memory_dir(settings: Settings, session_public_id: str) -> Path:
-    return session_root(settings, session_public_id) / "memory"
+def memory_dir(settings: Settings, session_id: str) -> Path:
+    return session_root(settings, session_id) / "memory"
 
 
-def artifacts_dir(settings: Settings, session_public_id: str) -> Path:
-    return session_root(settings, session_public_id) / "artifacts"
+def artifacts_dir(settings: Settings, session_id: str) -> Path:
+    return session_root(settings, session_id) / "artifacts"
 
 
-def findings_dir(settings: Settings, session_public_id: str) -> Path:
-    return session_root(settings, session_public_id) / "findings"
+def findings_dir(settings: Settings, session_id: str) -> Path:
+    return session_root(settings, session_id) / "findings"
 
 
-def reports_dir(settings: Settings, session_public_id: str) -> Path:
-    return session_root(settings, session_public_id) / "reports"
+def reports_dir(settings: Settings, session_id: str) -> Path:
+    return session_root(settings, session_id) / "reports"
 
 
-def checkpoint_blob_relative_path(*, checkpoint_id: str, created_at: str) -> str:
+def checkpoint_blob_relative_path(
+    *,
+    session_id: str,
+    checkpoint_id: str,
+    created_at: str,
+) -> str:
     created = datetime.fromisoformat(created_at)
     return (
-        f"memory/checkpoints/{created.year:04d}/{created.month:02d}/"
+        f"sessions/{session_id}/memory/checkpoints/{created.year:04d}/{created.month:02d}/"
         f"chk_{checkpoint_id}.json.gz"
     )
 
@@ -58,27 +63,27 @@ def artifact_payload_relative_path(
 
 def report_output_relative_path(
     *,
-    report_public_id: str,
+    report_id: str,
     report_type: str,
     extension: str = ".json",
 ) -> str:
     suffix = extension if extension.startswith(".") else f".{extension}"
     return (
         "reports/"
-        f"{report_public_id.lower()}-{_slugify(report_type, fallback='report')}{suffix}"
+        f"{report_id.lower()}-{_slugify(report_type, fallback='report')}{suffix}"
     )
 
 
 def resolve_session_relative_path(
     settings: Settings,
     *,
-    session_public_id: str,
+    session_id: str,
     relative_path: str,
 ) -> Path:
-    root = session_root(settings, session_public_id).resolve()
+    root = session_root(settings, session_id).resolve()
     resolved = (root / relative_path).resolve()
     if os.path.commonpath([str(resolved), str(root)]) != str(root):
         raise ValueError(
-            f"Session-scoped path escapes session directory: {session_public_id}:{relative_path}"
+            f"Session-scoped path escapes session directory: {session_id}:{relative_path}"
         )
     return resolved

@@ -36,16 +36,7 @@ class ReportArtifactLinkRepository:
 
     def create(self, link: ReportArtifactLink) -> ReportArtifactLink:
         with self.storage.connect() as connection:
-            connection.execute(
-                """
-                INSERT OR IGNORE INTO report_artifact_links (
-                    id, session_id, report_id, artifact_id, created_at
-                ) VALUES (
-                    :id, :session_id, :report_id, :artifact_id, :created_at
-                )
-                """,
-                link.to_row(),
-            )
+            self._create_with_connection(connection, link)
             connection.commit()
             row = connection.execute(
                 """
@@ -58,6 +49,19 @@ class ReportArtifactLinkRepository:
         if row is None:
             raise ValueError("Failed to create report-artifact link.")
         return ReportArtifactLink.from_row(dict(row))
+
+    def _create_with_connection(self, connection, link: ReportArtifactLink) -> ReportArtifactLink:
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO report_artifact_links (
+                id, session_id, report_id, artifact_id, created_at
+            ) VALUES (
+                :id, :session_id, :report_id, :artifact_id, :created_at
+            )
+            """,
+            link.to_row(),
+        )
+        return link
 
     def list_for_report(self, report_id: str) -> list[ReportArtifactLink]:
         with self.storage.connect() as connection:

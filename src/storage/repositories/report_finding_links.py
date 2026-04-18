@@ -36,16 +36,7 @@ class ReportFindingLinkRepository:
 
     def create(self, link: ReportFindingLink) -> ReportFindingLink:
         with self.storage.connect() as connection:
-            connection.execute(
-                """
-                INSERT OR IGNORE INTO report_finding_links (
-                    id, session_id, report_id, finding_id, created_at
-                ) VALUES (
-                    :id, :session_id, :report_id, :finding_id, :created_at
-                )
-                """,
-                link.to_row(),
-            )
+            self._create_with_connection(connection, link)
             connection.commit()
             row = connection.execute(
                 """
@@ -58,6 +49,19 @@ class ReportFindingLinkRepository:
         if row is None:
             raise ValueError("Failed to create report-finding link.")
         return ReportFindingLink.from_row(dict(row))
+
+    def _create_with_connection(self, connection, link: ReportFindingLink) -> ReportFindingLink:
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO report_finding_links (
+                id, session_id, report_id, finding_id, created_at
+            ) VALUES (
+                :id, :session_id, :report_id, :finding_id, :created_at
+            )
+            """,
+            link.to_row(),
+        )
+        return link
 
     def list_for_report(self, report_id: str) -> list[ReportFindingLink]:
         with self.storage.connect() as connection:

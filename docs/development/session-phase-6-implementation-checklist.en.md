@@ -112,7 +112,7 @@ Persistent session filesystem layout:
 ```text
 .red-code/
   sessions/
-    <session_public_id>/
+    <session_id>/
       memory/
       artifacts/
       findings/
@@ -122,11 +122,11 @@ Persistent session filesystem layout:
 Recommended concrete subpaths:
 
 - checkpoint blobs:
-  - `.red-code/sessions/<session_public_id>/memory/checkpoints/YYYY/MM/chk_<checkpoint_id>.json.gz`
+  - `.red-code/sessions/<session_id>/memory/checkpoints/YYYY/MM/chk_<checkpoint_id>.json.gz`
 - artifact payload files:
-  - `.red-code/sessions/<session_public_id>/artifacts/...`
+  - `.red-code/sessions/<session_id>/artifacts/...`
 - report output files:
-  - `.red-code/sessions/<session_public_id>/reports/...`
+  - `.red-code/sessions/<session_id>/reports/...`
 
 The `findings/` directory remains reserved as part of the session-owned layer contract even when findings are metadata-first in SQLite.
 
@@ -218,6 +218,8 @@ Responsibilities:
 - create report rows
 - persist exported report files under the session `reports/` layer
 - link reports to findings and artifacts
+- fail atomically so invalid links or output-write errors do not leave partial report state
+- return structured failure details that can be shown to the user and later forwarded to AI remediation flows
 
 Completion check:
 
@@ -230,6 +232,7 @@ Responsibilities:
 - summarize per-layer counts
 - list runs, checkpoints, jobs, events, memory entries, artifacts, findings, and reports
 - provide one session-owned retrieval surface for later Phase 7 work
+- use exact repository-backed count queries for summary totals instead of bounded list enumeration
 
 Completion check:
 
@@ -354,7 +357,7 @@ Checklist:
 
 - add session storage root path helper
 - add memory/artifacts/findings/reports path helpers
-- ensure paths derive from `session_public_id`
+- ensure paths derive from the internal `session_id`
 - ensure all paths remain under `.red-code/sessions/`
 
 Completion check:
@@ -379,6 +382,7 @@ Checklist:
 - define session-owned identifiers
 - define serialization helpers
 - define public ID behavior where required
+- ensure `Artifact` public IDs use the `A0001` family and repair any legacy `Exxxx` rows during repository initialization
 - remove target-contract reliance on `task_id` and `operation_id`
 
 Completion check:
@@ -437,6 +441,7 @@ Checklist:
 - change primary inputs to `session_identifier`
 - resolve `session_id` before persistence
 - update list APIs to use session-owned repositories
+- repair any pre-fix checkpoint blob paths into the owning session directory before serving checkpoint reads
 - keep validation and status-transition behavior where still applicable
 
 Completion check:
@@ -454,6 +459,7 @@ Checklist:
 - implement `get_layer_summary(session_identifier)`
 - add per-layer list helpers
 - add execution-record list helpers
+- back summary totals with exact count queries
 - avoid dependency on `TaskService` and `OperationService`
 
 Completion check:

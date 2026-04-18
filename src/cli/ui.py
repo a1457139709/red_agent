@@ -228,8 +228,6 @@ class CliPresenter:
         topics = Table(box=ASCII_BOX, expand=True, header_style="bold")
         topics.add_column("Topic", style="bold cyan", no_wrap=True)
         topics.add_column("Purpose", style="white")
-        topics.add_row("operation", "Legacy operation lifecycle and scope inspection")
-        topics.add_row("job", "Session-owned redteam jobs")
         topics.add_row("finding", "Session-owned findings and artifact links")
         topics.add_row("artifact", "Inspect raw session artifacts")
         topics.add_row("report", "Inspect persisted session reports")
@@ -244,31 +242,6 @@ class CliPresenter:
             Panel(topics, title="Advanced Help Topics", border_style="bright_blue", box=ASCII_BOX),
             Text("Drill down with /help skill for advanced command details.", style="dim"),
             Text("Session shortcuts: /clear, /reset, /exit, /quit", style="dim"),
-        )
-
-    def _help_operation(self) -> Group:
-        return Group(
-            Text("Operation help", style="dim"),
-            Rule(style="grey50", characters="-"),
-            self._command_panel("Operation Commands", [
-                ("/operation create", "Create an operation and its scope policy"),
-                ("/operation list [status] [limit]", "List recent operations"),
-                ("/operation show <id>", "Show operation details and scope policy"),
-                ("/operation pause <id>", "Pause an operation so new jobs stop being scheduled"),
-                ("/operation resume <id>", "Resume a draft, paused, or blocked operation into ready"),
-            ], border_style="cyan"),
-        )
-
-    def _help_job(self) -> Group:
-        return Group(
-            Text("Job help", style="dim"),
-            Rule(style="grey50", characters="-"),
-            self._command_panel("Job Commands", [
-                ("/job create <session_id>", "Create a job inside a session"),
-                ("/job list <session_id> [status] [limit]", "List jobs for a session"),
-                ("/job show <job_id>", "Show job details"),
-                ("/job cancel <job_id>", "Request cancellation for a queued or running job"),
-            ], border_style="magenta"),
         )
 
     def _help_finding(self) -> Group:
@@ -378,12 +351,6 @@ class CliPresenter:
         if topic is None:
             body = self._help_overview()
             title = "red-code"
-        elif topic == "operation":
-            body = self._help_operation()
-            title = "Help: operation"
-        elif topic == "job":
-            body = self._help_job()
-            title = "Help: job"
         elif topic == "finding":
             body = self._help_finding()
             title = "Help: finding"

@@ -101,6 +101,14 @@ class JobService:
     ) -> list[Job]:
         return self.repository.list(self._resolve_session_id(session_identifier), status=status, limit=limit)
 
+    def count_jobs(
+        self,
+        session_identifier: str,
+        *,
+        status: JobStatus | None = None,
+    ) -> int:
+        return self.repository.count(self._resolve_session_id(session_identifier), status=status)
+
     def save_job(self, job: Job) -> Job:
         if job.timeout_seconds is not None:
             _ensure_positive_int(job.timeout_seconds, field_name="timeout_seconds")

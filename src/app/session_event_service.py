@@ -82,6 +82,9 @@ class SessionEventService:
     def list_events(self, session_identifier: str, *, limit: int | None = 50) -> list[SessionEvent]:
         return self.repository.list(self._resolve_session_id(session_identifier), limit=limit)
 
+    def count_events(self, session_identifier: str) -> int:
+        return self.repository.count_since(self._resolve_session_id(session_identifier))
+
     def count_events_since(
         self,
         session_identifier: str,

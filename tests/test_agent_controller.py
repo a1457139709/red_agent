@@ -424,3 +424,47 @@ def test_build_prompt_prefers_session_over_legacy_task_binding():
     )
 
     assert build_prompt(shell_state) == "\nnormal:S0001 > "
+
+
+def test_run_interactive_shell_rejects_removed_operation_and_job_commands(
+    monkeypatch,
+    tmp_path,
+):
+    settings = build_settings(tmp_path)
+    session_state = SessionState()
+    shell_state = ShellState()
+    session_service = SessionService.from_settings(settings)
+    controller = AgentController.from_session_service(session_service)
+    skill_service = main_module.create_skill_service()
+    execution_service = FakeExecutionService()
+    tool_executor = ToolExecutor(build_tool_registry())
+    errors: list[str] = []
+    responses = iter(["/operation list", "/job list S0001", "/quit"])
+
+    def fake_input(_prompt):
+        return next(responses)
+
+    monkeypatch.setattr(
+        main_module,
+        "get_presenter",
+        lambda: main_module.CliPresenter.for_callbacks(error_output=errors.append),
+    )
+    monkeypatch.setattr(main_module.ColoredOutput, "print_header", lambda *_args, **_kwargs: None)
+
+    asyncio.run(
+        run_interactive_shell(
+            settings=settings,
+            session_state=session_state,
+            shell_state=shell_state,
+            tool_executor=tool_executor,
+            session_service=session_service,
+            controller=controller,
+            execution_service=execution_service,
+            skill_service=skill_service,
+            input_func=fake_input,
+        )
+    )
+
+    assert execution_service.calls == []
+    assert any("Unknown command: /operation list" in message for message in errors)
+    assert any("Unknown command: /job list S0001" in message for message in errors)

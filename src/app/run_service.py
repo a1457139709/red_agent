@@ -118,8 +118,11 @@ class RunService:
             raise ValueError(f"Run not found: {run_id}")
         return run
 
-    def list_runs(self, session_identifier: str, *, limit: int = 20) -> list[Run]:
+    def list_runs(self, session_identifier: str, *, limit: int | None = 20) -> list[Run]:
         return self.repository.list_runs(self._resolve_session_id(session_identifier), limit=limit)
+
+    def count_runs(self, session_identifier: str) -> int:
+        return self.repository.count_runs(self._resolve_session_id(session_identifier))
 
     def write_log(
         self,
@@ -143,8 +146,11 @@ class RunService:
         )
         return self.repository.create_log_entry(entry)
 
-    def list_logs(self, session_identifier: str, *, limit: int = 20) -> list[SessionLogEntry]:
+    def list_logs(self, session_identifier: str, *, limit: int | None = 20) -> list[SessionLogEntry]:
         return self.repository.list_logs(self._resolve_session_id(session_identifier), limit=limit)
+
+    def count_logs(self, session_identifier: str) -> int:
+        return self.repository.count_logs(self._resolve_session_id(session_identifier))
 
     def list_run_logs(self, run_id: str, *, limit: int = 20) -> list[SessionLogEntry]:
         run = self.require_run(run_id)

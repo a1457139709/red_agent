@@ -76,18 +76,19 @@ class RunRepository:
             row = self._get_run_row_by_identifier(connection, run_id)
         return Run.from_row(dict(row)) if row else None
 
-    def list_runs(self, session_id: str, *, limit: int = 20) -> list[Run]:
+    def list_runs(self, session_id: str, *, limit: int | None = 20) -> list[Run]:
+        query = """
+            SELECT *
+            FROM session_runs
+            WHERE session_id = ?
+            ORDER BY started_at DESC
+        """
+        params: list[object] = [session_id]
+        if limit is not None:
+            query += "\nLIMIT ?"
+            params.append(limit)
         with self.storage.connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT *
-                FROM session_runs
-                WHERE session_id = ?
-                ORDER BY started_at DESC
-                LIMIT ?
-                """,
-                (session_id, limit),
-            ).fetchall()
+            rows = connection.execute(query, params).fetchall()
         return [Run.from_row(dict(row)) for row in rows]
 
     def update_run(self, run: Run) -> Run:
@@ -130,19 +131,36 @@ class RunRepository:
             connection.commit()
         return entry
 
-    def list_logs(self, session_id: str, *, limit: int = 20) -> list[SessionLogEntry]:
+    def list_logs(self, session_id: str, *, limit: int | None = 20) -> list[SessionLogEntry]:
+        query = """
+            SELECT *
+            FROM session_logs
+            WHERE session_id = ?
+            ORDER BY created_at DESC
+        """
+        params: list[object] = [session_id]
+        if limit is not None:
+            query += "\nLIMIT ?"
+            params.append(limit)
         with self.storage.connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT *
-                FROM session_logs
-                WHERE session_id = ?
-                ORDER BY created_at DESC
-                LIMIT ?
-                """,
-                (session_id, limit),
-            ).fetchall()
+            rows = connection.execute(query, params).fetchall()
         return [SessionLogEntry.from_row(dict(row)) for row in rows]
+
+    def count_runs(self, session_id: str) -> int:
+        with self.storage.connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS count FROM session_runs WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        return int(row["count"]) if row is not None else 0
+
+    def count_logs(self, session_id: str) -> int:
+        with self.storage.connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS count FROM session_logs WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        return int(row["count"]) if row is not None else 0
 
     def list_logs_for_run(self, run_id: str, *, limit: int = 20) -> list[SessionLogEntry]:
         with self.storage.connect() as connection:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from models.artifact import Artifact
 from storage.schema_guard import ensure_phase6_clean_runtime_reset
 from storage.sqlite import SQLiteStorage
@@ -39,7 +41,7 @@ class ArtifactRepository:
 
     def create(self, artifact: Artifact) -> Artifact:
         with self.storage.connect() as connection:
-            artifact.public_id = allocate_public_id(connection, table_name="artifacts", prefix="E")
+            artifact.public_id = allocate_public_id(connection, table_name="artifacts", prefix="A")
             connection.execute(
                 """
                 INSERT INTO artifacts (
@@ -75,6 +77,14 @@ class ArtifactRepository:
             rows = connection.execute(query, params).fetchall()
         return [Artifact.from_row(dict(row)) for row in rows]
 
+    def count(self, session_id: str) -> int:
+        with self.storage.connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS count FROM artifacts WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        return int(row["count"]) if row is not None else 0
+
     def update(self, artifact: Artifact) -> Artifact:
         with self.storage.connect() as connection:
             connection.execute(
@@ -105,4 +115,46 @@ class ArtifactRepository:
         with self.storage.connect() as connection:
             ensure_phase6_clean_runtime_reset(connection, app_data_dir=self.storage.db_path.parent)
             connection.executescript(ARTIFACTS_SCHEMA)
+            self._migrate_legacy_public_ids(connection)
             connection.commit()
+
+    def _migrate_legacy_public_ids(self, connection) -> None:
+        legacy_rows = connection.execute(
+            """
+            SELECT id, public_id, captured_at
+            FROM artifacts
+            WHERE public_id LIKE 'E%'
+            """
+        ).fetchall()
+        if not legacy_rows:
+            return
+
+        rows = connection.execute(
+            """
+            SELECT id, public_id, captured_at
+            FROM artifacts
+            """
+        ).fetchall()
+        ordered_rows = sorted(
+            rows,
+            key=lambda row: (
+                self._public_id_sort_key(row["public_id"]),
+                row["captured_at"],
+                row["id"],
+            ),
+        )
+
+        connection.execute("UPDATE artifacts SET public_id = NULL")
+        for index, row in enumerate(ordered_rows, start=1):
+            connection.execute(
+                "UPDATE artifacts SET public_id = ? WHERE id = ?",
+                (f"A{index:04d}", row["id"]),
+            )
+
+    def _public_id_sort_key(self, public_id: str | None) -> tuple[int, int, str]:
+        if not public_id:
+            return (1, 0, "")
+        match = re.fullmatch(r"[AE](\d+)", str(public_id))
+        if match is None:
+            return (1, 0, str(public_id))
+        return (0, int(match.group(1)), str(public_id))

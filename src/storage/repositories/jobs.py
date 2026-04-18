@@ -113,6 +113,16 @@ class JobRepository:
             rows = connection.execute(query, params).fetchall()
         return [Job.from_row(dict(row)) for row in rows]
 
+    def count(self, session_id: str, *, status: JobStatus | None = None) -> int:
+        query = "SELECT COUNT(*) AS count FROM session_jobs WHERE session_id = ?"
+        params: list[object] = [session_id]
+        if status is not None:
+            query += " AND status = ?"
+            params.append(status.value)
+        with self.storage.connect() as connection:
+            row = connection.execute(query, params).fetchone()
+        return int(row["count"]) if row is not None else 0
+
     def list_by_statuses(
         self,
         statuses: Iterable[JobStatus],

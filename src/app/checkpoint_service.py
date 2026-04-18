@@ -82,7 +82,7 @@ class CheckpointService:
             history_text_bytes=history_text_bytes(payload),
             has_compressed_summary=bool(payload.get("compressed_summary")),
         )
-        blob_path = self._resolve_blob_path(session.public_id, checkpoint.blob_path)
+        blob_path = self._resolve_blob_path(session.id, checkpoint.blob_path)
         self._write_blob(blob_path, compressed_bytes)
         created = self.repository.create(checkpoint)
         return created.to_record()
@@ -105,8 +105,11 @@ class CheckpointService:
             raise ValueError(f"Checkpoint not found: {checkpoint_id}")
         return checkpoint
 
-    def list_checkpoints(self, session_identifier: str, *, limit: int = 20) -> list[CheckpointSummary]:
+    def list_checkpoints(self, session_identifier: str, *, limit: int | None = 20) -> list[CheckpointSummary]:
         return self.repository.list_summaries(self._resolve_session_id(session_identifier), limit=limit)
+
+    def count_checkpoints(self, session_identifier: str) -> int:
+        return self.repository.count(self._resolve_session_id(session_identifier))
 
     def delete_checkpoint(self, checkpoint_id: str) -> None:
         checkpoint = self.repository.get(checkpoint_id)
@@ -114,14 +117,14 @@ class CheckpointService:
             raise ValueError(f"Checkpoint not found: {checkpoint_id}")
 
         session = self.session_service.require_session(checkpoint.session_id)
-        blob_path = self._resolve_blob_path(session.public_id, checkpoint.blob_path)
+        blob_path = self._resolve_blob_path(session.id, checkpoint.blob_path)
         deleted = self.repository.delete(checkpoint_id)
         if not deleted:
             raise ValueError(f"Checkpoint not found: {checkpoint_id}")
 
         if blob_path.exists():
             blob_path.unlink()
-            self._cleanup_empty_blob_parents(blob_path.parent, session.public_id)
+            self._cleanup_empty_blob_parents(blob_path.parent, session.id)
 
     def prune_checkpoints(self, session_identifier: str, *, keep_last: int) -> int:
         if keep_last < 0:
@@ -143,7 +146,7 @@ class CheckpointService:
             raise ValueError(f"Unsupported checkpoint encoding: {checkpoint.blob_encoding}")
 
         session = self.session_service.require_session(checkpoint.session_id)
-        blob_path = self._resolve_blob_path(session.public_id, checkpoint.blob_path)
+        blob_path = self._resolve_blob_path(session.id, checkpoint.blob_path)
         if not blob_path.exists():
             raise ValueError(f"Checkpoint blob not found: {checkpoint.blob_path}")
 
@@ -166,11 +169,18 @@ class CheckpointService:
             raise ValueError(f"Invalid checkpoint payload: {checkpoint.id}")
         return SessionState.from_checkpoint_payload(session_payload)
 
-    def _resolve_blob_path(self, session_public_id: str, relative_blob_path: str | None) -> Path:
+    def _resolve_blob_path(self, session_id: str, relative_blob_path: str | None) -> Path:
         if not relative_blob_path:
             raise ValueError("Checkpoint blob path is missing.")
+        normalized_relative_path = relative_blob_path.replace("\\", "/")
+        expected_prefix = f"sessions/{session_id}/memory/checkpoints/"
+        if not normalized_relative_path.startswith(expected_prefix):
+            raise ValueError(
+                "Checkpoint blob path is not scoped to the owning session: "
+                f"{session_id}:{relative_blob_path}"
+            )
         app_root = self.settings.app_data_dir.resolve()
-        resolved = (app_root / relative_blob_path).resolve()
+        resolved = (app_root / normalized_relative_path).resolve()
         if os.path.commonpath([str(resolved), str(app_root)]) != str(app_root):
             raise ValueError(f"Checkpoint blob path escapes app data directory: {relative_blob_path}")
         return resolved
@@ -181,13 +191,21 @@ class CheckpointService:
         temp_path.write_bytes(payload)
         os.replace(temp_path, blob_path)
 
-    def _cleanup_empty_blob_parents(self, path: Path, session_public_id: str) -> None:
-        checkpoints_root = (self.settings.app_data_dir / "memory" / "checkpoints").resolve()
+    def _cleanup_empty_blob_parents(self, path: Path, session_id: str) -> None:
+        checkpoints_root = (
+            self.settings.app_data_dir
+            / "sessions"
+            / session_id
+            / "memory"
+            / "checkpoints"
+        ).resolve()
         current = path.resolve()
-        while current != checkpoints_root:
+        while True:
             try:
                 current.rmdir()
             except OSError:
+                break
+            if current == checkpoints_root:
                 break
             current = current.parent
 

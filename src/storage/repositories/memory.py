@@ -66,6 +66,14 @@ class MemoryRepository:
             rows = connection.execute(query, params).fetchall()
         return [MemoryEntry.from_row(dict(row)) for row in rows]
 
+    def count(self, session_id: str) -> int:
+        with self.storage.connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS count FROM session_memory_entries WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        return int(row["count"]) if row is not None else 0
+
     def update(self, entry: MemoryEntry) -> MemoryEntry:
         with self.storage.connect() as connection:
             connection.execute(

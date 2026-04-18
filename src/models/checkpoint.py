@@ -28,8 +28,14 @@ def history_text_bytes(payload: dict[str, Any]) -> int:
     return total
 
 
-def build_blob_relative_path(*, checkpoint_id: str, created_at: str) -> str:
+def build_blob_relative_path(
+    *,
+    session_id: str,
+    checkpoint_id: str,
+    created_at: str,
+) -> str:
     return checkpoint_blob_relative_path(
+        session_id=session_id,
         checkpoint_id=checkpoint_id,
         created_at=created_at,
     )
@@ -159,6 +165,7 @@ class StoredCheckpoint:
             run_id=run_id,
             created_at=created_at,
             blob_path=build_blob_relative_path(
+                session_id=resolved_session_id,
                 checkpoint_id=checkpoint_id,
                 created_at=created_at,
             ),

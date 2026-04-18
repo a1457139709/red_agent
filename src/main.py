@@ -15,8 +15,6 @@ from app.dashboard_service import DashboardService
 from app.evidence_service import EvidenceService
 from app.execution_service import ExecutionService
 from app.finding_service import FindingService
-from app.job_service import JobService
-from app.operation_service import OperationService
 from app.planner_service import PlannerService
 from app.report_service import ReportService
 from app.run_service import RunService
@@ -35,11 +33,8 @@ from controller import (
 )
 from models.session import SessionMode
 from models.risk_policy import ConfirmationRequestPayload
-from models.job import JobStatus
-from models.operation import OperationStatus
 from models.run import TaskLogEntry
 from models.task import Task, TaskStatus
-from orchestration.job_service import JobOrchestrationService
 from runtime.task_runner import TaskRunner, apply_result_to_session
 from cli.ui import CliPresenter, get_presenter
 from skills.registry import SkillRegistry
@@ -115,28 +110,6 @@ def parse_task_command(command: str) -> tuple[str, list[str]] | None:
 def parse_skill_command(command: str) -> tuple[str, list[str]] | None:
     stripped = command.strip()
     if not stripped.startswith("/skill"):
-        return None
-
-    parts = stripped.split()
-    if len(parts) == 1:
-        return "", []
-    return parts[1], parts[2:]
-
-
-def parse_operation_command(command: str) -> tuple[str, list[str]] | None:
-    stripped = command.strip()
-    if not stripped.startswith("/operation"):
-        return None
-
-    parts = stripped.split()
-    if len(parts) == 1:
-        return "", []
-    return parts[1], parts[2:]
-
-
-def parse_job_command(command: str) -> tuple[str, list[str]] | None:
-    stripped = command.strip()
-    if not stripped.startswith("/job"):
         return None
 
     parts = stripped.split()
@@ -230,8 +203,6 @@ def parse_skill_shorthand(
         not stripped.startswith("/")
         or stripped.startswith("/skill")
         or stripped.startswith("/task")
-        or stripped.startswith("/operation")
-        or stripped.startswith("/job")
         or stripped.startswith("/finding")
         or stripped.startswith("/artifact")
         or stripped.startswith("/report")
@@ -523,32 +494,6 @@ def _parse_json_dict(raw: str) -> dict:
     return value
 
 
-def _parse_operation_list_args(args: list[str]) -> tuple[OperationStatus | None, int]:
-    if not args:
-        return None, 20
-    if len(args) == 1:
-        try:
-            return OperationStatus(args[0].lower()), 20
-        except ValueError:
-            return None, _parse_limit(args[0])
-    if len(args) == 2:
-        return OperationStatus(args[0].lower()), _parse_limit(args[1])
-    raise ValueError("Usage: /operation list [status] [limit]")
-
-
-def _parse_job_list_args(args: list[str]) -> tuple[JobStatus | None, int]:
-    if not args:
-        return None, 20
-    if len(args) == 1:
-        try:
-            return JobStatus(args[0].lower()), 20
-        except ValueError:
-            return None, _parse_limit(args[0])
-    if len(args) == 2:
-        return JobStatus(args[0].lower()), _parse_limit(args[1])
-    raise ValueError("Usage: /job list <session_id> [status] [limit]")
-
-
 def _parse_optional_limit_arg(args: list[str], *, usage: str) -> int:
     if not args:
         return 20
@@ -604,10 +549,6 @@ def _resolve_task_reference(task_service: TaskService, task_ref: str) -> Task | 
     if task_ref in {"latest", "last"}:
         return task_service.get_latest_task()
     return task_service.get_task(task_ref)
-
-
-def _resolve_operation_reference(operation_service: OperationService, operation_ref: str):
-    return operation_service.get_operation(operation_ref)
 
 
 def _build_run_label_map(entries: list[TaskLogEntry], run_service: RunService) -> dict[str, str]:
@@ -1102,258 +1043,6 @@ def handle_planner_command(
         return True
 
 
-def handle_operation_command(
-    command: str,
-    *,
-    operation_service: OperationService,
-    planner_service: PlannerService | None = None,
-    presenter: CliPresenter | None = None,
-    text_output: OutputFn | None = None,
-    info_output: OutputFn | None = None,
-    error_output: OutputFn | None = None,
-    success_output: OutputFn | None = None,
-    input_func: InputFn = input,
-) -> bool:
-    parsed = parse_operation_command(command)
-    if parsed is None:
-        return False
-
-    ui = _resolve_presenter(
-        presenter,
-        text_output=text_output,
-        info_output=info_output,
-        error_output=error_output,
-        success_output=success_output,
-    )
-    action, args = parsed
-    planner_service = planner_service or PlannerService.from_settings(operation_service.settings)
-
-    try:
-        if action in {"", "help"}:
-            ui.show_help("operation")
-            return True
-
-        if action == "create":
-            title = input_func("Title: ").strip()
-            objective = input_func("Objective: ").strip()
-            allowed_hosts = _parse_csv_list(input_func("Allowed hosts: ").strip())
-            allowed_domains = _parse_csv_list(input_func("Allowed domains: ").strip())
-            allowed_cidrs = _parse_csv_list(input_func("Allowed CIDRs: ").strip())
-            allowed_ports = _parse_ports(input_func("Allowed ports: ").strip())
-            allowed_protocols = _parse_csv_list(input_func("Allowed protocols: ").strip())
-            denied_targets = _parse_csv_list(input_func("Denied targets: ").strip())
-            allowed_tool_categories = _parse_csv_list(input_func("Allowed tool categories: ").strip())
-            max_concurrency_raw = input_func("Max concurrency [1]: ").strip()
-            max_concurrency = 1 if not max_concurrency_raw else _parse_limit(max_concurrency_raw)
-            rate_limit_raw = input_func("Rate limit per minute [blank=none]: ").strip()
-            rate_limit_per_minute = _parse_optional_positive_int(
-                rate_limit_raw,
-                field_name="rate_limit_per_minute",
-            )
-            confirmation_required_actions = _parse_csv_list(
-                input_func("Confirmation-required actions: ").strip()
-            )
-
-            if not title or not objective:
-                ui.show_error("Operation title and objective are required.")
-                return True
-
-            operation = operation_service.create_operation(
-                title=title,
-                objective=objective,
-                allowed_hosts=allowed_hosts,
-                allowed_domains=allowed_domains,
-                allowed_cidrs=allowed_cidrs,
-                allowed_ports=allowed_ports,
-                allowed_protocols=allowed_protocols,
-                denied_targets=denied_targets,
-                allowed_tool_categories=allowed_tool_categories,
-                max_concurrency=max_concurrency,
-                rate_limit_per_minute=rate_limit_per_minute,
-                confirmation_required_actions=confirmation_required_actions,
-            )
-            ui.show_success(f"Created operation {operation.public_id} ({operation.id})")
-            return True
-
-        if action == "list":
-            status, limit = _parse_operation_list_args(args)
-            operations = operation_service.list_operations(status=status, limit=limit)
-            filter_label = f"Operations (status: {status.value})" if status is not None else "Operations"
-            ui.show_operation_list(operations, filter_label=filter_label)
-            return True
-
-        if action == "show":
-            if len(args) != 1:
-                ui.show_error("Usage: /operation show <operation_id>")
-                return True
-            operation = _resolve_operation_reference(operation_service, args[0])
-            if operation is None:
-                ui.show_error(f"Operation not found: {args[0]}")
-                return True
-            policy = operation_service.require_scope_policy(operation.id)
-            ui.show_operation_detail(operation, policy)
-            return True
-
-        if action == "pause":
-            if len(args) != 1:
-                ui.show_error("Usage: /operation pause <operation_id>")
-                return True
-            operation = operation_service.pause_operation(args[0])
-            ui.show_success(f"Paused operation {operation.public_id} ({operation.id})")
-            return True
-
-        if action == "resume":
-            if len(args) != 1:
-                ui.show_error("Usage: /operation resume <operation_id>")
-                return True
-            operation = operation_service.resume_operation(args[0])
-            ui.show_success(f"Resumed operation {operation.public_id} ({operation.id})")
-            try:
-                summary = planner_service.build_operation_context_summary(operation.id)
-                ui.show_operation_context_summary(summary)
-                ui.show_info(
-                    f"Run /planner plan {operation.public_id or operation.id} to generate next-step proposals."
-                )
-            except Exception as exc:
-                ui.show_info(f"Planner context summary unavailable: {exc}")
-            return True
-
-        ui.show_error(f"Unknown operation command: {action}")
-        return True
-    except ValueError as exc:
-        ui.show_error(str(exc))
-        return True
-    except Exception as exc:
-        ui.show_error(f"Operation command failed: {exc}")
-        return True
-
-
-def handle_job_command(
-    command: str,
-    *,
-    job_service: JobService,
-    operation_service: OperationService,
-    job_orchestration_service: JobOrchestrationService | None = None,
-    presenter: CliPresenter | None = None,
-    text_output: OutputFn | None = None,
-    info_output: OutputFn | None = None,
-    error_output: OutputFn | None = None,
-    success_output: OutputFn | None = None,
-    input_func: InputFn = input,
-) -> bool:
-    parsed = parse_job_command(command)
-    if parsed is None:
-        return False
-
-    ui = _resolve_presenter(
-        presenter,
-        text_output=text_output,
-        info_output=info_output,
-        error_output=error_output,
-        success_output=success_output,
-    )
-    action, args = parsed
-    job_orchestration_service = job_orchestration_service or JobOrchestrationService.from_settings(
-        job_service.settings
-    )
-
-    try:
-        if action in {"", "help"}:
-            ui.show_help("job")
-            return True
-
-        if action == "create":
-            if len(args) != 1:
-                ui.show_error("Usage: /job create <session_id>")
-                return True
-            operation = operation_service.get_operation(args[0])
-            if operation is None:
-                ui.show_error(f"Session not found: {args[0]}")
-                return True
-
-            job_type = input_func("Job type: ").strip()
-            target_ref = input_func("Target ref: ").strip()
-            arguments = _parse_json_dict(input_func("Arguments JSON [{}]: ").strip())
-            dependency_job_ids = _parse_csv_list(input_func("Dependency job ids: ").strip())
-            timeout_seconds = _parse_optional_positive_int(
-                input_func("Timeout seconds [blank=none]: ").strip(),
-                field_name="timeout_seconds",
-            )
-            retry_limit_raw = input_func("Retry limit [0]: ").strip()
-            retry_limit = 0 if not retry_limit_raw else _parse_non_negative_int(
-                retry_limit_raw,
-                field_name="retry_limit",
-            )
-
-            if not job_type or not target_ref:
-                ui.show_error("Job type and target ref are required.")
-                return True
-
-            job = job_service.create_job(
-                session_identifier=operation.id,
-                job_type=job_type,
-                target_ref=target_ref,
-                arguments=arguments,
-                dependency_job_ids=dependency_job_ids,
-                timeout_seconds=timeout_seconds,
-                retry_limit=retry_limit,
-            )
-            ui.show_success(f"Created job {job.public_id} ({job.id})")
-            return True
-
-        if action == "list":
-            if not args or len(args) > 3:
-                ui.show_error("Usage: /job list <session_id> [status] [limit]")
-                return True
-            operation = operation_service.get_operation(args[0])
-            if operation is None:
-                ui.show_error(f"Session not found: {args[0]}")
-                return True
-            status, limit = _parse_job_list_args(args[1:])
-            jobs = job_service.list_jobs(operation.id, status=status, limit=limit)
-            ui.show_job_list(jobs, operation_label=operation.public_id or operation.id)
-            return True
-
-        if action == "show":
-            if len(args) != 1:
-                ui.show_error("Usage: /job show <job_id>")
-                return True
-            job = job_service.get_job(args[0])
-            if job is None:
-                ui.show_error(f"Job not found: {args[0]}")
-                return True
-            ui.show_job_detail(job)
-            return True
-
-        if action == "cancel":
-            if len(args) != 1:
-                ui.show_error("Usage: /job cancel <job_id>")
-                return True
-            reason = input_func("Cancellation reason [blank=default]: ").strip()
-            outcome = job_orchestration_service.request_cancellation(
-                args[0],
-                reason=reason or "Operator requested cancellation.",
-            )
-            job = outcome.job
-            if outcome.accepted:
-                ui.show_success(f"Requested cancellation for job {job.public_id} ({job.id})")
-            else:
-                ui.show_info(
-                    f"Job {job.public_id} ({job.id}) is already terminal with status {job.status.value}; "
-                    "no cancellation request was recorded."
-                )
-            return True
-
-        ui.show_error(f"Unknown job command: {action}")
-        return True
-    except ValueError as exc:
-        ui.show_error(str(exc))
-        return True
-    except Exception as exc:
-        ui.show_error(f"Job command failed: {exc}")
-        return True
-
-
 def handle_finding_command(
     command: str,
     *,
@@ -1733,9 +1422,7 @@ async def run_interactive_shell(
         skill_service=skill_service,
         checkpoint_service=checkpoint_service,
     )
-    operation_service = OperationService.from_settings(settings)
     planner_service = PlannerService.from_settings(settings)
-    job_service = JobService.from_settings(settings)
     finding_service = FindingService.from_settings(settings)
     artifact_service = ArtifactService.from_settings(settings)
     report_service = ReportService.from_settings(settings)
@@ -1833,20 +1520,6 @@ async def run_interactive_shell(
                     run_service=run_service,
                     checkpoint_service=checkpoint_service,
                     task_runner=task_runner,
-                ):
-                    continue
-
-                if handle_operation_command(
-                    question,
-                    operation_service=operation_service,
-                    planner_service=planner_service,
-                ):
-                    continue
-
-                if handle_job_command(
-                    question,
-                    job_service=job_service,
-                    operation_service=operation_service,
                 ):
                     continue
 

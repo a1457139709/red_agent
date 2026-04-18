@@ -75,35 +75,26 @@ class SessionRecordLocator:
         )
 
     def get_layer_summary(self, session_identifier: str) -> SessionLayerSummary:
-        runs = self.list_runs(session_identifier, limit=None)
-        logs = self.list_logs(session_identifier, limit=None)
-        checkpoints = self.list_checkpoints(session_identifier, limit=None)
-        jobs = self.list_jobs(session_identifier, limit=None)
-        events = self.list_events(session_identifier, limit=None)
-        memory_entries = self.list_memory_entries(session_identifier, limit=None)
-        artifacts = self.list_artifacts(session_identifier, limit=None)
-        findings = self.list_findings(session_identifier, limit=None)
-        reports = self.list_reports(session_identifier, limit=None)
         return SessionLayerSummary(
-            runs=len(runs),
-            logs=len(logs),
-            checkpoints=len(checkpoints),
-            jobs=len(jobs),
-            events=len(events),
-            memory_entries=len(memory_entries),
-            artifacts=len(artifacts),
-            findings=len(findings),
-            reports=len(reports),
+            runs=self.run_service.count_runs(session_identifier),
+            logs=self.run_service.count_logs(session_identifier),
+            checkpoints=self.checkpoint_service.count_checkpoints(session_identifier),
+            jobs=self.job_service.count_jobs(session_identifier),
+            events=self.session_event_service.count_events(session_identifier),
+            memory_entries=self.memory_service.count_memory_entries(session_identifier),
+            artifacts=self.artifact_service.count_artifacts(session_identifier),
+            findings=self.finding_service.count_findings(session_identifier),
+            reports=self.report_service.count_reports(session_identifier),
         )
 
     def list_runs(self, session_identifier: str, *, limit: int | None = 50) -> list[Run]:
-        return self.run_service.list_runs(session_identifier, limit=limit or 10_000)
+        return self.run_service.list_runs(session_identifier, limit=limit)
 
     def list_logs(self, session_identifier: str, *, limit: int | None = 50) -> list[SessionLogEntry]:
-        return self.run_service.list_logs(session_identifier, limit=limit or 10_000)
+        return self.run_service.list_logs(session_identifier, limit=limit)
 
     def list_checkpoints(self, session_identifier: str, *, limit: int | None = 50) -> list[CheckpointSummary]:
-        return self.checkpoint_service.list_checkpoints(session_identifier, limit=limit or 10_000)
+        return self.checkpoint_service.list_checkpoints(session_identifier, limit=limit)
 
     def list_jobs(self, session_identifier: str, *, limit: int | None = 50) -> list[Job]:
         return self.job_service.list_jobs(session_identifier, limit=limit)

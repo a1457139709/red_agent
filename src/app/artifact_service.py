@@ -91,6 +91,9 @@ class ArtifactService:
     def list_artifacts(self, session_identifier: str, *, limit: int | None = 50) -> list[Artifact]:
         return self.repository.list(self._resolve_session_id(session_identifier), limit=limit)
 
+    def count_artifacts(self, session_identifier: str) -> int:
+        return self.repository.count(self._resolve_session_id(session_identifier))
+
     def save_artifact(self, artifact: Artifact) -> Artifact:
         return self.repository.update(artifact)
 

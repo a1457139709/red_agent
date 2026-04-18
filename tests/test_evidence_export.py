@@ -84,6 +84,7 @@ def test_generate_operation_export_writes_json_summaries_with_traceability(tmp_p
         assert path.exists()
         assert ".red-code" in str(path)
         assert "sessions" in str(path)
+        assert operation.id in str(path)
         assert "reports" in str(path)
 
     payloads_by_name = {

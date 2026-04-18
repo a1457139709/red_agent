@@ -95,7 +95,7 @@ Final decision:
 ```text
 .red-code/
   sessions/
-    <session_public_id>/
+    <session_id>/
       memory/
       artifacts/
       findings/
@@ -104,7 +104,7 @@ Final decision:
 
 Directory rules:
 
-- `<session_public_id>` is the stable `Session.public_id`, for example `S0001`
+- `<session_id>` is the internal persistent session UUID
 - layer directories are created lazily when first needed
 - all persistent layer files must remain under the owning session directory
 - callers may not provide absolute filesystem destinations for layer outputs
@@ -156,7 +156,7 @@ Target filesystem path rules:
 - checkpoint blobs live under:
 
 ```text
-.red-code/sessions/<session_public_id>/memory/checkpoints/YYYY/MM/chk_<checkpoint_id>.json.gz
+.red-code/sessions/<session_id>/memory/checkpoints/YYYY/MM/chk_<checkpoint_id>.json.gz
 ```
 
 SQLite table:
@@ -202,10 +202,11 @@ Artifact
 Public ID policy:
 
 - artifacts use `A0001` format
+- repository initialization must migrate historical `Exxxx` artifact rows into a stable `Axxxx` sequence before normal artifact access continues
 
 Filesystem rules:
 
-- artifact payload files live under `.red-code/sessions/<session_public_id>/artifacts/`
+- artifact payload files live under `.red-code/sessions/<session_id>/artifacts/`
 - artifact metadata rows always point to session-owned paths
 
 ## 6. Finding Layer Contract
@@ -270,9 +271,12 @@ Link tables:
 
 Filesystem rules:
 
-- exported report files live under `.red-code/sessions/<session_public_id>/reports/`
+- exported report files live under `.red-code/sessions/<session_id>/reports/`
 - report rows may reference one primary output file through `artifact_path`
 - linked findings and artifacts remain separately queryable after report generation
+- report creation must validate linked record ownership before commit
+- failed report creation must not leave orphaned report rows, link rows, or output files
+- report-creation failures may expose structured assistant-facing context in addition to operator-facing error text
 
 ## 8. Session-Owned Execution Records
 
@@ -500,6 +504,7 @@ Minimum fields:
 Rule:
 
 - checkpoint blobs move under the owning session `memory/` directory
+- startup should repair any pre-fix checkpoint blob paths that were mistakenly written outside the owning session directory, or under a public-id-scoped session directory, before checkpoint access continues
 
 ## Session Jobs
 
@@ -574,6 +579,11 @@ Responsibilities:
 - list reports
 - list runs, checkpoints, jobs, and events
 - provide one session-level lookup surface for future Phase 7 retrieval flows
+
+Counting rule:
+
+- `get_layer_summary(session_identifier)` should return exact per-layer counts
+- exact counts should come from repository count queries rather than list truncation or list-length estimation
 
 Not allowed:
 

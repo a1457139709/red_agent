@@ -34,17 +34,7 @@ class ReportRepository:
 
     def create(self, report: Report) -> Report:
         with self.storage.connect() as connection:
-            report.public_id = allocate_public_id(connection, table_name="reports", prefix="RP")
-            connection.execute(
-                """
-                INSERT INTO reports (
-                    id, public_id, session_id, report_type, title, summary, artifact_path, created_at, metadata
-                ) VALUES (
-                    :id, :public_id, :session_id, :report_type, :title, :summary, :artifact_path, :created_at, :metadata
-                )
-                """,
-                report.to_row(),
-            )
+            self._create_with_connection(connection, report)
             connection.commit()
         return report
 
@@ -68,25 +58,51 @@ class ReportRepository:
             rows = connection.execute(query, params).fetchall()
         return [Report.from_row(dict(row)) for row in rows]
 
+    def count(self, session_id: str) -> int:
+        with self.storage.connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS count FROM reports WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        return int(row["count"]) if row is not None else 0
+
     def update(self, report: Report) -> Report:
         with self.storage.connect() as connection:
-            connection.execute(
-                """
-                UPDATE reports
-                SET
-                    public_id = :public_id,
-                    session_id = :session_id,
-                    report_type = :report_type,
-                    title = :title,
-                    summary = :summary,
-                    artifact_path = :artifact_path,
-                    created_at = :created_at,
-                    metadata = :metadata
-                WHERE id = :id
-                """,
-                report.to_row(),
-            )
+            self._update_with_connection(connection, report)
             connection.commit()
+        return report
+
+    def _create_with_connection(self, connection, report: Report) -> Report:
+        report.public_id = allocate_public_id(connection, table_name="reports", prefix="RP")
+        connection.execute(
+            """
+            INSERT INTO reports (
+                id, public_id, session_id, report_type, title, summary, artifact_path, created_at, metadata
+            ) VALUES (
+                :id, :public_id, :session_id, :report_type, :title, :summary, :artifact_path, :created_at, :metadata
+            )
+            """,
+            report.to_row(),
+        )
+        return report
+
+    def _update_with_connection(self, connection, report: Report) -> Report:
+        connection.execute(
+            """
+            UPDATE reports
+            SET
+                public_id = :public_id,
+                session_id = :session_id,
+                report_type = :report_type,
+                title = :title,
+                summary = :summary,
+                artifact_path = :artifact_path,
+                created_at = :created_at,
+                metadata = :metadata
+            WHERE id = :id
+            """,
+            report.to_row(),
+        )
         return report
 
     def _ensure_schema(self) -> None:

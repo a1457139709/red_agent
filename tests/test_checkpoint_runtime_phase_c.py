@@ -7,6 +7,7 @@ from agent.settings import Settings
 from agent.state import SessionState
 from app.checkpoint_service import CheckpointService
 from app.run_service import RunService
+from app.session_service import SessionService
 from app.task_service import TaskService
 from models.task import TaskStatus
 from runtime.task_runner import TaskRunner
@@ -33,6 +34,7 @@ def test_task_runner_run_prompt_persists_blob_backed_checkpoint(monkeypatch, tmp
     settings = build_settings(tmp_path)
     task_service = TaskService.from_settings(settings)
     run_service = RunService.from_settings(settings)
+    session_service = SessionService.from_settings(settings)
     checkpoint_service = CheckpointService.from_settings(settings)
     runner = TaskRunner(
         task_service,
@@ -41,6 +43,7 @@ def test_task_runner_run_prompt_persists_blob_backed_checkpoint(monkeypatch, tmp
     )
     executor = ToolExecutor({"fake_tool": FakeTool()})
     task = task_service.create_task(title="Task", goal="Do work")
+    session = session_service.require_session(task.session_id)
     task, session_state = runner.resume_task(task.id)
 
     async def fake_agent_loop(question, state, tool_executor, current_settings):
@@ -76,6 +79,7 @@ def test_task_runner_run_prompt_persists_blob_backed_checkpoint(monkeypatch, tmp
     assert checkpoint.storage_kind == "file_blob"
     assert checkpoint.blob_encoding == "json+gzip"
     assert checkpoint.blob_path is not None
+    assert checkpoint.blob_path.startswith(f"sessions/{session.id}/memory/checkpoints/")
     assert (settings.app_data_dir / checkpoint.blob_path).exists()
 
 
@@ -83,6 +87,7 @@ def test_task_runner_resume_detach_and_complete_use_checkpoint_service(tmp_path)
     settings = build_settings(tmp_path)
     task_service = TaskService.from_settings(settings)
     run_service = RunService.from_settings(settings)
+    session_service = SessionService.from_settings(settings)
     checkpoint_service = CheckpointService.from_settings(settings)
     runner = TaskRunner(
         task_service,
@@ -93,6 +98,7 @@ def test_task_runner_resume_detach_and_complete_use_checkpoint_service(tmp_path)
     original_state = SessionState()
     original_state.append_user_message("hello")
     task = task_service.create_task(title="Task", goal="Do work")
+    session = session_service.require_session(task.session_id)
 
     initial_checkpoint = checkpoint_service.save_checkpoint(
         task_id=task.id,
@@ -109,6 +115,8 @@ def test_task_runner_resume_detach_and_complete_use_checkpoint_service(tmp_path)
     assert resumed_task.status == TaskStatus.RUNNING
     assert restored_state.history[0].content == "hello"
     assert detached_task.status == TaskStatus.PAUSED
+    assert detach_checkpoint.blob_path.startswith(f"sessions/{session.id}/memory/checkpoints/")
     assert (settings.app_data_dir / detach_checkpoint.blob_path).exists()
     assert completed_task.status == TaskStatus.COMPLETED
+    assert complete_checkpoint.blob_path.startswith(f"sessions/{session.id}/memory/checkpoints/")
     assert (settings.app_data_dir / complete_checkpoint.blob_path).exists()

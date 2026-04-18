@@ -89,7 +89,7 @@ class EvidenceExportService:
         links = self.finding_service.list_links(operation.id)
 
         export_label = _slugify(export_name or utc_now_iso().replace(":", "-"))
-        export_dir = self.settings.sessions_dir / session.public_id / "reports"
+        export_dir = self.settings.sessions_dir / session.id / "reports"
         export_dir.mkdir(parents=True, exist_ok=True)
 
         artifacts_by_id = {item.id: item for item in artifacts}
@@ -144,7 +144,7 @@ class EvidenceExportService:
             files.append(
                 resolve_session_relative_path(
                     self.settings,
-                    session_public_id=session.public_id,
+                    session_id=session.id,
                     relative_path=report.artifact_path or "",
                 )
             )

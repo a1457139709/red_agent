@@ -102,6 +102,9 @@ class FindingService:
     def list_findings(self, session_identifier: str, *, limit: int | None = 50) -> list[Finding]:
         return self.repository.list(self._resolve_session_id(session_identifier), limit=limit)
 
+    def count_findings(self, session_identifier: str) -> int:
+        return self.repository.count(self._resolve_session_id(session_identifier))
+
     def save_finding(self, finding: Finding) -> Finding:
         return self.repository.update(finding)
 
