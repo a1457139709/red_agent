@@ -84,6 +84,7 @@ def ensure_phase6_clean_runtime_reset(connection: sqlite3.Connection, *, app_dat
     sources = ", ".join(blocking_sources)
     raise ValueError(
         "Legacy runtime storage detected for the pre-Phase 6 layout "
-        f"({sources}). Delete `.red-code/agent.db` and `.red-code/operations/` "
-        "before starting the Phase 6 runtime."
+        f"({sources}). This local database is test-only and can be recreated. "
+        "Delete `.red-code/agent.db` and `.red-code/operations/` before starting "
+        "the Phase 6 runtime."
     )

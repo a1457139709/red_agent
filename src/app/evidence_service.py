@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+"""Legacy EvidenceService compatibility wrapper over ArtifactService."""
+
+import warnings
+
 from agent.settings import Settings, get_settings
 from app.artifact_service import ArtifactService
 from models.artifact import Artifact
@@ -37,6 +41,12 @@ class EvidenceService:
         hash_digest: str | None = None,
         captured_at: str | None = None,
     ) -> Evidence:
+        warnings.warn(
+            "EvidenceService.create_evidence() is deprecated as a primary write path. "
+            "Use ArtifactService.create_artifact() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         artifact = self.artifact_service.create_artifact(
             operation_identifier=operation_identifier,
             source_job_identifier=job_identifier,
@@ -70,6 +80,12 @@ class EvidenceService:
         ]
 
     def save_evidence(self, evidence: Evidence) -> Evidence:
+        warnings.warn(
+            "EvidenceService.save_evidence() is deprecated as a primary write path. "
+            "Use ArtifactService.save_artifact() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         artifact = self.artifact_service.save_artifact(_evidence_to_artifact(evidence))
         return _artifact_to_evidence(artifact)
 

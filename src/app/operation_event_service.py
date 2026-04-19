@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+"""Legacy OperationEventService compatibility wrapper over SessionEventService."""
+
+import warnings
+
 from agent.settings import Settings, get_settings
 from models.operation_event import OperationEvent, OperationEventLevel, OperationEventType
 from models.session_event import SessionEventLevel, SessionEventType
@@ -49,6 +53,12 @@ class OperationEventService:
         payload: dict | None = None,
         created_at: str | None = None,
     ) -> OperationEvent:
+        warnings.warn(
+            "OperationEventService.create_event() is deprecated as a primary write path. "
+            "Use SessionEventService.create_event() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         event = self.session_event_service.create_event(
             operation_identifier=operation_identifier,
             event_type=SessionEventType(event_type.value),

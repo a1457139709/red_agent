@@ -12,7 +12,6 @@ from agent.state import SessionState
 from app.artifact_service import ArtifactService
 from app.checkpoint_service import CheckpointService
 from app.dashboard_service import DashboardService
-from app.evidence_service import EvidenceService
 from app.execution_service import ExecutionService
 from app.finding_service import FindingService
 from app.planner_service import PlannerService
@@ -129,17 +128,6 @@ def parse_finding_command(command: str) -> tuple[str, list[str]] | None:
     return parts[1], parts[2:]
 
 
-def parse_evidence_command(command: str) -> tuple[str, list[str]] | None:
-    stripped = command.strip()
-    if not stripped.startswith("/evidence"):
-        return None
-
-    parts = stripped.split()
-    if len(parts) == 1:
-        return "", []
-    return parts[1], parts[2:]
-
-
 def parse_artifact_command(command: str) -> tuple[str, list[str]] | None:
     stripped = command.strip()
     if not stripped.startswith("/artifact"):
@@ -206,7 +194,6 @@ def parse_skill_shorthand(
         or stripped.startswith("/finding")
         or stripped.startswith("/artifact")
         or stripped.startswith("/report")
-        or stripped.startswith("/evidence")
         or stripped.startswith("/dashboard")
         or stripped.startswith("/planner")
     ):
@@ -1122,29 +1109,6 @@ def handle_finding_command(
         return True
 
 
-def handle_evidence_command(
-    command: str,
-    *,
-    evidence_service: EvidenceService,
-    finding_service: FindingService,
-    presenter: CliPresenter | None = None,
-    text_output: OutputFn | None = None,
-    info_output: OutputFn | None = None,
-    error_output: OutputFn | None = None,
-    success_output: OutputFn | None = None,
-) -> bool:
-    return handle_artifact_command(
-        command.replace("/evidence", "/artifact", 1),
-        artifact_service=ArtifactService.from_settings(evidence_service.settings),
-        finding_service=finding_service,
-        presenter=presenter,
-        text_output=text_output,
-        info_output=info_output,
-        error_output=error_output,
-        success_output=success_output,
-    )
-
-
 def handle_artifact_command(
     command: str,
     *,
@@ -1276,68 +1240,6 @@ def handle_report_command(
         ui.show_error(f"Report command failed: {exc}")
         return True
 
-
-def _handle_evidence_command_legacy(
-    command: str,
-    *,
-    evidence_service: EvidenceService,
-    finding_service: FindingService,
-    presenter: CliPresenter | None = None,
-    text_output: OutputFn | None = None,
-    info_output: OutputFn | None = None,
-    error_output: OutputFn | None = None,
-    success_output: OutputFn | None = None,
-) -> bool:
-    parsed = parse_evidence_command(command)
-    if parsed is None:
-        return False
-
-    ui = _resolve_presenter(
-        presenter,
-        text_output=text_output,
-        info_output=info_output,
-        error_output=error_output,
-        success_output=success_output,
-    )
-    action, args = parsed
-
-    try:
-        if action in {"", "help"}:
-            ui.show_help("evidence")
-            return True
-
-        if action == "list":
-            if not args or len(args) > 2:
-                ui.show_error("Usage: /evidence list <session_id> [limit]")
-                return True
-            limit = _parse_optional_limit_arg(args[1:], usage="Usage: /evidence list <session_id> [limit]")
-            evidence = evidence_service.list_evidence(args[0], limit=limit)
-            ui.show_evidence_list(evidence, operation_label=args[0])
-            return True
-
-        if action == "show":
-            if len(args) != 1:
-                ui.show_error("Usage: /evidence show <evidence_id>")
-                return True
-            evidence = evidence_service.require_evidence(args[0])
-            links = finding_service.list_finding_links_for_evidence(evidence.id)
-            linked_finding_ids = [
-                finding_service.require_finding(link.finding_id).public_id
-                for link in links
-            ]
-            ui.show_evidence_detail(evidence, linked_finding_ids=linked_finding_ids)
-            return True
-
-        ui.show_error(f"Unknown evidence command: {action}")
-        return True
-    except ValueError as exc:
-        ui.show_error(str(exc))
-        return True
-    except Exception as exc:
-        ui.show_error(f"Evidence command failed: {exc}")
-        return True
-
-
 def handle_dashboard_command(
     command: str,
     *,
@@ -1426,7 +1328,6 @@ async def run_interactive_shell(
     finding_service = FindingService.from_settings(settings)
     artifact_service = ArtifactService.from_settings(settings)
     report_service = ReportService.from_settings(settings)
-    evidence_service = EvidenceService.from_settings(settings)
     dashboard_service = DashboardService.from_settings(settings)
     ui = get_presenter()
     while True:
@@ -1540,13 +1441,6 @@ async def run_interactive_shell(
                     question,
                     report_service=report_service,
                     artifact_service=artifact_service,
-                    finding_service=finding_service,
-                ):
-                    continue
-
-                if _handle_evidence_command_legacy(
-                    question,
-                    evidence_service=evidence_service,
                     finding_service=finding_service,
                 ):
                     continue

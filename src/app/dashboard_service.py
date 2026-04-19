@@ -8,12 +8,10 @@ from agent.settings import Settings, get_settings
 from models.artifact import Artifact
 from models.finding import Finding
 from models.job import Job
-from models.operation import Operation, OperationStatus
-from models.session import Session, SessionMode, SessionStatus
+from models.session import Session, SessionMode
 from models.session_event import SessionEvent
 from models.scope_policy import ScopePolicy
 
-from .operation_service import OperationService
 from .scope_policy_service import ScopePolicyService
 from .session_record_locator import SessionRecordLocator
 from .session_scope import resolve_session_identifier
@@ -23,7 +21,6 @@ from .session_service import SessionService
 @dataclass(frozen=True, slots=True)
 class SessionDashboard:
     session: Session
-    operation: Operation
     policy: ScopePolicy
     job_counts: dict[str, int]
     flagged_jobs: list[Job]
@@ -44,21 +41,16 @@ class SessionDashboard:
         return self.recent_artifacts
 
 
-OperationDashboard = SessionDashboard
-
-
 class DashboardService:
     def __init__(
         self,
         *,
         session_service: SessionService,
-        operation_service: OperationService,
         scope_policy_service: ScopePolicyService,
         session_record_locator: SessionRecordLocator,
         settings: Settings,
     ) -> None:
         self.session_service = session_service
-        self.operation_service = operation_service
         self.scope_policy_service = scope_policy_service
         self.session_record_locator = session_record_locator
         self.settings = settings
@@ -68,7 +60,6 @@ class DashboardService:
         settings = settings or get_settings()
         return cls(
             session_service=SessionService.from_settings(settings),
-            operation_service=OperationService.from_settings(settings),
             scope_policy_service=ScopePolicyService.from_settings(settings),
             session_record_locator=SessionRecordLocator.from_settings(settings),
             settings=settings,
@@ -94,11 +85,9 @@ class DashboardService:
         recent_findings = findings[:10]
         recent_artifacts = artifacts[:10]
         recent_events = events[:10]
-        operation = self._resolve_operation_for_session(session, policy)
 
         return SessionDashboard(
             session=session,
-            operation=operation,
             policy=policy,
             job_counts=job_counts,
             flagged_jobs=flagged_jobs,
@@ -113,11 +102,7 @@ class DashboardService:
 
     def _resolve_session(self, identifier: str | None) -> Session:
         if identifier:
-            session_id = resolve_session_identifier(
-                self.session_service,
-                identifier,
-                operation_repository=self.operation_service.operation_repository,
-            )
+            session_id = resolve_session_identifier(self.session_service, identifier)
             return self.session_service.require_session(session_id)
 
         sessions = self.session_service.list_sessions(mode=SessionMode.REDTEAM, limit=None)
@@ -145,33 +130,3 @@ class DashboardService:
             runtime_timestamps.append(events[0].created_at)
         timestamps = runtime_timestamps or session_timestamps
         return (1 if runtime_timestamps else 0, max(datetime.fromisoformat(timestamp) for timestamp in timestamps))
-
-    def _resolve_operation_for_session(self, session: Session, policy: ScopePolicy) -> Operation:
-        operation = self.operation_service.get_operation(session.id)
-        if operation is not None:
-            return operation
-        return Operation(
-            id=session.id,
-            public_id=session.public_id,
-            title=session.title,
-            objective=session.goal,
-            workspace=session.workspace,
-            scope_policy_id=policy.id,
-            status=_session_status_to_operation_status(session.status),
-            created_at=session.created_at,
-            updated_at=session.updated_at,
-            closed_at=session.closed_at,
-            last_error=session.last_error,
-        )
-
-
-def _session_status_to_operation_status(status: SessionStatus) -> OperationStatus:
-    mapping = {
-        SessionStatus.DRAFT: OperationStatus.DRAFT,
-        SessionStatus.ACTIVE: OperationStatus.RUNNING,
-        SessionStatus.PAUSED: OperationStatus.PAUSED,
-        SessionStatus.COMPLETED: OperationStatus.COMPLETED,
-        SessionStatus.FAILED: OperationStatus.FAILED,
-        SessionStatus.CANCELLED: OperationStatus.CANCELLED,
-    }
-    return mapping[status]

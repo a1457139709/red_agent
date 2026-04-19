@@ -20,6 +20,7 @@ def test_presenter_help_and_observation_render_clean_text():
 
     presenter.show_help()
     presenter.show_help("skill")
+    presenter.show_help("artifact")
     presenter.show_observation(
         "line1\nline2\nline3\nline4\nline5",
         truncate_lines=3,
@@ -38,9 +39,12 @@ def test_presenter_help_and_observation_render_clean_text():
     assert "Skill Commands" in outputs[1]
     assert "Shorthand Invocation" in outputs[1]
     assert "/skill-name <prompt>" in outputs[1]
-    assert "line1" in outputs[2]
-    assert "line3" in outputs[2]
-    assert "[truncated for display]" in outputs[2]
+    assert "Artifact Commands" in outputs[2]
+    assert "/artifact list <session_id> [limit]" in outputs[2]
+    assert "/evidence" not in outputs[2]
+    assert "line1" in outputs[3]
+    assert "line3" in outputs[3]
+    assert "[truncated for display]" in outputs[3]
 
 
 def test_presenter_clear_screen_is_silent_for_callback_presenter():

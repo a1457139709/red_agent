@@ -3,11 +3,13 @@ from app.dashboard_service import DashboardService
 from app.evidence_service import EvidenceService
 from app.finding_service import FindingService
 from app.job_service import JobService
-from app.operation_event_service import OperationEventService
 from app.operation_service import OperationService
+from app.session_service import SessionService
+from app.session_event_service import SessionEventService
 from models.job import JobStatus
 from models.operation import OperationStatus
-from models.operation_event import OperationEventLevel, OperationEventType
+from models.session_event import SessionEventLevel, SessionEventType
+import pytest
 
 
 def build_settings(tmp_path):
@@ -25,8 +27,9 @@ def test_dashboard_service_aggregates_counts_and_recent_items(tmp_path):
     job_service = JobService.from_settings(settings)
     finding_service = FindingService.from_settings(settings)
     evidence_service = EvidenceService.from_settings(settings)
-    event_service = OperationEventService.from_settings(settings)
+    event_service = SessionEventService.from_settings(settings)
     dashboard_service = DashboardService.from_settings(settings)
+    session_service = SessionService.from_settings(settings)
 
     operation = operation_service.create_operation(
         title="Recon",
@@ -67,17 +70,18 @@ def test_dashboard_service_aggregates_counts_and_recent_items(tmp_path):
     event_service.create_event(
         operation_identifier=operation.public_id,
         job_identifier=failed_job.public_id,
-        event_type=OperationEventType.ADMISSION_DENIED,
-        level=OperationEventLevel.ERROR,
+        event_type=SessionEventType.ADMISSION_DENIED,
+        level=SessionEventLevel.ERROR,
         tool_name="http_probe",
         tool_category="recon",
         target_ref="https://example.com",
         message="Denied.",
     )
 
-    dashboard = dashboard_service.build_dashboard(operation.public_id)
+    session = session_service.require_session(operation.id)
+    dashboard = dashboard_service.build_dashboard(session.public_id)
 
-    assert dashboard.operation.id == operation.id
+    assert dashboard.session.id == operation.id
     assert dashboard.job_counts["failed"] == 1
     assert dashboard.finding_counts["open"] == 1
     assert dashboard.evidence_count == 1
@@ -91,7 +95,7 @@ def test_dashboard_service_defaults_to_most_recent_runtime_activity(tmp_path):
     settings = build_settings(tmp_path)
     operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
-    event_service = OperationEventService.from_settings(settings)
+    event_service = SessionEventService.from_settings(settings)
     dashboard_service = DashboardService.from_settings(settings)
 
     newer_but_idle = operation_service.create_operation(
@@ -113,8 +117,8 @@ def test_dashboard_service_defaults_to_most_recent_runtime_activity(tmp_path):
     event_service.create_event(
         operation_identifier=active.public_id,
         job_identifier=active_job.public_id,
-        event_type=OperationEventType.EXECUTION_FAILED,
-        level=OperationEventLevel.ERROR,
+        event_type=SessionEventType.EXECUTION_FAILED,
+        level=SessionEventLevel.ERROR,
         tool_name="http_probe",
         tool_category="recon",
         target_ref="https://example.com",
@@ -132,4 +136,19 @@ def test_dashboard_service_defaults_to_most_recent_runtime_activity(tmp_path):
 
     dashboard = dashboard_service.build_dashboard()
 
-    assert dashboard.operation.id == active.id
+    assert dashboard.session.id == active.id
+
+
+def test_dashboard_service_rejects_operation_public_id_input(tmp_path):
+    settings = build_settings(tmp_path)
+    operation_service = OperationService.from_settings(settings)
+    dashboard_service = DashboardService.from_settings(settings)
+
+    operation = operation_service.create_operation(
+        title="Recon",
+        objective="Inspect dashboard",
+        status=OperationStatus.READY,
+    )
+
+    with pytest.raises(ValueError, match=f"Session not found: {operation.public_id}"):
+        dashboard_service.build_dashboard(operation.public_id)

@@ -7,6 +7,7 @@ from app.finding_service import FindingService
 from app.job_service import JobService
 from app.memory_service import MemoryService
 from app.operation_service import OperationService
+from app.scope_policy_service import ScopePolicyService
 from models.finding import FindingStatus
 from models.job import JobStatus
 from models.planner import PlannerProposalKind, PlannerSource
@@ -36,6 +37,7 @@ def build_runtime(tmp_path, *, model_factory):
         settings,
         PlannerRuntime(
             operation_service=OperationService.from_settings(settings),
+            scope_policy_service=ScopePolicyService.from_settings(settings),
             job_service=JobService.from_settings(settings),
             evidence_service=EvidenceService.from_settings(settings),
             finding_service=FindingService.from_settings(settings),

@@ -5,6 +5,7 @@ from app.job_service import JobService
 from app.memory_service import MemoryService
 from app.operation_service import OperationService
 from app.planner_service import PlannerService
+from app.scope_policy_service import ScopePolicyService
 from models.job import JobStatus
 from models.planner import PlannerMemoryWritebackStatus
 from orchestration.planner_runtime import PlannerRuntime
@@ -44,6 +45,7 @@ def build_planner_service(settings):
     memory_service = MemoryService.from_settings(settings)
     runtime = PlannerRuntime(
         operation_service=operation_service,
+        scope_policy_service=ScopePolicyService.from_settings(settings),
         job_service=job_service,
         evidence_service=EvidenceService.from_settings(settings),
         finding_service=FindingService.from_settings(settings),
@@ -55,6 +57,7 @@ def build_planner_service(settings):
         repository=PlannerRepository(storage),
         runtime=runtime,
         operation_service=operation_service,
+        scope_policy_service=ScopePolicyService.from_settings(settings),
         job_service=job_service,
         memory_service=memory_service,
         settings=settings,

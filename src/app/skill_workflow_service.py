@@ -17,6 +17,7 @@ from tools.executor import SecurityToolExecutionError, SecurityToolExecutor
 
 from .job_service import JobService
 from .operation_service import OperationService
+from .scope_policy_service import ScopePolicyService
 
 
 DEFAULT_HTTP_PATHS = ("/", "/robots.txt", "/.well-known/security.txt")
@@ -73,11 +74,13 @@ class SkillWorkflowService:
         *,
         job_service: JobService,
         operation_service: OperationService,
+        scope_policy_service: ScopePolicyService,
         security_tool_executor: SecurityToolExecutor,
         scope_validator: ScopeValidator,
     ) -> None:
         self.job_service = job_service
         self.operation_service = operation_service
+        self.scope_policy_service = scope_policy_service
         self.security_tool_executor = security_tool_executor
         self.scope_validator = scope_validator
 
@@ -87,6 +90,7 @@ class SkillWorkflowService:
         return cls(
             job_service=JobService.from_settings(settings),
             operation_service=OperationService.from_settings(settings),
+            scope_policy_service=ScopePolicyService.from_settings(settings),
             security_tool_executor=SecurityToolExecutor(build_security_tool_registry()),
             scope_validator=ScopeValidator(),
         )
@@ -106,7 +110,7 @@ class SkillWorkflowService:
         if not normalized_target:
             raise ValueError("Primary target is required.")
         operation = self.operation_service.require_operation(operation_identifier)
-        policy = self.operation_service.require_scope_policy(operation.id)
+        policy = self.scope_policy_service.require_scope_policy_for_session(operation.id)
         templates = self._build_templates(
             workflow_profile=workflow_profile,
             primary_target=normalized_target,

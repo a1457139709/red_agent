@@ -1,11 +1,11 @@
 from agent.settings import Settings
 from app.job_service import JobService
-from app.operation_event_service import OperationEventService
 from app.operation_service import OperationService
 from app.scoped_execution_service import ScopedExecutionService
+from app.session_event_service import SessionEventService
 from models.job import JobStatus
 from models.operation import OperationStatus
-from models.operation_event import OperationEventLevel, OperationEventType
+from models.session_event import SessionEventLevel, SessionEventType
 from orchestration.scope_validator import AdmissionRequest
 
 
@@ -33,7 +33,7 @@ def test_scoped_execution_service_blocks_out_of_scope_requests_without_mutating_
     settings = build_settings(tmp_path)
     operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
-    event_service = OperationEventService.from_settings(settings)
+    event_service = SessionEventService.from_settings(settings)
     execution_service = ScopedExecutionService.from_settings(settings)
 
     operation = operation_service.create_operation(
@@ -63,8 +63,8 @@ def test_scoped_execution_service_blocks_out_of_scope_requests_without_mutating_
     assert result.status == "blocked"
     assert refreshed.status == JobStatus.PENDING
     assert [event.event_type for event in events] == [
-        OperationEventType.ADMISSION_DENIED,
-        OperationEventType.ADMISSION_REQUESTED,
+        SessionEventType.ADMISSION_DENIED,
+        SessionEventType.ADMISSION_REQUESTED,
     ]
 
 
@@ -72,7 +72,7 @@ def test_scoped_execution_service_records_full_confirmation_and_success_flow(tmp
     settings = build_settings(tmp_path)
     operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
-    event_service = OperationEventService.from_settings(settings)
+    event_service = SessionEventService.from_settings(settings)
     execution_service = ScopedExecutionService.from_settings(settings)
 
     operation = operation_service.create_operation(
@@ -105,12 +105,12 @@ def test_scoped_execution_service_records_full_confirmation_and_success_flow(tmp
     assert result.result == {"target": "https://example.com"}
     assert refreshed.status == JobStatus.PENDING
     assert [event.event_type for event in events] == [
-        OperationEventType.EXECUTION_SUCCEEDED,
-        OperationEventType.EXECUTION_STARTED,
-        OperationEventType.ADMISSION_REQUESTED,
-        OperationEventType.CONFIRMATION_APPROVED,
-        OperationEventType.CONFIRMATION_REQUIRED,
-        OperationEventType.ADMISSION_REQUESTED,
+        SessionEventType.EXECUTION_SUCCEEDED,
+        SessionEventType.EXECUTION_STARTED,
+        SessionEventType.ADMISSION_REQUESTED,
+        SessionEventType.CONFIRMATION_APPROVED,
+        SessionEventType.CONFIRMATION_REQUIRED,
+        SessionEventType.ADMISSION_REQUESTED,
     ]
     assert events[2].payload["admission_stage"] == "post_confirmation_recheck"
 
@@ -119,7 +119,7 @@ def test_scoped_execution_service_records_execution_failure_without_mutating_job
     settings = build_settings(tmp_path)
     operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
-    event_service = OperationEventService.from_settings(settings)
+    event_service = SessionEventService.from_settings(settings)
     execution_service = ScopedExecutionService.from_settings(settings)
 
     operation = operation_service.create_operation(
@@ -148,15 +148,15 @@ def test_scoped_execution_service_records_execution_failure_without_mutating_job
 
     assert result.status == "failed"
     assert refreshed.status == JobStatus.PENDING
-    assert events[0].event_type == OperationEventType.EXECUTION_FAILED
-    assert events[1].event_type == OperationEventType.EXECUTION_STARTED
+    assert events[0].event_type == SessionEventType.EXECUTION_FAILED
+    assert events[1].event_type == SessionEventType.EXECUTION_STARTED
 
 
 def test_scoped_execution_service_enforces_rate_limit_from_recent_execution_events(tmp_path):
     settings = build_settings(tmp_path)
     operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
-    event_service = OperationEventService.from_settings(settings)
+    event_service = SessionEventService.from_settings(settings)
     execution_service = ScopedExecutionService.from_settings(settings)
 
     operation = operation_service.create_operation(
@@ -173,8 +173,8 @@ def test_scoped_execution_service_enforces_rate_limit_from_recent_execution_even
     )
     event_service.create_event(
         operation_identifier=operation.public_id,
-        event_type=OperationEventType.EXECUTION_STARTED,
-        level=OperationEventLevel.INFO,
+        event_type=SessionEventType.EXECUTION_STARTED,
+        level=SessionEventLevel.INFO,
         tool_name="http_probe",
         tool_category="recon",
         target_ref="https://example.com",
@@ -195,14 +195,14 @@ def test_scoped_execution_service_enforces_rate_limit_from_recent_execution_even
     assert result.status == "blocked"
     assert result.decision.reason_code == "rate_limit_exceeded"
     assert refreshed.status == JobStatus.PENDING
-    assert events[0].event_type == OperationEventType.ADMISSION_DENIED
+    assert events[0].event_type == SessionEventType.ADMISSION_DENIED
 
 
 def test_scoped_execution_service_rechecks_rate_limit_after_confirmation(tmp_path):
     settings = build_settings(tmp_path)
     operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
-    event_service = OperationEventService.from_settings(settings)
+    event_service = SessionEventService.from_settings(settings)
     execution_service = ScopedExecutionService.from_settings(settings)
 
     operation = operation_service.create_operation(
@@ -222,8 +222,8 @@ def test_scoped_execution_service_rechecks_rate_limit_after_confirmation(tmp_pat
     def confirm(_prompt):
         event_service.create_event(
             operation_identifier=operation.public_id,
-            event_type=OperationEventType.EXECUTION_STARTED,
-            level=OperationEventLevel.INFO,
+            event_type=SessionEventType.EXECUTION_STARTED,
+            level=SessionEventLevel.INFO,
             tool_name="http_probe",
             tool_category="recon",
             target_ref="https://example.com",
@@ -247,12 +247,12 @@ def test_scoped_execution_service_rechecks_rate_limit_after_confirmation(tmp_pat
     assert result.decision.reason_code == "rate_limit_exceeded"
     assert refreshed.status == JobStatus.PENDING
     assert [event.event_type for event in events] == [
-        OperationEventType.ADMISSION_DENIED,
-        OperationEventType.ADMISSION_REQUESTED,
-        OperationEventType.CONFIRMATION_APPROVED,
-        OperationEventType.EXECUTION_STARTED,
-        OperationEventType.CONFIRMATION_REQUIRED,
-        OperationEventType.ADMISSION_REQUESTED,
+        SessionEventType.ADMISSION_DENIED,
+        SessionEventType.ADMISSION_REQUESTED,
+        SessionEventType.CONFIRMATION_APPROVED,
+        SessionEventType.EXECUTION_STARTED,
+        SessionEventType.CONFIRMATION_REQUIRED,
+        SessionEventType.ADMISSION_REQUESTED,
     ]
     assert events[1].payload["admission_stage"] == "post_confirmation_recheck"
 
@@ -304,7 +304,7 @@ def test_scoped_execution_service_blocks_non_runnable_operation_statuses(tmp_pat
     settings = build_settings(tmp_path)
     operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
-    event_service = OperationEventService.from_settings(settings)
+    event_service = SessionEventService.from_settings(settings)
     execution_service = ScopedExecutionService.from_settings(settings)
 
     operation = operation_service.create_operation(
@@ -334,6 +334,6 @@ def test_scoped_execution_service_blocks_non_runnable_operation_statuses(tmp_pat
     assert result.decision.reason_code == "operation_not_runnable"
     assert refreshed.status == JobStatus.PENDING
     assert [event.event_type for event in events] == [
-        OperationEventType.ADMISSION_DENIED,
-        OperationEventType.ADMISSION_REQUESTED,
+        SessionEventType.ADMISSION_DENIED,
+        SessionEventType.ADMISSION_REQUESTED,
     ]

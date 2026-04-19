@@ -1,3 +1,5 @@
+import pytest
+
 from agent.settings import Settings
 from app.job_service import JobService
 from app.operation_event_service import OperationEventService
@@ -27,28 +29,36 @@ def test_operation_event_service_persists_lists_and_counts_events(tmp_path):
         target_ref="https://example.com",
     )
 
-    event_service.create_event(
-        operation_identifier=operation.public_id,
-        job_identifier=job.public_id,
-        event_type=OperationEventType.ADMISSION_REQUESTED,
-        level=OperationEventLevel.INFO,
-        tool_name="http_probe",
-        tool_category="recon",
-        target_ref="https://example.com",
-        message="Requested",
-        created_at="2026-04-03T08:00:00+00:00",
-    )
-    event_service.create_event(
-        operation_identifier=operation.public_id,
-        job_identifier=job.public_id,
-        event_type=OperationEventType.EXECUTION_STARTED,
-        level=OperationEventLevel.INFO,
-        tool_name="http_probe",
-        tool_category="recon",
-        target_ref="https://example.com",
-        message="Started",
-        created_at="2026-04-03T08:00:10+00:00",
-    )
+    with pytest.warns(
+        DeprecationWarning,
+        match="OperationEventService.create_event\\(\\) is deprecated as a primary write path",
+    ):
+        event_service.create_event(
+            operation_identifier=operation.public_id,
+            job_identifier=job.public_id,
+            event_type=OperationEventType.ADMISSION_REQUESTED,
+            level=OperationEventLevel.INFO,
+            tool_name="http_probe",
+            tool_category="recon",
+            target_ref="https://example.com",
+            message="Requested",
+            created_at="2026-04-03T08:00:00+00:00",
+        )
+    with pytest.warns(
+        DeprecationWarning,
+        match="OperationEventService.create_event\\(\\) is deprecated as a primary write path",
+    ):
+        event_service.create_event(
+            operation_identifier=operation.public_id,
+            job_identifier=job.public_id,
+            event_type=OperationEventType.EXECUTION_STARTED,
+            level=OperationEventLevel.INFO,
+            tool_name="http_probe",
+            tool_category="recon",
+            target_ref="https://example.com",
+            message="Started",
+            created_at="2026-04-03T08:00:10+00:00",
+        )
 
     events = event_service.list_events(operation.public_id)
     recent_count = event_service.count_events_since(

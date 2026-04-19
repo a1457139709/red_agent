@@ -10,6 +10,7 @@ from app.finding_service import FindingService
 from app.job_service import JobService
 from app.operation_service import OperationService
 from app.report_service import ReportService
+from app.scope_policy_service import ScopePolicyService
 from app.session_service import SessionService
 from models.run import utc_now_iso
 from storage.session_paths import resolve_session_relative_path
@@ -47,6 +48,7 @@ class EvidenceExportService:
         self,
         *,
         operation_service: OperationService,
+        scope_policy_service: ScopePolicyService,
         session_service: SessionService,
         job_service: JobService,
         artifact_service: ArtifactService,
@@ -55,6 +57,7 @@ class EvidenceExportService:
         settings: Settings,
     ) -> None:
         self.operation_service = operation_service
+        self.scope_policy_service = scope_policy_service
         self.session_service = session_service
         self.job_service = job_service
         self.artifact_service = artifact_service
@@ -67,6 +70,7 @@ class EvidenceExportService:
         settings = settings or get_settings()
         return cls(
             operation_service=OperationService.from_settings(settings),
+            scope_policy_service=ScopePolicyService.from_settings(settings),
             session_service=SessionService.from_settings(settings),
             job_service=JobService.from_settings(settings),
             artifact_service=ArtifactService.from_settings(settings),
@@ -82,7 +86,7 @@ class EvidenceExportService:
     ) -> OperationExportResult:
         operation = self.operation_service.require_operation(operation_identifier)
         session = self.session_service.require_session(operation.id)
-        policy = self.operation_service.require_scope_policy(operation.id)
+        policy = self.scope_policy_service.require_scope_policy_for_session(operation.id)
         jobs = self.job_service.list_jobs(operation.id, limit=None)
         artifacts = self.artifact_service.list_artifacts(operation.id, limit=None)
         findings = self.finding_service.list_findings(operation.id, limit=None)

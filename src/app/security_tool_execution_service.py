@@ -10,6 +10,7 @@ from tools.executor import SecurityToolExecutionError, SecurityToolExecutor
 from .evidence_pipeline_service import EvidencePipelineService
 from .job_service import JobService
 from .operation_service import OperationService
+from .scope_policy_service import ScopePolicyService
 from .scoped_execution_service import ConfirmCallback, ScopedExecutionResult, ScopedExecutionService
 
 
@@ -19,6 +20,7 @@ class SecurityToolExecutionService:
         *,
         job_service: JobService,
         operation_service: OperationService,
+        scope_policy_service: ScopePolicyService,
         evidence_pipeline_service: EvidencePipelineService,
         scoped_execution_service: ScopedExecutionService,
         security_tool_executor: SecurityToolExecutor,
@@ -26,6 +28,7 @@ class SecurityToolExecutionService:
     ) -> None:
         self.job_service = job_service
         self.operation_service = operation_service
+        self.scope_policy_service = scope_policy_service
         self.evidence_pipeline_service = evidence_pipeline_service
         self.scoped_execution_service = scoped_execution_service
         self.security_tool_executor = security_tool_executor
@@ -37,6 +40,7 @@ class SecurityToolExecutionService:
         return cls(
             job_service=JobService.from_settings(settings),
             operation_service=OperationService.from_settings(settings),
+            scope_policy_service=ScopePolicyService.from_settings(settings),
             evidence_pipeline_service=EvidencePipelineService.from_settings(settings),
             scoped_execution_service=ScopedExecutionService.from_settings(settings),
             security_tool_executor=SecurityToolExecutor(build_security_tool_registry()),
@@ -52,7 +56,7 @@ class SecurityToolExecutionService:
     ) -> ScopedExecutionResult:
         job = self.job_service.require_job(job_identifier)
         operation = self.operation_service.require_operation(job.operation_id)
-        policy = self.operation_service.require_scope_policy(operation.id)
+        policy = self.scope_policy_service.require_scope_policy_for_session(operation.id)
         try:
             tool = self.security_tool_executor.get_tool(job.job_type)
             self.job_service.write_log(

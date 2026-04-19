@@ -13,7 +13,7 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
-from app.dashboard_service import OperationDashboard
+from app.dashboard_service import SessionDashboard
 from models.artifact import Artifact
 from models.checkpoint import CheckpointSummary
 from models.evidence import Evidence
@@ -264,11 +264,7 @@ class CliPresenter:
                 ("/artifact list <session_id> [limit]", "List artifacts for a session"),
                 ("/artifact show <artifact_id>", "Show artifact details and linked findings"),
             ], border_style="green"),
-            Text("Deprecated alias: /evidence routes to the same session-owned artifact records.", style="dim"),
         )
-
-    def _help_evidence(self) -> Group:
-        return self._help_artifact()
 
     def _help_report(self) -> Group:
         return Group(
@@ -357,9 +353,6 @@ class CliPresenter:
         elif topic == "artifact":
             body = self._help_artifact()
             title = "Help: artifact"
-        elif topic == "evidence":
-            body = self._help_evidence()
-            title = "Help: evidence"
         elif topic == "report":
             body = self._help_report()
             title = "Help: report"
@@ -741,7 +734,7 @@ class CliPresenter:
             )
         )
 
-    def show_dashboard(self, dashboard: OperationDashboard) -> None:
+    def show_dashboard(self, dashboard: SessionDashboard) -> None:
         summary = Panel(
             self._detail_table([
                 ("Session ID", dashboard.session.public_id),

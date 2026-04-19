@@ -14,6 +14,7 @@ from app.finding_service import FindingService
 from app.job_service import JobService
 from app.memory_service import MemoryService
 from app.operation_service import OperationService
+from app.scope_policy_service import ScopePolicyService
 from langchain_core.messages import HumanMessage, SystemMessage
 from models.artifact import Artifact
 from models.finding import Finding, FindingStatus
@@ -205,6 +206,7 @@ class PlannerRuntime:
         self,
         *,
         operation_service: OperationService,
+        scope_policy_service: ScopePolicyService,
         job_service: JobService,
         finding_service: FindingService,
         memory_service: MemoryService,
@@ -216,6 +218,7 @@ class PlannerRuntime:
         model_factory: Callable[[Settings], Any] | None = None,
     ) -> None:
         self.operation_service = operation_service
+        self.scope_policy_service = scope_policy_service
         self.job_service = job_service
         resolved_artifact_service = artifact_service
         if resolved_artifact_service is None and evidence_service is not None:
@@ -240,6 +243,7 @@ class PlannerRuntime:
         settings = settings or get_settings()
         return cls(
             operation_service=OperationService.from_settings(settings),
+            scope_policy_service=ScopePolicyService.from_settings(settings),
             job_service=JobService.from_settings(settings),
             artifact_service=ArtifactService.from_settings(settings),
             finding_service=FindingService.from_settings(settings),
@@ -249,7 +253,7 @@ class PlannerRuntime:
 
     def build_context(self, session_identifier: str) -> PlannerContext:
         operation = self.operation_service.require_operation(session_identifier)
-        policy = self.operation_service.require_scope_policy(operation.id)
+        policy = self.scope_policy_service.require_scope_policy_for_session(operation.id)
         jobs = self.job_service.list_jobs(operation.id, limit=50)
         artifact_items = self.artifact_service.list_artifacts(operation.id, limit=20)
         findings = self.finding_service.list_findings(operation.id, limit=20)

@@ -165,12 +165,24 @@ class OperationService:
         return self.operation_repository.update(operation)
 
     def get_scope_policy(self, operation_identifier: str) -> ScopePolicy | None:
+        warnings.warn(
+            "OperationService.get_scope_policy() is deprecated as a scope-policy access path. "
+            "Use ScopePolicyService.get_scope_policy_for_session() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         operation = self.get_operation(operation_identifier)
         if operation is None:
             return None
         return self.scope_policy_repository.get_by_session_id(operation.id)
 
     def require_scope_policy(self, operation_identifier: str) -> ScopePolicy:
+        warnings.warn(
+            "OperationService.require_scope_policy() is deprecated as a scope-policy access path. "
+            "Use ScopePolicyService.require_scope_policy_for_session() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         policy = self.get_scope_policy(operation_identifier)
         if policy is None:
             raise ValueError(f"Scope policy not found for operation: {operation_identifier}")

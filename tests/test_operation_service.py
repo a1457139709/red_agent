@@ -34,7 +34,8 @@ def test_operation_service_creates_operation_and_scope_policy_atomically(tmp_pat
         )
 
     loaded = service.get_operation(operation.public_id)
-    policy = service.require_scope_policy(operation.public_id)
+    with pytest.warns(DeprecationWarning, match="deprecated as a scope-policy access path"):
+        policy = service.require_scope_policy(operation.public_id)
 
     assert loaded is not None
     assert loaded.id == operation.id

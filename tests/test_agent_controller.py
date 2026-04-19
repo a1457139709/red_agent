@@ -426,7 +426,7 @@ def test_build_prompt_prefers_session_over_legacy_task_binding():
     assert build_prompt(shell_state) == "\nnormal:S0001 > "
 
 
-def test_run_interactive_shell_rejects_removed_operation_and_job_commands(
+def test_run_interactive_shell_rejects_removed_operation_job_and_evidence_commands(
     monkeypatch,
     tmp_path,
 ):
@@ -439,7 +439,7 @@ def test_run_interactive_shell_rejects_removed_operation_and_job_commands(
     execution_service = FakeExecutionService()
     tool_executor = ToolExecutor(build_tool_registry())
     errors: list[str] = []
-    responses = iter(["/operation list", "/job list S0001", "/quit"])
+    responses = iter(["/operation list", "/job list S0001", "/evidence list S0001", "/quit"])
 
     def fake_input(_prompt):
         return next(responses)
@@ -468,3 +468,4 @@ def test_run_interactive_shell_rejects_removed_operation_and_job_commands(
     assert execution_service.calls == []
     assert any("Unknown command: /operation list" in message for message in errors)
     assert any("Unknown command: /job list S0001" in message for message in errors)
+    assert any("Unknown command: /evidence list S0001" in message for message in errors)

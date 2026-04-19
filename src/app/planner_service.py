@@ -6,6 +6,7 @@ from agent.settings import Settings, get_settings
 from app.job_service import JobService
 from app.memory_service import MemoryService
 from app.operation_service import OperationService
+from app.scope_policy_service import ScopePolicyService
 from app.session_service import SessionService
 from models.job import Job
 from models.planner import (
@@ -43,6 +44,7 @@ class PlannerService:
         repository: PlannerRepository,
         runtime: PlannerRuntime,
         operation_service: OperationService,
+        scope_policy_service: ScopePolicyService,
         job_service: JobService,
         memory_service: MemoryService,
         settings: Settings,
@@ -51,6 +53,7 @@ class PlannerService:
         self.repository = repository
         self.runtime = runtime
         self.operation_service = operation_service
+        self.scope_policy_service = scope_policy_service
         self.session_service = session_service or SessionService.from_settings(settings)
         self.job_service = job_service
         self.memory_service = memory_service
@@ -66,6 +69,7 @@ class PlannerService:
             repository=PlannerRepository(storage),
             runtime=PlannerRuntime.from_settings(settings),
             operation_service=operation_service,
+            scope_policy_service=ScopePolicyService.from_settings(settings),
             session_service=SessionService.from_settings(settings),
             job_service=job_service,
             memory_service=MemoryService.from_settings(settings),
@@ -106,7 +110,7 @@ class PlannerService:
     ) -> PlannerApplyResult:
         bundle = self.get_plan_bundle(identifier)
         operation = self.operation_service.require_operation(bundle.plan.session_id)
-        policy = self.operation_service.require_scope_policy(operation.id)
+        policy = self.scope_policy_service.require_scope_policy_for_session(operation.id)
         selectable = [
             proposal
             for proposal in bundle.proposals

@@ -27,4 +27,5 @@ def test_phase6_schema_guard_requires_clean_runtime_reset(tmp_path):
     with pytest.raises(ValueError) as excinfo:
         ArtifactRepository(SQLiteStorage(settings.sqlite_path))
 
+    assert "test-only and can be recreated" in str(excinfo.value)
     assert "Delete `.red-code/agent.db`" in str(excinfo.value)
