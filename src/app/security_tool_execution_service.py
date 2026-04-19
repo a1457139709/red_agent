@@ -91,7 +91,7 @@ class SecurityToolExecutionService:
         if result.status == "succeeded" and isinstance(result.result, SecurityToolResult):
             try:
                 persisted = self.evidence_pipeline_service.persist_security_result(
-                    operation=operation,
+                    session_id=job.session_id,
                     job=job,
                     tool_name=tool.name,
                     result=result.result,

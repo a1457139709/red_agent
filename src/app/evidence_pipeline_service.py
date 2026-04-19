@@ -9,7 +9,6 @@ from agent.settings import Settings, get_settings
 from models.artifact import Artifact
 from models.finding import Finding
 from models.job import Job
-from models.operation import Operation
 from models.run import utc_now_iso
 from storage.session_paths import artifact_payload_relative_path, resolve_session_relative_path
 from tools.contracts import EvidenceCandidate, SecurityToolResult
@@ -45,14 +44,14 @@ class ArtifactPayloadManager:
     def write_artifact(
         self,
         *,
-        operation: Operation,
+        session_id: str,
         job: Job | None,
         tool_name: str,
         candidate: EvidenceCandidate,
         ordinal: int,
         captured_at: str,
     ) -> ArtifactPayloadFile:
-        session = self.session_service.require_session(operation.id)
+        session = self.session_service.require_session(session_id)
         job_label = job.public_id if job is not None and job.public_id else "manual"
         relative_path = artifact_payload_relative_path(
             source_job_label=job_label,
@@ -88,7 +87,7 @@ class ArtifactPayloadManager:
     def write_payload(
         self,
         *,
-        operation: Operation,
+        session_id: str,
         job: Job | None,
         tool_name: str,
         candidate: EvidenceCandidate,
@@ -96,7 +95,7 @@ class ArtifactPayloadManager:
         captured_at: str,
     ) -> ArtifactPayloadFile:
         return self.write_artifact(
-            operation=operation,
+            session_id=session_id,
             job=job,
             tool_name=tool_name,
             candidate=candidate,
@@ -133,7 +132,7 @@ class EvidencePipelineService:
     def persist_security_result(
         self,
         *,
-        operation: Operation,
+        session_id: str,
         job: Job,
         tool_name: str,
         result: SecurityToolResult,
@@ -142,7 +141,7 @@ class EvidencePipelineService:
         for index, candidate in enumerate(result.evidence_candidates, start=1):
             captured_at = utc_now_iso()
             artifact_file = self.artifact_manager.write_artifact(
-                operation=operation,
+                session_id=session_id,
                 job=job,
                 tool_name=tool_name,
                 candidate=candidate,
@@ -151,7 +150,7 @@ class EvidencePipelineService:
             )
             artifact_records.append(
                 self.artifact_service.create_artifact(
-                    session_identifier=operation.id,
+                    session_identifier=session_id,
                     source_job_identifier=job.id,
                     artifact_type=candidate.evidence_type,
                     target_ref=candidate.target_ref,
@@ -169,7 +168,7 @@ class EvidencePipelineService:
         artifact_identifiers = [record.id for record in artifact_records]
         for candidate in result.finding_candidates:
             finding = self.finding_service.create_finding(
-                session_identifier=operation.id,
+                session_identifier=session_id,
                 source_job_identifier=job.id,
                 finding_type=candidate.finding_type,
                 title=candidate.title,

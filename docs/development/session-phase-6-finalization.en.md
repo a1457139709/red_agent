@@ -13,8 +13,8 @@ This document freezes:
 - the session-owned metadata and blob split
 - the `artifact` and `report` vocabulary as target terminology
 - the `SessionEvent` replacement for operation-scoped event storage
-- the physical migration boundary for `task` and `operation`
-- the migration strategy for legacy task/runtime and operation/runtime data
+- the physical reset boundary for `task` and `operation`
+- the clean-reset strategy for legacy local task/runtime and operation/runtime data
 - the rejection of unnecessary hybrid storage and dual-write designs
 
 It should be read together with:
@@ -35,7 +35,7 @@ This means:
 - the session-owned storage shape is settled
 - the physical merge boundary for `task` and `operation` is settled
 - the artifact/report terminology direction is settled
-- the migration direction from legacy storage is settled
+- the reset direction from legacy local storage is settled
 - coding can begin without reopening the storage ownership model
 
 ## Replacement Position of Phase 6
@@ -177,7 +177,7 @@ Final decision:
 
 `Evidence` becomes:
 
-- a legacy migration term
+- a legacy compatibility term
 - not the target architecture vocabulary
 
 Minimum `Artifact` shape:
@@ -356,10 +356,10 @@ Legacy names:
 - `evidence`
 - `export`
 
-Allowed during migration:
+Allowed during reset:
 
 - read-only adapters
-- migration helpers
+- narrow repository-local repair helpers for current Phase 6 rows
 - compatibility test fixtures while the new services are added
 
 Not allowed:
@@ -368,21 +368,21 @@ Not allowed:
 - continuing `EvidenceExportService` as the target report generation path
 - documenting `evidence/export` as the target Phase 6 model
 
-## 12. Migration Strategy
+## 12. Reset Strategy
 
 Final decision:
 
-- Phase 6 uses **new-table migration**, not in-place table mutation and not long-lived dual-write
+- Phase 6 uses a **clean reset** for incompatible local legacy runtime databases, not broad cross-table migration and not long-lived dual-write
 
-Required migration direction:
+Required implementation direction:
 
 1. create the new session-owned tables
-2. migrate legacy rows into the new tables
-3. switch primary runtime writes to the new tables
-4. demote legacy services to read-only or migration-only
-5. delete legacy write paths once the primary runtime no longer depends on them
+2. switch primary runtime writes to the new tables
+3. reject incompatible legacy local databases with explicit reset instructions
+4. keep only narrow repair helpers for current Phase 6 rows when a full reset is not needed
+5. demote legacy services to read-only or remove them from primary flows
 
-Migration sources:
+Reset-triggering legacy sources may include:
 
 - `tasks`
 - `runs`
@@ -399,39 +399,40 @@ Not allowed:
 
 - keeping permanent dual-write between legacy and target tables
 - extending old task/operation tables as the long-term Phase 6 solution
+- requiring a general-purpose legacy-to-session migration utility for test-only local databases
 
-## 13. Task-to-Session Migration Rule
-
-Final decision:
-
-- every legacy task-owned runtime record migrates under a session
-
-Rules:
-
-- if a legacy task already references `session_id`, that session is reused
-- if a legacy task has no session, create a synthetic `normal` session for migration
-- migrated task runs, task logs, and checkpoints are re-owned by that session
-
-Status mapping direction:
-
-- task lifecycle must be mapped into the existing Phase 1 `SessionStatus` set
-- migration may preserve original task-specific status text in metadata where needed
-
-## 14. Operation-to-Session Migration Rule
+## 13. Legacy Task Data Rule
 
 Final decision:
 
-- every legacy operation-owned runtime record migrates under a persistent red-team session
+- legacy task-owned runtime rows do not need to be preserved for local test databases
 
 Rules:
 
-- each legacy operation becomes or maps to one `redteam + persistent` session
-- jobs, events, memory entries, artifacts, findings, and report-related outputs migrate under that session
-- scope-policy ownership must be re-keyed to the migrated session
+- if incompatible legacy task/runtime rows are present, startup may require deleting `.red-code/agent.db`
+- no synthetic session creation is required solely to preserve legacy task-owned test data
+- targeted repair helpers remain allowed only for current Phase 6 rows already stored under the new model
+
+Operator guidance:
+
+- reset failures should explain that the local database is test-only and can be recreated
+- any required status mapping applies only to current session-owned rows, not to retained legacy task rows
+
+## 14. Legacy Operation Data Rule
+
+Final decision:
+
+- legacy operation-owned runtime rows do not need to be preserved for local test databases
+
+Rules:
+
+- if incompatible legacy operation/runtime rows are present, startup may require deleting `.red-code/agent.db`
+- primary runtime ownership remains `session_id`; no fallback write path should continue under `operation_id`
+- narrow repair helpers may still normalize already-session-owned rows, for example checkpoint blob paths or artifact public IDs
 
 Preservation rule:
 
-- public IDs, timestamps, and intra-record links must remain traceable after migration
+- public IDs, timestamps, and intra-record links must remain traceable within the current session-owned tables
 
 ## 15. Persistence Contract
 
@@ -662,7 +663,7 @@ Legacy files to freeze or demote:
 - `src/app/operation_service.py`
 - `src/app/evidence_service.py`
 - `src/app/operation_event_service.py`
-- legacy task/operation repositories once migration is complete
+- legacy task/operation repositories once the reset boundary is complete
 
 ## Final Implementation Order
 
@@ -674,10 +675,10 @@ Phase 6 coding order is fixed as:
 4. add artifact and report services
 5. rewrite checkpoint, run, job, memory, finding, and event services to use `session_id`
 6. add session record locator
-7. implement legacy-to-session migration utilities
+7. add clean-reset guardrails and targeted repair helpers
 8. rewire artifact pipeline and report generation to session-owned paths
 9. switch primary runtime reads and writes to the new session-owned services
-10. demote legacy task/operation/evidence services to read-only or migration-only
+10. demote legacy task/operation/evidence services to read-only or remove them from primary flows
 
 Do not invert this order unless a concrete implementation blocker is discovered.
 
@@ -690,7 +691,7 @@ Recommended new test files:
 - `tests/test_report_repository.py`
 - `tests/test_report_service.py`
 - `tests/test_session_record_locator.py`
-- `tests/test_session_storage_migration.py`
+- `tests/test_schema_guard_phase6.py`
 - `tests/test_session_checkpoint_repository.py`
 - `tests/test_session_run_repository.py`
 - `tests/test_session_job_repository.py`
@@ -709,12 +710,11 @@ Required test areas:
 - runs, checkpoints, jobs, memory entries, artifacts, findings, reports, and events can all be listed by `session_id`
 - primary runtime services no longer require `task_id` or `operation_id`
 
-### Migration
+### Reset and Repair
 
-- task/runtime data migrates into session-owned records
-- operation/runtime data migrates into session-owned records
-- links remain valid after migration
-- public IDs and timestamps stay traceable
+- incompatible legacy local databases are rejected with explicit reset instructions
+- targeted repair helpers for current Phase 6 rows remain safe and idempotent
+- public IDs and timestamps stay traceable inside the current session-owned tables
 
 ### Artifact and Report Terminology
 
@@ -725,14 +725,14 @@ Required test areas:
 
 - primary runtime writes do not go through `TaskService`
 - primary runtime writes do not go through `OperationService`
-- remaining legacy services are read-only or migration-only
+- remaining legacy services are read-only, deprecated, or removed
 
 ## Final Legacy Boundary
 
-Allowed during migration:
+Allowed during reset:
 
 - legacy read-only inspection
-- one-off migration helpers
+- one-off reset guidance and current-row repair helpers
 - compatibility tests while target services are added
 - advanced/debug commands that inspect old runtime rows temporarily
 
@@ -748,16 +748,16 @@ Not allowed:
 Phase 6 is now considered fully converged if the team accepts the following locked decisions:
 
 - persistent red-team results are split into `memory`, `artifacts`, `findings`, and `reports`
-- session filesystem storage lives under `.red-code/sessions/<session_public_id>/`
+- session filesystem storage lives under `.red-code/sessions/<session_id>/`
 - SQLite remains the metadata/index layer and filesystem remains the blob/export layer
 - `artifact` is the canonical Phase 6 result term
 - `report` is the canonical Phase 6 human-output term
 - `SessionEvent` replaces `OperationEvent` as the target event model
 - checkpoints, runs, jobs, memory entries, findings, and events are all keyed by `session_id`
-- Phase 6 uses new-table migration rather than long-lived in-place mutation or dual-write
-- legacy task/runtime and operation/runtime data are migrated into session-owned storage
+- Phase 6 uses clean reset plus targeted current-row repair rather than broad legacy migration or long-lived dual-write
+- incompatible local legacy task/runtime and operation/runtime data may be deleted and recreated instead of migrated
 - primary runtime storage ownership moves to `session`, not `task` or `operation`
-- remaining task/operation/evidence services are migration-only, read-only, or removed
+- remaining task/operation/evidence services are deprecated, read-only, or removed
 - Phase 7 is unblocked to build retrieval and report-query flows on session-owned storage
 
 This checklist is now the Phase 6 baseline.

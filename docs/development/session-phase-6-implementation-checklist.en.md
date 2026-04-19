@@ -37,9 +37,9 @@ Phase 6 covers:
 - session-owned metadata tables
 - session-owned checkpoint, run, log, job, event, and memory storage
 - artifact and report models and services
-- finding ownership migration to `session_id`
+- finding ownership rewrite to `session_id`
 - session record aggregation for later retrieval flows
-- migration utilities from task/runtime and operation/runtime data
+- clean-reset guardrails for incompatible legacy local databases
 - demotion of legacy task/operation/evidence write paths
 
 Phase 6 does not require:
@@ -83,9 +83,10 @@ Target design:
 Preferred implementation direction:
 
 - create new session-owned tables
-- migrate legacy data into them
 - switch primary runtime writes to the new tables
-- demote legacy services to read-only or migration-only
+- reject incompatible legacy local databases with explicit reset guidance
+- keep only narrow repair helpers for current Phase 6 rows when reset is unnecessary
+- demote legacy services to read-only or remove them from primary flows
 
 Avoid:
 
@@ -102,7 +103,7 @@ By the end of Phase 6:
 4. Reports become first-class indexed outputs rather than export-only side effects.
 5. Findings are keyed by `session_id` and linked to artifacts.
 6. One session-level lookup service can locate all storage layers and execution records.
-7. Legacy task/runtime and operation/runtime storage is migrated into session-owned tables.
+7. Incompatible legacy task/runtime and operation/runtime local databases are rejected or reset instead of requiring migration.
 8. `TaskService`, `OperationService`, and `EvidenceService` are no longer valid primary write paths.
 
 ## Storage Layout Contract
@@ -147,7 +148,7 @@ Phase 6 should create these target tables:
 - `report_artifact_links`
 - `report_finding_links`
 
-Migration sources are fixed as:
+Legacy sources that may trigger reset detection include:
 
 - `tasks`
 - `runs`
@@ -466,23 +467,23 @@ Completion check:
 
 - one service can locate the four layers and session-owned execution records
 
-## 7. Add Migration Utilities
+## 7. Add Clean-Reset Guardrails
 
 Files:
 
-- recommended new migration helper under `src/app/` or `src/storage/migrations/`
+- `src/storage/schema_guard.py`
+- targeted repository-local repair helpers where needed
 
 Checklist:
 
-- migrate legacy task-owned rows into session-owned rows
-- migrate legacy operation-owned rows into session-owned rows
-- preserve linkability of public IDs and timestamps
-- reuse existing session references where available
-- synthesize sessions for legacy task-owned data when no session exists
+- detect incompatible legacy task/runtime and operation/runtime data at startup
+- fail with explicit reset instructions for local test databases
+- keep targeted repair helpers limited to current Phase 6 tables and paths
+- avoid building a general-purpose legacy-to-session migration subsystem
 
 Completion check:
 
-- legacy runtime data can be transferred into target tables without losing traceability
+- incompatible local legacy databases are blocked with clear reset guidance, and current Phase 6 rows still support narrow in-place repairs
 
 ## 8. Rewrite Artifact Pipeline and Report Generation
 
@@ -533,7 +534,7 @@ Files:
 
 Checklist:
 
-- mark legacy write paths as deprecated or migration-only
+- mark legacy write paths as deprecated, read-only, or removable
 - keep read-only inspection only where still needed temporarily
 - stop extending them for new product-facing flows
 
@@ -541,7 +542,7 @@ Completion check:
 
 - the team can clearly tell that legacy services are no longer the target write path
 
-## Migration Sequence
+## Implementation Sequence
 
 Work should be performed in this order:
 
@@ -552,7 +553,7 @@ Work should be performed in this order:
 5. add artifact and report services
 6. rewrite checkpoint, run, job, memory, finding, and event services
 7. add session record locator
-8. implement migration utilities
+8. add clean-reset guardrails and targeted repair helpers
 9. rewrite artifact pipeline and report generation
 10. switch primary runtime reads and writes to the new session-owned services
 11. demote legacy task/operation/evidence services
@@ -566,7 +567,7 @@ Recommended new test files:
 - `tests/test_report_repository.py`
 - `tests/test_report_service.py`
 - `tests/test_session_record_locator.py`
-- `tests/test_session_storage_migration.py`
+- `tests/test_schema_guard_phase6.py`
 - `tests/test_session_checkpoint_repository.py`
 - `tests/test_session_run_repository.py`
 - `tests/test_session_job_repository.py`
@@ -581,9 +582,9 @@ Required test areas:
 - report-artifact and report-finding link integrity
 - checkpoint/run/job/event lookup by `session_id`
 - memory entry lookup by `session_id`
-- migration from task/runtime data
-- migration from operation/runtime data
-- preservation of public IDs and timestamps
+- reset guidance for incompatible legacy local databases
+- targeted repair helpers for current Phase 6 rows
+- preservation of public IDs and timestamps inside current session-owned tables
 - report and artifact file path confinement under session directories
 - primary service APIs rejecting target reliance on `task_id` and `operation_id`
 
@@ -596,7 +597,7 @@ Phase 6 is complete only if all questions below can be answered with "yes".
 3. Is `artifact` now the target raw-result model instead of `evidence`?
 4. Is `report` now a first-class persistent result model?
 5. Can one session-level lookup service locate all layers and execution records?
-6. Can legacy task/runtime and operation/runtime data be migrated into session-owned storage?
+6. Are incompatible legacy local databases clearly rejected or reset without requiring a broad migration subsystem?
 7. Are `TaskService`, `OperationService`, and `EvidenceService` no longer valid primary write paths?
 8. Is Phase 7 unblocked from building retrieval and report-query flows on top of session-owned storage?
 
@@ -613,7 +614,7 @@ The minimum acceptable deliverables for Phase 6 are:
 - `src/app/report_service.py`
 - `src/app/session_record_locator.py`
 - rewritten session-owned checkpoint/run/job/memory/finding/event services
-- migration utilities from legacy task/runtime and operation/runtime data
+- clean-reset guardrails plus targeted repair helpers for current Phase 6 rows
 - rewritten session-owned artifact and report generation flows
 - docs marking legacy task/operation/evidence services as non-target write paths
 

@@ -2,27 +2,19 @@ from __future__ import annotations
 
 """Legacy top-level operation service kept as a thin wrapper over session-owned storage."""
 
+import warnings
+
 from agent.settings import Settings, get_settings
 from models.operation import Operation, OperationStatus
 from models.scope_policy import ScopePolicy
 from models.run import utc_now_iso
-from models.session import (
-    SessionMode,
-    SessionPersistenceMode,
-    SessionStatus,
-    SessionTarget,
-    SessionTargetKind,
-)
+from models.session import SessionStatus
 from storage.repositories.operations import OperationRepository
 from storage.repositories.scope_policies import ScopePolicyRepository
 from storage.sqlite import SQLiteStorage
 
+from .redteam_session_service import RedteamSessionService
 from .session_service import SessionService
-
-
-def _ensure_positive_int(value: int, *, field_name: str) -> None:
-    if value <= 0:
-        raise ValueError(f"{field_name} must be greater than 0.")
 
 
 def _operation_to_session_status(status: OperationStatus) -> SessionStatus:
@@ -39,43 +31,36 @@ def _operation_to_session_status(status: OperationStatus) -> SessionStatus:
     return mapping[OperationStatus(status)]
 
 
-def _build_targets(
-    *,
-    allowed_hosts: list[str] | None,
-    allowed_domains: list[str] | None,
-    allowed_cidrs: list[str] | None,
-) -> list[SessionTarget]:
-    targets: list[SessionTarget] = []
-    for value in allowed_domains or []:
-        targets.append(SessionTarget(kind=SessionTargetKind.DOMAIN, value=value))
-    for value in allowed_hosts or []:
-        targets.append(SessionTarget(kind=SessionTargetKind.HOST, value=value))
-    for value in allowed_cidrs or []:
-        targets.append(SessionTarget(kind=SessionTargetKind.CIDR, value=value))
-    return targets
-
-
 class OperationService:
     def __init__(
         self,
         operation_repository: OperationRepository,
         scope_policy_repository: ScopePolicyRepository,
         session_service: SessionService,
+        redteam_session_service: RedteamSessionService,
         settings: Settings,
     ) -> None:
         self.operation_repository = operation_repository
         self.scope_policy_repository = scope_policy_repository
         self.session_service = session_service
+        self.redteam_session_service = redteam_session_service
         self.settings = settings
 
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> "OperationService":
         settings = settings or get_settings()
         storage = SQLiteStorage(settings.sqlite_path)
+        session_service = SessionService.from_settings(settings)
         return cls(
             OperationRepository(storage),
             ScopePolicyRepository(storage),
-            SessionService.from_settings(settings),
+            session_service,
+            RedteamSessionService(
+                session_service=session_service,
+                operation_repository=OperationRepository(storage),
+                scope_policy_repository=ScopePolicyRepository(storage),
+                settings=settings,
+            ),
             settings,
         )
 
@@ -97,53 +82,29 @@ class OperationService:
         confirmation_required_actions: list[str] | None = None,
         status: OperationStatus = OperationStatus.DRAFT,
     ) -> Operation:
-        _ensure_positive_int(max_concurrency, field_name="max_concurrency")
-        if rate_limit_per_minute is not None:
-            _ensure_positive_int(rate_limit_per_minute, field_name="rate_limit_per_minute")
-
-        session = self.session_service.create_session(
-            title=title,
-            goal=objective,
-            mode=SessionMode.REDTEAM,
-            persistence_mode=SessionPersistenceMode.PERSISTENT,
-            workspace=workspace or str(self.settings.working_directory),
-            targets=_build_targets(
-                allowed_hosts=allowed_hosts,
-                allowed_domains=allowed_domains,
-                allowed_cidrs=allowed_cidrs,
-            ),
-            status=_operation_to_session_status(status),
-            metadata={"legacy_container": "operation"},
+        warnings.warn(
+            "OperationService.create_operation() is deprecated as a primary write path. "
+            "Use RedteamSessionService.create_redteam_session() instead.",
+            DeprecationWarning,
+            stacklevel=2,
         )
-        policy = ScopePolicy.create(
-            session_id=session.id,
-            allowed_hosts=list(allowed_hosts or []),
-            allowed_domains=list(allowed_domains or []),
-            allowed_cidrs=list(allowed_cidrs or []),
-            allowed_ports=list(allowed_ports or []),
-            allowed_protocols=list(allowed_protocols or []),
-            denied_targets=list(denied_targets or []),
-            allowed_tool_categories=list(allowed_tool_categories or []),
-            max_concurrency=max_concurrency,
-            rate_limit_per_minute=rate_limit_per_minute,
-            confirmation_required_actions=list(confirmation_required_actions or []),
-        )
-        operation = Operation(
-            id=session.id,
-            public_id="",
+        bundle = self.redteam_session_service.create_redteam_session(
             title=title,
             objective=objective,
-            workspace=session.workspace,
-            scope_policy_id=policy.id,
+            workspace=workspace,
+            allowed_hosts=allowed_hosts,
+            allowed_domains=allowed_domains,
+            allowed_cidrs=allowed_cidrs,
+            allowed_ports=allowed_ports,
+            allowed_protocols=allowed_protocols,
+            denied_targets=denied_targets,
+            allowed_tool_categories=allowed_tool_categories,
+            max_concurrency=max_concurrency,
+            rate_limit_per_minute=rate_limit_per_minute,
+            confirmation_required_actions=confirmation_required_actions,
             status=status,
         )
-
-        storage = self.operation_repository.storage
-        with storage.connect() as connection:
-            self.operation_repository._create_with_connection(connection, operation)
-            self.scope_policy_repository._create_with_connection(connection, policy)
-            connection.commit()
-        return operation
+        return bundle.operation
 
     def get_operation(self, identifier: str) -> Operation | None:
         return self.operation_repository.get(identifier)
