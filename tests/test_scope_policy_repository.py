@@ -1,10 +1,10 @@
 import sqlite3
 
 from agent.settings import Settings
-from models.operation import Operation
 from models.scope_policy import ScopePolicy
-from storage.repositories.operations import OperationRepository
+from models.session import Session, SessionMode, SessionPersistenceMode
 from storage.repositories.scope_policies import ScopePolicyRepository
+from storage.repositories.sessions import SessionRepository
 from storage.sqlite import SQLiteStorage
 
 
@@ -20,18 +20,19 @@ def build_settings(tmp_path):
 def test_scope_policy_repository_round_trips_list_and_integer_fields(tmp_path):
     settings = build_settings(tmp_path)
     storage = SQLiteStorage(settings.sqlite_path)
-    operation_repository = OperationRepository(storage)
+    session_repository = SessionRepository(storage)
     repository = ScopePolicyRepository(storage)
-    operation = Operation.create(
+    session = Session.create(
         title="Web recon",
-        objective="Inspect attack surface",
+        goal="Inspect attack surface",
+        mode=SessionMode.REDTEAM,
+        persistence_mode=SessionPersistenceMode.PERSISTENT,
         workspace=str(tmp_path),
-        scope_policy_id="pending",
     )
-    operation_repository.create(operation)
+    session_repository.create(session)
 
     policy = ScopePolicy.create(
-        operation_id=operation.id,
+        session_id=session.id,
         allowed_hosts=["example.com"],
         allowed_domains=["example.com"],
         allowed_cidrs=["10.0.0.0/24"],
@@ -57,14 +58,14 @@ def test_scope_policy_repository_round_trips_list_and_integer_fields(tmp_path):
     assert loaded.confirmation_required_actions == ["port_scan"]
 
 
-def test_scope_policy_repository_rejects_orphan_operation_reference(tmp_path):
+def test_scope_policy_repository_rejects_orphan_session_reference(tmp_path):
     settings = build_settings(tmp_path)
     storage = SQLiteStorage(settings.sqlite_path)
-    OperationRepository(storage)
+    SessionRepository(storage)
     repository = ScopePolicyRepository(storage)
 
     policy = ScopePolicy.create(
-        operation_id="missing-operation",
+        session_id="missing-session",
         allowed_hosts=["example.com"],
     )
 

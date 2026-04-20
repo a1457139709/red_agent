@@ -4,7 +4,7 @@ from agent.settings import Settings
 from app.artifact_service import ArtifactService
 from app.evidence_service import EvidenceService
 from app.job_service import JobService
-from app.operation_service import OperationService
+from conftest import create_redteam_operation
 
 
 def build_settings(tmp_path):
@@ -18,11 +18,10 @@ def build_settings(tmp_path):
 
 def test_evidence_service_warns_on_legacy_create_write_path(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     evidence_service = EvidenceService.from_settings(settings)
 
-    operation = operation_service.create_operation(title="Assess", objective="Exercise legacy evidence")
+    operation = create_redteam_operation(settings, title="Assess", objective="Exercise legacy evidence")
     job = job_service.create_job(
         session_identifier=operation.public_id,
         job_type="http_probe",
@@ -49,11 +48,10 @@ def test_evidence_service_warns_on_legacy_create_write_path(tmp_path):
 
 def test_evidence_service_warns_on_legacy_save_write_path(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     artifact_service = ArtifactService.from_settings(settings)
     evidence_service = EvidenceService.from_settings(settings)
 
-    operation = operation_service.create_operation(title="Assess", objective="Save legacy evidence")
+    operation = create_redteam_operation(settings, title="Assess", objective="Save legacy evidence")
     artifact = artifact_service.create_artifact(
         session_identifier=operation.public_id,
         artifact_type="http_response",
@@ -76,11 +74,10 @@ def test_evidence_service_warns_on_legacy_save_write_path(tmp_path):
 
 def test_evidence_service_read_paths_remain_available(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     artifact_service = ArtifactService.from_settings(settings)
     evidence_service = EvidenceService.from_settings(settings)
 
-    operation = operation_service.create_operation(title="Assess", objective="Read compatibility evidence")
+    operation = create_redteam_operation(settings, title="Assess", objective="Read compatibility evidence")
     artifact = artifact_service.create_artifact(
         session_identifier=operation.public_id,
         artifact_type="dns_answer",

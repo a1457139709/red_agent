@@ -2,12 +2,7 @@ from types import SimpleNamespace
 import json
 
 from agent.settings import Settings
-from app.evidence_service import EvidenceService
-from app.finding_service import FindingService
-from app.job_service import JobService
-from app.memory_service import MemoryService
-from app.operation_service import OperationService
-from app.scope_policy_service import ScopePolicyService
+from conftest import create_redteam_operation
 from models.finding import FindingStatus
 from models.job import JobStatus
 from models.planner import PlannerProposalKind, PlannerSource
@@ -33,23 +28,14 @@ class FakeModel:
 
 def build_runtime(tmp_path, *, model_factory):
     settings = build_settings(tmp_path)
-    return (
-        settings,
-        PlannerRuntime(
-            operation_service=OperationService.from_settings(settings),
-            scope_policy_service=ScopePolicyService.from_settings(settings),
-            job_service=JobService.from_settings(settings),
-            evidence_service=EvidenceService.from_settings(settings),
-            finding_service=FindingService.from_settings(settings),
-            memory_service=MemoryService.from_settings(settings),
-            settings=settings,
-            model_factory=model_factory,
-        ),
-    )
+    runtime = PlannerRuntime.from_settings(settings)
+    runtime.model_factory = model_factory
+    return settings, runtime
 
 
 def seed_operation_state(runtime: PlannerRuntime):
-    operation = runtime.operation_service.create_operation(
+    operation = create_redteam_operation(
+        runtime.settings,
         title="Surface recon",
         objective="Inspect scoped web surface",
         allowed_hosts=["example.com"],
@@ -122,8 +108,7 @@ def test_planner_runtime_uses_model_and_marks_invalid_items(tmp_path):
             },
         ],
     }
-    settings, runtime = build_runtime(tmp_path, model_factory=lambda _settings: FakeModel(payload))
-    del settings
+    _settings, runtime = build_runtime(tmp_path, model_factory=lambda _settings: FakeModel(payload))
     operation = seed_operation_state(runtime)
 
     result = runtime.create_plan(operation.public_id)
@@ -138,8 +123,10 @@ def test_planner_runtime_uses_model_and_marks_invalid_items(tmp_path):
 
 
 def test_planner_runtime_falls_back_when_model_fails(tmp_path):
-    settings, runtime = build_runtime(tmp_path, model_factory=lambda _settings: (_ for _ in ()).throw(RuntimeError("boom")))
-    del settings
+    _settings, runtime = build_runtime(
+        tmp_path,
+        model_factory=lambda _settings: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
     operation = seed_operation_state(runtime)
 
     result = runtime.create_plan(operation.public_id)
@@ -150,8 +137,10 @@ def test_planner_runtime_falls_back_when_model_fails(tmp_path):
 
 
 def test_planner_runtime_builds_operation_context_summary(tmp_path):
-    settings, runtime = build_runtime(tmp_path, model_factory=lambda _settings: FakeModel({"summary": "", "rationale": "", "proposals": []}))
-    del settings
+    _settings, runtime = build_runtime(
+        tmp_path,
+        model_factory=lambda _settings: FakeModel({"summary": "", "rationale": "", "proposals": []}),
+    )
     operation = seed_operation_state(runtime)
 
     summary = runtime.build_operation_context_summary(operation.public_id)
@@ -164,9 +153,12 @@ def test_planner_runtime_builds_operation_context_summary(tmp_path):
 
 
 def test_planner_runtime_derives_memory_candidates_from_structured_state(tmp_path):
-    settings, runtime = build_runtime(tmp_path, model_factory=lambda _settings: FakeModel({"summary": "ignore", "rationale": "ignore", "proposals": []}))
-    del settings
-    operation = runtime.operation_service.create_operation(
+    _settings, runtime = build_runtime(
+        tmp_path,
+        model_factory=lambda _settings: FakeModel({"summary": "ignore", "rationale": "ignore", "proposals": []}),
+    )
+    operation = create_redteam_operation(
+        runtime.settings,
         title="Memory",
         objective="Derive memory",
         allowed_hosts=["example.com"],
@@ -247,11 +239,14 @@ def test_planner_runtime_derives_memory_candidates_from_structured_state(tmp_pat
 
 
 def test_planner_runtime_memory_derivation_deduplicates_identical_candidates(tmp_path):
-    settings, runtime = build_runtime(tmp_path, model_factory=lambda _settings: FakeModel({"summary": "", "rationale": "", "proposals": []}))
-    del settings
+    _settings, runtime = build_runtime(
+        tmp_path,
+        model_factory=lambda _settings: FakeModel({"summary": "", "rationale": "", "proposals": []}),
+    )
     operation = seed_operation_state(runtime)
     context = runtime.build_context(operation.public_id)
     duplicated_context = context.__class__(
+        session=context.session,
         operation=context.operation,
         policy=context.policy,
         successful_jobs=[context.successful_jobs[0], context.successful_jobs[0]],

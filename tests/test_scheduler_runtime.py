@@ -7,8 +7,8 @@ import time
 
 from agent.settings import Settings
 from app.job_service import JobService
-from app.operation_service import OperationService
 from app.scoped_execution_service import ScopedExecutionResult
+from conftest import create_redteam_operation
 from models.job import JobStatus
 from models.operation import OperationStatus
 from models.run import utc_now_iso
@@ -50,11 +50,11 @@ def run_http_server():
 
 def test_job_runtime_fields_round_trip_and_atomic_claim(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     orchestration = JobOrchestrationService.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Recon",
         objective="Lease jobs safely",
         status=OperationStatus.READY,
@@ -112,11 +112,11 @@ def test_job_runtime_fields_round_trip_and_atomic_claim(tmp_path):
 
 def test_scheduler_queues_ready_jobs_and_blocks_failed_dependencies(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     scheduler = Scheduler.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Recon",
         objective="Queue dependency graph",
         status=OperationStatus.READY,
@@ -157,11 +157,11 @@ def test_scheduler_queues_ready_jobs_and_blocks_failed_dependencies(tmp_path):
 
 def test_scheduler_recovers_stale_leases_with_retry_and_exhaustion(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     scheduler = Scheduler.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Recon",
         objective="Recover stale leases",
         status=OperationStatus.READY,
@@ -208,16 +208,17 @@ def test_scheduler_recovers_stale_leases_with_retry_and_exhaustion(tmp_path):
 
 def test_scheduler_scoped_pass_only_recovers_stale_leases_for_target_operation(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     scheduler = Scheduler.from_settings(settings)
 
-    first_operation = operation_service.create_operation(
+    first_operation = create_redteam_operation(
+        settings,
         title="Recon A",
         objective="Recover only this operation",
         status=OperationStatus.READY,
     )
-    second_operation = operation_service.create_operation(
+    second_operation = create_redteam_operation(
+        settings,
         title="Recon B",
         objective="Leave this operation alone",
         status=OperationStatus.READY,
@@ -257,12 +258,12 @@ def test_scheduler_scoped_pass_only_recovers_stale_leases_for_target_operation(t
 
 def test_scheduler_cancels_queued_jobs_immediately(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     orchestration = JobOrchestrationService.from_settings(settings)
     scheduler = Scheduler.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Recon",
         objective="Cancel queued work",
         status=OperationStatus.READY,
@@ -287,11 +288,11 @@ def test_scheduler_cancels_queued_jobs_immediately(tmp_path):
 
 def test_worker_cancellation_wins_over_late_success(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     worker = WorkerRuntime.from_settings(settings, worker_id="worker-main")
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Recon",
         objective="Prefer cancellation",
         status=OperationStatus.READY,
@@ -328,11 +329,11 @@ def test_worker_cancellation_wins_over_late_success(tmp_path):
 
 def test_worker_retries_then_times_out_when_budget_is_exhausted(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     worker = WorkerRuntime.from_settings(settings, worker_id="worker-main")
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Recon",
         objective="Retry timeouts",
         status=OperationStatus.READY,
@@ -374,14 +375,14 @@ def test_worker_retries_then_times_out_when_budget_is_exhausted(tmp_path):
 
 def test_worker_drain_runs_multiple_independent_typed_jobs(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     worker = WorkerRuntime.from_settings(settings, worker_id="worker-main")
 
     server, thread = run_http_server()
     try:
         port = server.server_address[1]
-        operation = operation_service.create_operation(
+        operation = create_redteam_operation(
+            settings,
             title="Recon",
             objective="Drain queued work",
             allowed_hosts=["127.0.0.1"],
@@ -417,11 +418,11 @@ def test_worker_drain_runs_multiple_independent_typed_jobs(tmp_path):
 
 def test_worker_keeps_lease_alive_during_long_running_execution(tmp_path, monkeypatch):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     worker = WorkerRuntime.from_settings(settings, worker_id="worker-main", lease_seconds=1)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Recon",
         objective="Keep heartbeating",
         status=OperationStatus.READY,
@@ -468,14 +469,14 @@ def test_worker_keeps_lease_alive_during_long_running_execution(tmp_path, monkey
 
 def test_worker_cancels_real_subprocess_backed_job(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     worker = WorkerRuntime.from_settings(settings, worker_id="worker-main")
 
     server, thread = run_http_server()
     try:
         port = server.server_address[1]
-        operation = operation_service.create_operation(
+        operation = create_redteam_operation(
+            settings,
             title="Recon",
             objective="Cancel a live subprocess job",
             allowed_hosts=["127.0.0.1"],

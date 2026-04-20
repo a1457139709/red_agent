@@ -1,8 +1,8 @@
 from agent.settings import Settings
 from app.job_service import JobService
-from app.operation_service import OperationService
 from app.scoped_execution_service import ScopedExecutionService
 from app.session_event_service import SessionEventService
+from conftest import create_redteam_operation
 from models.job import JobStatus
 from models.operation import OperationStatus
 from models.session_event import SessionEventLevel, SessionEventType
@@ -31,12 +31,12 @@ def make_request(*, operation_id: str, job_id: str | None, raw_target: str, tool
 
 def test_scoped_execution_service_blocks_out_of_scope_requests_without_mutating_job_state(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     event_service = SessionEventService.from_settings(settings)
     execution_service = ScopedExecutionService.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Recon",
         objective="Inspect public web surface",
         allowed_domains=["example.com"],
@@ -70,12 +70,12 @@ def test_scoped_execution_service_blocks_out_of_scope_requests_without_mutating_
 
 def test_scoped_execution_service_records_full_confirmation_and_success_flow(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     event_service = SessionEventService.from_settings(settings)
     execution_service = ScopedExecutionService.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Recon",
         objective="Inspect public web surface",
         allowed_domains=["example.com"],
@@ -117,12 +117,12 @@ def test_scoped_execution_service_records_full_confirmation_and_success_flow(tmp
 
 def test_scoped_execution_service_records_execution_failure_without_mutating_job_state(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     event_service = SessionEventService.from_settings(settings)
     execution_service = ScopedExecutionService.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Recon",
         objective="Inspect public web surface",
         allowed_domains=["example.com"],
@@ -154,12 +154,12 @@ def test_scoped_execution_service_records_execution_failure_without_mutating_job
 
 def test_scoped_execution_service_enforces_rate_limit_from_recent_execution_events(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     event_service = SessionEventService.from_settings(settings)
     execution_service = ScopedExecutionService.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Recon",
         objective="Inspect public web surface",
         allowed_domains=["example.com"],
@@ -200,12 +200,12 @@ def test_scoped_execution_service_enforces_rate_limit_from_recent_execution_even
 
 def test_scoped_execution_service_rechecks_rate_limit_after_confirmation(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     event_service = SessionEventService.from_settings(settings)
     execution_service = ScopedExecutionService.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Recon",
         objective="Inspect public web surface",
         allowed_domains=["example.com"],
@@ -259,11 +259,11 @@ def test_scoped_execution_service_rechecks_rate_limit_after_confirmation(tmp_pat
 
 def test_scoped_execution_service_enforces_max_concurrency_before_execution(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     execution_service = ScopedExecutionService.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Recon",
         objective="Inspect public web surface",
         allowed_domains=["example.com"],
@@ -302,12 +302,12 @@ def test_scoped_execution_service_enforces_max_concurrency_before_execution(tmp_
 
 def test_scoped_execution_service_blocks_non_runnable_operation_statuses(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     event_service = SessionEventService.from_settings(settings)
     execution_service = ScopedExecutionService.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Draft Recon",
         objective="Inspect public web surface",
         allowed_domains=["example.com"],
@@ -331,7 +331,7 @@ def test_scoped_execution_service_blocks_non_runnable_operation_statuses(tmp_pat
     events = event_service.list_events(operation.public_id)
 
     assert result.status == "blocked"
-    assert result.decision.reason_code == "operation_not_runnable"
+    assert result.decision.reason_code == "session_not_runnable"
     assert refreshed.status == JobStatus.PENDING
     assert [event.event_type for event in events] == [
         SessionEventType.ADMISSION_DENIED,

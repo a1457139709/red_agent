@@ -2,7 +2,7 @@ from agent.settings import Settings
 from app.evidence_service import EvidenceService
 from app.finding_service import FindingService
 from app.job_service import JobService
-from app.operation_service import OperationService
+from conftest import create_redteam_operation
 from models.finding import FindingStatus
 
 
@@ -17,12 +17,11 @@ def build_settings(tmp_path):
 
 def test_finding_service_supports_confirmation_dismissal_and_traceability(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     evidence_service = EvidenceService.from_settings(settings)
     finding_service = FindingService.from_settings(settings)
 
-    operation = operation_service.create_operation(title="Assess", objective="Review evidence")
+    operation = create_redteam_operation(settings, title="Assess", objective="Review evidence")
     job = job_service.create_job(
         operation_identifier=operation.public_id,
         job_type="http_probe",

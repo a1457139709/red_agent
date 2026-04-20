@@ -299,13 +299,17 @@ def test_run_interactive_shell_routes_plain_text_through_controller_and_skill_br
     assert "done" in captured["answers"]
 
 
-def test_run_interactive_shell_keeps_plain_text_on_session_flow_with_active_task_binding(
+def test_run_interactive_shell_keeps_plain_text_on_session_flow_with_active_session_binding(
     monkeypatch,
     tmp_path,
 ):
     settings = build_settings(tmp_path)
     session_state = SessionState()
-    shell_state = ShellState(active_task_id="task-1", active_task_public_id="T0001")
+    shell_state = ShellState(
+        active_session_id="session-1",
+        active_session_public_id="S0001",
+        active_session_mode=SessionMode.NORMAL,
+    )
     session_service = SessionService.from_settings(settings)
     controller = AgentController.from_session_service(session_service)
     skill_service = main_module.create_skill_service()
@@ -414,10 +418,8 @@ def test_build_controller_request_and_clear_command_preserve_session_binding(tmp
     assert shell_state.active_skill_name == "security-audit"
 
 
-def test_build_prompt_prefers_session_over_legacy_task_binding():
+def test_build_prompt_prefers_session_binding():
     shell_state = ShellState(
-        active_task_id="task-1",
-        active_task_public_id="T0001",
         active_session_id="session-1",
         active_session_public_id="S0001",
         active_session_mode=SessionMode.NORMAL,

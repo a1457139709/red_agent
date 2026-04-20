@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from agent.settings import Settings, get_settings
-from models.operation import Operation, OperationStatus
+from models.operation import OperationStatus
 from models.scope_policy import ScopePolicy
 from models.session import (
     Session,
@@ -13,7 +13,6 @@ from models.session import (
     SessionTarget,
     SessionTargetKind,
 )
-from storage.repositories.operations import OperationRepository
 from storage.repositories.scope_policies import ScopePolicyRepository
 from storage.sqlite import SQLiteStorage
 
@@ -58,7 +57,6 @@ def _build_targets(
 @dataclass(frozen=True, slots=True)
 class RedteamSessionBundle:
     session: Session
-    operation: Operation
     scope_policy: ScopePolicy
 
 
@@ -67,12 +65,10 @@ class RedteamSessionService:
         self,
         *,
         session_service: SessionService,
-        operation_repository: OperationRepository,
         scope_policy_repository: ScopePolicyRepository,
         settings: Settings,
     ) -> None:
         self.session_service = session_service
-        self.operation_repository = operation_repository
         self.scope_policy_repository = scope_policy_repository
         self.settings = settings
 
@@ -82,7 +78,6 @@ class RedteamSessionService:
         storage = SQLiteStorage(settings.sqlite_path)
         return cls(
             session_service=SessionService.from_settings(settings),
-            operation_repository=OperationRepository(storage),
             scope_policy_repository=ScopePolicyRepository(storage),
             settings=settings,
         )
@@ -121,7 +116,6 @@ class RedteamSessionService:
                 allowed_cidrs=allowed_cidrs,
             ),
             status=_operation_to_session_status(status),
-            metadata={"legacy_container": "operation_projection"},
         )
         scope_policy = ScopePolicy.create(
             session_id=session.id,
@@ -136,24 +130,12 @@ class RedteamSessionService:
             rate_limit_per_minute=rate_limit_per_minute,
             confirmation_required_actions=list(confirmation_required_actions or []),
         )
-        operation = Operation(
-            id=session.id,
-            public_id="",
-            title=title,
-            objective=objective,
-            workspace=session.workspace,
-            scope_policy_id=scope_policy.id,
-            status=status,
-        )
-
-        storage = self.operation_repository.storage
+        storage = self.scope_policy_repository.storage
         with storage.connect() as connection:
-            self.operation_repository._create_with_connection(connection, operation)
             self.scope_policy_repository._create_with_connection(connection, scope_policy)
             connection.commit()
 
         return RedteamSessionBundle(
             session=session,
-            operation=operation,
             scope_policy=scope_policy,
         )

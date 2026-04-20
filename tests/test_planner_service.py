@@ -1,16 +1,8 @@
 from agent.settings import Settings
-from app.evidence_service import EvidenceService
-from app.finding_service import FindingService
-from app.job_service import JobService
-from app.memory_service import MemoryService
-from app.operation_service import OperationService
-from app.planner_service import PlannerService
-from app.scope_policy_service import ScopePolicyService
+from conftest import create_redteam_operation
 from models.job import JobStatus
 from models.planner import PlannerMemoryWritebackStatus
-from orchestration.planner_runtime import PlannerRuntime
-from storage.repositories.planner import PlannerRepository
-from storage.sqlite import SQLiteStorage
+from app.planner_service import PlannerService
 
 
 class FakePlannerModel:
@@ -39,33 +31,14 @@ def build_settings(tmp_path):
 
 
 def build_planner_service(settings):
-    storage = SQLiteStorage(settings.sqlite_path)
-    operation_service = OperationService.from_settings(settings)
-    job_service = JobService.from_settings(settings)
-    memory_service = MemoryService.from_settings(settings)
-    runtime = PlannerRuntime(
-        operation_service=operation_service,
-        scope_policy_service=ScopePolicyService.from_settings(settings),
-        job_service=job_service,
-        evidence_service=EvidenceService.from_settings(settings),
-        finding_service=FindingService.from_settings(settings),
-        memory_service=memory_service,
-        settings=settings,
-        model_factory=lambda _settings: FakePlannerModel(),
-    )
-    return PlannerService(
-        repository=PlannerRepository(storage),
-        runtime=runtime,
-        operation_service=operation_service,
-        scope_policy_service=ScopePolicyService.from_settings(settings),
-        job_service=job_service,
-        memory_service=memory_service,
-        settings=settings,
-    )
+    planner_service = PlannerService.from_settings(settings)
+    planner_service.runtime.model_factory = lambda _settings: FakePlannerModel()
+    return planner_service
 
 
 def seed_operation_state(planner_service: PlannerService):
-    operation = planner_service.operation_service.create_operation(
+    operation = create_redteam_operation(
+        planner_service.settings,
         title="Surface recon",
         objective="Inspect scoped web surface",
         allowed_hosts=["example.com"],

@@ -4,8 +4,8 @@ import pytest
 
 from agent.settings import Settings
 from app.job_service import JobService
-from app.operation_service import OperationService
 from app.skill_workflow_service import SkillWorkflowService
+from conftest import create_redteam_operation
 from main import create_skill_service
 
 
@@ -20,11 +20,11 @@ def build_settings(tmp_path: Path) -> Settings:
 
 def test_surface_recon_plans_hostname_jobs(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     skill_service = create_skill_service(settings)
     workflow_service = SkillWorkflowService.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Surface recon",
         objective="Inspect attack surface",
         allowed_hosts=["example.com", "8.8.8.8"],
@@ -54,11 +54,11 @@ def test_surface_recon_plans_hostname_jobs(tmp_path):
 
 def test_web_enum_strips_input_path_and_generates_bounded_targets(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     skill_service = create_skill_service(settings)
     workflow_service = SkillWorkflowService.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Web enum",
         objective="Inspect web endpoints",
         allowed_hosts=["example.com"],
@@ -84,11 +84,11 @@ def test_web_enum_strips_input_path_and_generates_bounded_targets(tmp_path):
 
 def test_web_enum_filters_out_disallowed_protocols(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     skill_service = create_skill_service(settings)
     workflow_service = SkillWorkflowService.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Web enum",
         objective="Inspect web endpoints",
         allowed_hosts=["example.com"],
@@ -112,11 +112,11 @@ def test_web_enum_filters_out_disallowed_protocols(tmp_path):
 
 def test_skill_workflow_service_raises_when_no_jobs_are_in_scope(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     skill_service = create_skill_service(settings)
     workflow_service = SkillWorkflowService.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Blocked",
         objective="Reject recon",
         allowed_hosts=["example.com"],
@@ -133,12 +133,12 @@ def test_skill_workflow_service_raises_when_no_jobs_are_in_scope(tmp_path):
 
 def test_apply_plan_persists_jobs(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     skill_service = create_skill_service(settings)
     workflow_service = SkillWorkflowService.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Apply",
         objective="Persist plan",
         allowed_hosts=["example.com", "8.8.8.8"],

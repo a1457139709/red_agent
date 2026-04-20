@@ -1,6 +1,6 @@
 from agent.settings import Settings
 from app.job_service import JobService
-from app.operation_service import OperationService
+from conftest import create_redteam_operation
 from models.evidence import Evidence
 from models.finding import Finding
 from models.finding_evidence_link import FindingEvidenceLink
@@ -23,14 +23,13 @@ def build_settings(tmp_path):
 def test_finding_evidence_link_repository_supports_bidirectional_traceability(tmp_path):
     settings = build_settings(tmp_path)
     storage = SQLiteStorage(settings.sqlite_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     JobRepository(storage)
     evidence_repository = EvidenceRepository(storage)
     finding_repository = FindingRepository(storage)
     link_repository = FindingEvidenceLinkRepository(storage)
 
-    operation = operation_service.create_operation(title="Trace", objective="Link evidence")
+    operation = create_redteam_operation(settings, title="Trace", objective="Link evidence")
     job = job_service.create_job(
         operation_identifier=operation.public_id,
         job_type="http_probe",

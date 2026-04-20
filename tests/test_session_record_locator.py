@@ -5,11 +5,11 @@ from app.checkpoint_service import CheckpointService
 from app.finding_service import FindingService
 from app.job_service import JobService
 from app.memory_service import MemoryService
-from app.operation_service import OperationService
 from app.report_service import ReportService
 from app.run_service import RunService
 from app.session_event_service import SessionEventService
 from app.session_record_locator import SessionRecordLocator
+from conftest import create_redteam_operation
 from models.job import JobLogLevel
 from models.operation import OperationStatus
 from models.run import TaskLogLevel
@@ -27,7 +27,6 @@ def build_settings(tmp_path):
 
 def test_session_record_locator_aggregates_session_layers(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     run_service = RunService.from_settings(settings)
     checkpoint_service = CheckpointService.from_settings(settings)
     job_service = JobService.from_settings(settings)
@@ -38,7 +37,8 @@ def test_session_record_locator_aggregates_session_layers(tmp_path):
     report_service = ReportService.from_settings(settings)
     locator = SessionRecordLocator.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Locator",
         objective="Aggregate session records",
         allowed_hosts=["example.com"],

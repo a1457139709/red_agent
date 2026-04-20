@@ -1,5 +1,5 @@
 from agent.settings import Settings
-from app.operation_service import OperationService
+from conftest import create_redteam_operation
 from models.finding import Finding, FindingStatus
 from storage.repositories.findings import FindingRepository
 from storage.repositories.jobs import JobRepository
@@ -17,12 +17,11 @@ def build_settings(tmp_path):
 
 def test_finding_repository_persists_status_and_confidence_fields(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     storage = SQLiteStorage(settings.sqlite_path)
     JobRepository(storage)
     repository = FindingRepository(storage)
 
-    operation = operation_service.create_operation(title="Assess", objective="Review results")
+    operation = create_redteam_operation(settings, title="Assess", objective="Review results")
     finding = Finding.create(
         operation_id=operation.id,
         finding_type="weak_tls",

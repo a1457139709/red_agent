@@ -3,13 +3,15 @@ from app.dashboard_service import DashboardService
 from app.evidence_service import EvidenceService
 from app.finding_service import FindingService
 from app.job_service import JobService
-from app.operation_service import OperationService
 from app.session_service import SessionService
 from app.session_event_service import SessionEventService
+from conftest import create_redteam_bundle, create_redteam_operation
 from models.job import JobStatus
-from models.operation import OperationStatus
+from models.operation import Operation, OperationStatus
 from models.session_event import SessionEventLevel, SessionEventType
 import pytest
+from storage.repositories.operations import OperationRepository
+from storage.sqlite import SQLiteStorage
 
 
 def build_settings(tmp_path):
@@ -23,7 +25,6 @@ def build_settings(tmp_path):
 
 def test_dashboard_service_aggregates_counts_and_recent_items(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     finding_service = FindingService.from_settings(settings)
     evidence_service = EvidenceService.from_settings(settings)
@@ -31,7 +32,8 @@ def test_dashboard_service_aggregates_counts_and_recent_items(tmp_path):
     dashboard_service = DashboardService.from_settings(settings)
     session_service = SessionService.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Recon",
         objective="Inspect dashboard",
         allowed_hosts=["example.com"],
@@ -93,21 +95,23 @@ def test_dashboard_service_aggregates_counts_and_recent_items(tmp_path):
 
 def test_dashboard_service_defaults_to_most_recent_runtime_activity(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     event_service = SessionEventService.from_settings(settings)
     dashboard_service = DashboardService.from_settings(settings)
+    session_service = SessionService.from_settings(settings)
 
-    newer_but_idle = operation_service.create_operation(
+    newer_but_idle = create_redteam_bundle(
+        settings,
         title="Idle",
         objective="No activity",
         status=OperationStatus.READY,
-    )
-    active = operation_service.create_operation(
+    ).session
+    active = create_redteam_bundle(
+        settings,
         title="Active",
         objective="Recent event",
         status=OperationStatus.READY,
-    )
+    ).session
 
     active_job = job_service.create_job(
         operation_identifier=active.public_id,
@@ -126,29 +130,32 @@ def test_dashboard_service_defaults_to_most_recent_runtime_activity(tmp_path):
         created_at="2026-04-08T10:00:00+00:00",
     )
 
-    idle_loaded = operation_service.require_operation(newer_but_idle.public_id)
+    idle_loaded = session_service.require_session(newer_but_idle.public_id)
     idle_loaded.updated_at = "2026-04-08T09:00:00+00:00"
-    operation_service.save_operation(idle_loaded)
+    session_service.save_session(idle_loaded)
 
-    active_loaded = operation_service.require_operation(active.public_id)
+    active_loaded = session_service.require_session(active.public_id)
     active_loaded.updated_at = "2026-04-08T08:00:00+00:00"
-    operation_service.save_operation(active_loaded)
+    session_service.save_session(active_loaded)
 
     dashboard = dashboard_service.build_dashboard()
 
     assert dashboard.session.id == active.id
 
 
-def test_dashboard_service_rejects_operation_public_id_input(tmp_path):
+def test_dashboard_service_rejects_legacy_operation_public_id_input(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     dashboard_service = DashboardService.from_settings(settings)
+    repository = OperationRepository(SQLiteStorage(settings.sqlite_path))
 
-    operation = operation_service.create_operation(
+    operation = Operation.create(
         title="Recon",
         objective="Inspect dashboard",
+        workspace=str(tmp_path),
+        scope_policy_id="policy-legacy",
         status=OperationStatus.READY,
     )
+    repository.create(operation)
 
     with pytest.raises(ValueError, match=f"Session not found: {operation.public_id}"):
         dashboard_service.build_dashboard(operation.public_id)

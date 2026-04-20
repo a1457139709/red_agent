@@ -4,7 +4,7 @@ from models.session import SessionTargetKind
 
 
 def test_classify_input_detects_top_level_intents():
-    assert classify_input("/task list").intent == ControllerIntent.ADVANCED_COMMAND_REQUEST
+    assert classify_input("/skill list").intent == ControllerIntent.ADVANCED_COMMAND_REQUEST
     assert classify_input("Summarize this repository structure").intent == ControllerIntent.NORMAL_REQUEST
     assert classify_input("Start a recon session for example.com").intent == ControllerIntent.REDTEAM_REQUEST
     assert classify_input("What did you already do?").intent == ControllerIntent.RECORD_LOOKUP_REQUEST

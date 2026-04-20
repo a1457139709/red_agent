@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from models.evidence import Evidence
+from storage.schema_guard import ensure_phase6_clean_runtime_reset
 from storage.sqlite import SQLiteStorage
 
 from ._common import allocate_public_id, get_row_by_identifier
 from .jobs import JobRepository
-from .operations import OperationRepository
+from .sessions import SessionRepository
 
 
 EVIDENCE_SCHEMA = """
@@ -22,7 +23,7 @@ CREATE TABLE IF NOT EXISTS evidence (
     content_type TEXT,
     hash_digest TEXT,
     captured_at TEXT NOT NULL,
-    FOREIGN KEY(operation_id) REFERENCES operations(id),
+    FOREIGN KEY(operation_id) REFERENCES sessions(id),
     FOREIGN KEY(job_id) REFERENCES session_jobs(id)
 );
 
@@ -99,8 +100,9 @@ class EvidenceRepository:
         return evidence
 
     def _ensure_schema(self) -> None:
-        OperationRepository(self.storage)
+        SessionRepository(self.storage)
         JobRepository(self.storage)
         with self.storage.connect() as connection:
+            ensure_phase6_clean_runtime_reset(connection, app_data_dir=self.storage.db_path.parent)
             connection.executescript(EVIDENCE_SCHEMA)
             connection.commit()

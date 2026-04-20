@@ -3,10 +3,10 @@ import json
 import app.security_tool_execution_service as security_tool_execution_module
 from agent.settings import Settings
 from app.job_service import JobService
-from app.operation_service import OperationService
 from app.security_tool_execution_service import SecurityToolExecutionService
-from reporting.evidence_export import EvidenceExportService
+from conftest import create_redteam_operation
 from models.operation import OperationStatus
+from reporting.evidence_export import EvidenceExportService
 from tools.contracts import EvidenceCandidate, FindingCandidate, SecurityToolResult
 
 
@@ -21,12 +21,12 @@ def build_settings(tmp_path):
 
 def test_generate_operation_export_writes_json_summaries_with_traceability(tmp_path, monkeypatch):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     execution_service = SecurityToolExecutionService.from_settings(settings)
     export_service = EvidenceExportService.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Export",
         objective="Generate structured output",
         allowed_domains=["example.com"],

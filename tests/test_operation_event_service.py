@@ -3,7 +3,7 @@ import pytest
 from agent.settings import Settings
 from app.job_service import JobService
 from app.operation_event_service import OperationEventService
-from app.operation_service import OperationService
+from conftest import create_redteam_operation
 from models.operation_event import OperationEventLevel, OperationEventType
 
 
@@ -18,11 +18,10 @@ def build_settings(tmp_path):
 
 def test_operation_event_service_persists_lists_and_counts_events(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     event_service = OperationEventService.from_settings(settings)
 
-    operation = operation_service.create_operation(title="Recon", objective="Inspect scope")
+    operation = create_redteam_operation(settings, title="Recon", objective="Inspect scope")
     job = job_service.create_job(
         operation_identifier=operation.public_id,
         job_type="http_probe",

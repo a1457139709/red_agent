@@ -9,15 +9,20 @@ from urllib.parse import SplitResult, urlsplit
 from agent.settings import Settings, get_settings
 from models.job import Job
 from models.operation import Operation
+from models.session import Session
 from models.scope_policy import ScopePolicy
 from models.skill import LoadedSkill
 from orchestration.scope_validator import AdmissionOutcome, AdmissionRequest, ScopeValidator
+from storage.repositories.operations import OperationRepository
+from storage.sqlite import SQLiteStorage
 from tools import build_security_tool_registry
 from tools.executor import SecurityToolExecutionError, SecurityToolExecutor
 
 from .job_service import JobService
-from .operation_service import OperationService
+from .operation_service import project_session_to_operation
 from .scope_policy_service import ScopePolicyService
+from .session_scope import resolve_session_identifier
+from .session_service import SessionService
 
 
 DEFAULT_HTTP_PATHS = ("/", "/robots.txt", "/.well-known/security.txt")
@@ -51,6 +56,7 @@ class SkillWorkflowSkippedJob:
 class SkillWorkflowPlan:
     skill_name: str
     workflow_profile: str
+    session: Session
     operation: Operation
     primary_target: str
     planned_jobs: list[SkillWorkflowJobTemplate]
@@ -73,13 +79,15 @@ class SkillWorkflowService:
         self,
         *,
         job_service: JobService,
-        operation_service: OperationService,
+        session_service: SessionService,
+        operation_repository: OperationRepository,
         scope_policy_service: ScopePolicyService,
         security_tool_executor: SecurityToolExecutor,
         scope_validator: ScopeValidator,
     ) -> None:
         self.job_service = job_service
-        self.operation_service = operation_service
+        self.session_service = session_service
+        self.operation_repository = operation_repository
         self.scope_policy_service = scope_policy_service
         self.security_tool_executor = security_tool_executor
         self.scope_validator = scope_validator
@@ -87,9 +95,11 @@ class SkillWorkflowService:
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> "SkillWorkflowService":
         settings = settings or get_settings()
+        storage = SQLiteStorage(settings.sqlite_path)
         return cls(
             job_service=JobService.from_settings(settings),
-            operation_service=OperationService.from_settings(settings),
+            session_service=SessionService.from_settings(settings),
+            operation_repository=OperationRepository(storage),
             scope_policy_service=ScopePolicyService.from_settings(settings),
             security_tool_executor=SecurityToolExecutor(build_security_tool_registry()),
             scope_validator=ScopeValidator(),
@@ -109,8 +119,14 @@ class SkillWorkflowService:
         normalized_target = primary_target.strip()
         if not normalized_target:
             raise ValueError("Primary target is required.")
-        operation = self.operation_service.require_operation(operation_identifier)
-        policy = self.scope_policy_service.require_scope_policy_for_session(operation.id)
+        session_id = resolve_session_identifier(
+            self.session_service,
+            operation_identifier,
+            operation_repository=self.operation_repository,
+        )
+        session = self.session_service.require_session(session_id)
+        policy = self.scope_policy_service.require_scope_policy_for_session(session.id)
+        operation = project_session_to_operation(session, policy)
         templates = self._build_templates(
             workflow_profile=workflow_profile,
             primary_target=normalized_target,
@@ -123,12 +139,13 @@ class SkillWorkflowService:
         )
         if not planned_jobs:
             raise ValueError(
-                f"Skill workflow '{skill.manifest.name}' produced no in-scope jobs for operation "
-                f"{operation.public_id or operation.id}."
+                f"Skill workflow '{skill.manifest.name}' produced no in-scope jobs for session "
+                f"{session.public_id or session.id}."
             )
         return SkillWorkflowPlan(
             skill_name=skill.manifest.name,
             workflow_profile=workflow_profile,
+            session=session,
             operation=operation,
             primary_target=normalized_target,
             planned_jobs=planned_jobs,
@@ -140,7 +157,7 @@ class SkillWorkflowService:
         for template in plan.planned_jobs:
             created_jobs.append(
                 self.job_service.create_job(
-                    operation_identifier=plan.operation.id,
+                    session_identifier=plan.session.id,
                     job_type=template.job_type,
                     target_ref=template.target_ref,
                     arguments=template.effective_arguments(),

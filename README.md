@@ -7,13 +7,14 @@
 - a persisted task runtime
 - an explicit `SKILL.md` skill system
 - a controlled local execution boundary
+- a session-first red-team runtime
 
 The project is intended for local single-user development work. It is not a SaaS agent platform or a multi-user service.
 
-The repository now contains two parallel runtime families:
+The repository now contains two runtime families:
 
 - v1 `Task` / `Run` for the existing coding-agent workflow
-- v2 `Operation` / `Job` foundations plus scope-aware admission and a scheduler/worker runtime for the red-team-oriented runtime
+- v2 `Session` / `Job` foundations plus scope-aware admission and a scheduler/worker runtime for the red-team-oriented runtime
 
 ## Current Capabilities
 
@@ -31,8 +32,8 @@ The repository now contains two parallel runtime families:
 - persisted tasks, runs, checkpoints, and task logs
 - task-scoped safety audit logging
 - blob-backed checkpoint storage with metadata-only SQLite indexing
-- persisted operations, scope policies, session-owned jobs, artifacts, findings, reports, and memory entries
-- persisted operation-level admission and execution events
+- persisted redteam sessions, scope policies, session-owned jobs, artifacts, findings, reports, and memory entries
+- persisted session-level admission and execution events
 - scope-aware target validation for the v2 red-team runtime
 - a durable scheduler/worker runtime with job queueing, leases, heartbeats, retries, and cooperative cancellation
 - pure-Python typed security tools for DNS, HTTP, TLS, banner grabbing, and TCP port scans
@@ -41,7 +42,7 @@ The repository now contains two parallel runtime families:
 - automatic persistence of typed-tool artifact payloads, finding records, and indexed reports
 - artifact-to-finding traceability links for structured review and report generation
 - JSON report generation for session summaries, findings, and artifact indexes
-- Phase 6 red-team CLI coverage for operations, jobs, findings, artifacts, reports, and dashboards
+- Phase 6 red-team CLI coverage for sessions, jobs, findings, artifacts, reports, and dashboards
 - isolated subprocess execution for typed security tools so timed-out or cancelled jobs can be terminated cleanly
 
 ## Run
@@ -68,7 +69,7 @@ Describe what you want in plain language first. Examples:
 
 `Start a recon session for example.com` now starts (or reuses) a redteam session and immediately executes in the current interactive flow with progress visibility.
 
-Use slash commands for skill and shell-level control. `/task` remains as a legacy debug path, while the old `/operation` and `/job` command families have been removed from the user-facing CLI.
+Use slash commands for skill and shell-level control.
 
 - `/help`
 - `/help skill`
@@ -90,16 +91,16 @@ Use `/help skill` for detailed command help.
 
 Phase 2 through Phase 7 currently deliver:
 
-- `Operation`, `ScopePolicy`, `Job`, `Artifact`, `Finding`, `Report`, and `MemoryEntry` domain models
+- `Session`, `ScopePolicy`, `Job`, `Artifact`, `Finding`, `Report`, and `MemoryEntry` domain models
 - SQLite-backed repositories and services for the v2 red-team runtime
-- atomic operation plus scope-policy creation
-- operation-level admission and execution event persistence
+- atomic redteam session plus scope-policy creation
+- session-level admission and execution event persistence
 - scope-aware target, protocol, port, rate-limit, and confirmation checks
 - confirmation-gated executions are re-admitted before execution to re-check rate and concurrency limits
 - a v2-only scoped execution service that hard-blocks out-of-scope work before execution
 - a job orchestration layer that queues dependency-ready jobs, recovers stale leases, blocks failed dependency chains, and applies cooperative cancellation
 - a worker runtime with atomic job leasing, heartbeat refresh, retry backoff, timeout handling, and `drain()` support for sequential background-style execution
-- a dedicated typed-security tool registry for operation/job execution, plus session-facing adapter tools in the runtime registry
+- a dedicated typed-security tool registry for session/job execution, plus session-facing adapter tools in the runtime registry
 - pure-Python typed security tools: `dns_lookup`, `http_probe`, `tls_inspect`, `banner_grab`, and `port_scan`
 - `dns_lookup` validates both the resolver egress target and the queried logical name against scope
 - `http_probe` captures only the first HTTP response and does not auto-follow redirects

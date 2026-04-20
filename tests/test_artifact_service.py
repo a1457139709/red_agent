@@ -3,7 +3,7 @@ import sqlite3
 from agent.settings import Settings
 from app.artifact_service import ArtifactService
 from app.job_service import JobService
-from app.operation_service import OperationService
+from conftest import create_redteam_operation
 from models.operation import OperationStatus
 from storage.repositories.artifacts import ARTIFACTS_SCHEMA
 
@@ -19,11 +19,11 @@ def build_settings(tmp_path):
 
 def test_artifact_service_persists_session_owned_artifacts(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     artifact_service = ArtifactService.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Artifacts",
         objective="Persist raw session output",
         allowed_hosts=["example.com"],
@@ -62,9 +62,8 @@ def test_artifact_service_persists_session_owned_artifacts(tmp_path):
 
 def test_artifact_service_migrates_legacy_e_public_ids_to_a_prefix(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
-
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Legacy artifacts",
         objective="Migrate E-prefixed artifact ids",
         allowed_hosts=["example.com"],
@@ -121,9 +120,8 @@ def test_artifact_service_migrates_legacy_e_public_ids_to_a_prefix(tmp_path):
 
 def test_artifact_service_migrates_mixed_public_ids_into_stable_a_sequence(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
-
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Mixed artifacts",
         objective="Normalize mixed artifact ids",
         allowed_hosts=["example.com"],

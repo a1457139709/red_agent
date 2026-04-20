@@ -13,14 +13,17 @@ from app.artifact_service import ArtifactService
 from app.finding_service import FindingService
 from app.job_service import JobService
 from app.memory_service import MemoryService
-from app.operation_service import OperationService
+from app.operation_service import project_session_to_operation
 from app.scope_policy_service import ScopePolicyService
+from app.session_scope import resolve_session_identifier
+from app.session_service import SessionService
 from langchain_core.messages import HumanMessage, SystemMessage
 from models.artifact import Artifact
 from models.finding import Finding, FindingStatus
 from models.job import Job, JobStatus
 from models.memory import MemoryEntry
 from models.operation import Operation
+from models.session import Session
 from models.planner import (
     OperationContextSummary,
     PlannerProposal,
@@ -30,6 +33,7 @@ from models.planner import (
 )
 from models.scope_policy import ScopePolicy
 from orchestration.scope_validator import AdmissionOutcome, ScopeValidator
+from storage.repositories.operations import OperationRepository
 from tools import build_security_tool_registry
 from tools.executor import SecurityToolExecutionError, SecurityToolExecutor
 
@@ -50,6 +54,7 @@ MAX_CONTEXT_ITEMS = 5
 
 @dataclass(frozen=True, slots=True)
 class PlannerContext:
+    session: Session
     operation: Operation
     policy: ScopePolicy
     successful_jobs: list[Job]
@@ -205,7 +210,8 @@ class PlannerRuntime:
     def __init__(
         self,
         *,
-        operation_service: OperationService,
+        session_service: SessionService,
+        operation_repository: OperationRepository,
         scope_policy_service: ScopePolicyService,
         job_service: JobService,
         finding_service: FindingService,
@@ -217,7 +223,8 @@ class PlannerRuntime:
         scope_validator: ScopeValidator | None = None,
         model_factory: Callable[[Settings], Any] | None = None,
     ) -> None:
-        self.operation_service = operation_service
+        self.session_service = session_service
+        self.operation_repository = operation_repository
         self.scope_policy_service = scope_policy_service
         self.job_service = job_service
         resolved_artifact_service = artifact_service
@@ -241,8 +248,12 @@ class PlannerRuntime:
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> "PlannerRuntime":
         settings = settings or get_settings()
+        from storage.sqlite import SQLiteStorage
+
+        storage = SQLiteStorage(settings.sqlite_path)
         return cls(
-            operation_service=OperationService.from_settings(settings),
+            session_service=SessionService.from_settings(settings),
+            operation_repository=OperationRepository(storage),
             scope_policy_service=ScopePolicyService.from_settings(settings),
             job_service=JobService.from_settings(settings),
             artifact_service=ArtifactService.from_settings(settings),
@@ -252,12 +263,18 @@ class PlannerRuntime:
         )
 
     def build_context(self, session_identifier: str) -> PlannerContext:
-        operation = self.operation_service.require_operation(session_identifier)
-        policy = self.scope_policy_service.require_scope_policy_for_session(operation.id)
-        jobs = self.job_service.list_jobs(operation.id, limit=50)
-        artifact_items = self.artifact_service.list_artifacts(operation.id, limit=20)
-        findings = self.finding_service.list_findings(operation.id, limit=20)
-        memory_entries = self.memory_service.list_memory_entries(operation.id, limit=20)
+        session_id = resolve_session_identifier(
+            self.session_service,
+            session_identifier,
+            operation_repository=self.operation_repository,
+        )
+        session = self.session_service.require_session(session_id)
+        policy = self.scope_policy_service.require_scope_policy_for_session(session.id)
+        operation = project_session_to_operation(session, policy)
+        jobs = self.job_service.list_jobs(session.id, limit=50)
+        artifact_items = self.artifact_service.list_artifacts(session.id, limit=20)
+        findings = self.finding_service.list_findings(session.id, limit=20)
+        memory_entries = self.memory_service.list_memory_entries(session.id, limit=20)
         successful_jobs = [job for job in jobs if job.status == JobStatus.SUCCEEDED][:10]
         open_findings = [finding for finding in findings if finding.status == FindingStatus.OPEN][:10]
 
@@ -322,6 +339,7 @@ class PlannerRuntime:
             json.dumps(context_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest()
         return PlannerContext(
+            session=session,
             operation=operation,
             policy=policy,
             successful_jobs=successful_jobs,
@@ -382,7 +400,7 @@ class PlannerRuntime:
             if proposal.proposal_kind == PlannerProposalKind.PROPOSED
         ][:2]
         return OperationContextSummary(
-            session_id=context.operation.public_id or context.operation.id,
+            session_id=context.session.public_id or context.session.id,
             summary=fallback.summary,
             scope_summary=self._build_scope_summary(context.policy),
             findings_summary=self._build_findings_summary(context.open_findings),
@@ -627,7 +645,7 @@ class PlannerRuntime:
         timeout_seconds = raw.get("timeout_seconds")
         retry_limit = raw.get("retry_limit", 0)
         summary = str(raw.get("summary", "")).strip() or f"Inspect {target_ref or 'target'} with {job_type or 'typed tool'}."
-        rationale = str(raw.get("rationale", "")).strip() or "Derived from the current operation context."
+        rationale = str(raw.get("rationale", "")).strip() or "Derived from the current session context."
 
         if not isinstance(arguments, Mapping):
             return PlannerRuntimeCandidate(
@@ -862,10 +880,10 @@ class PlannerRuntime:
                 PlannerRuntimeCandidate(
                     job_type="unknown",
                     target_ref="-",
-                    summary="No obvious scoped targets were derived from operation state.",
+                    summary="No obvious scoped targets were derived from session state.",
                     rationale="Fallback planner could not derive a reliable in-scope target from current facts.",
                     forced_kind=PlannerProposalKind.SKIPPED,
-                    skip_reason="No viable in-scope planner candidates were derived from current operation facts.",
+                    skip_reason="No viable in-scope planner candidates were derived from current session facts.",
                 )
             )
         return candidates
@@ -874,7 +892,7 @@ class PlannerRuntime:
         return " ".join(
             part
             for part in [
-                f"Operation objective: {context.operation.objective}.",
+                f"Session goal: {context.session.goal}.",
                 self._build_scope_summary(context.policy),
                 self._build_findings_summary(context.open_findings),
             self._build_evidence_summary(context.artifact_items),
@@ -1096,7 +1114,7 @@ class PlannerRuntime:
     def _planner_system_prompt(self) -> str:
         tool_names = ", ".join(sorted(self.security_tool_executor.tool_names))
         return (
-            "You are a planner for a scoped security operation. "
+            "You are a planner for a scoped security session. "
             "Return JSON only. Do not suggest shell commands, freeform actions, or out-of-scope targets. "
             "Only propose typed security jobs using these job types: "
             f"{tool_names}. "
@@ -1107,11 +1125,11 @@ class PlannerRuntime:
 
     def _planner_user_prompt(self, context: PlannerContext) -> str:
         payload = {
-            "operation": {
-                "id": context.operation.public_id or context.operation.id,
-                "title": context.operation.title,
-                "objective": context.operation.objective,
-                "status": context.operation.status.value,
+            "session": {
+                "id": context.session.public_id or context.session.id,
+                "title": context.session.title,
+                "goal": context.session.goal,
+                "status": context.session.status.value,
             },
             "scope_policy": {
                 "allowed_hosts": context.policy.allowed_hosts,

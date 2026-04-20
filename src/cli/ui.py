@@ -19,7 +19,6 @@ from models.checkpoint import CheckpointSummary
 from models.evidence import Evidence
 from models.finding import Finding
 from models.job import Job
-from models.operation import Operation
 from models.planner import (
     OperationContextSummary,
     PlannerMemoryWritebackStatus,
@@ -31,7 +30,6 @@ from models.planner import (
 from models.report import Report
 from models.run import Run, TaskLogEntry
 from models.skill import LoadedSkill
-from models.scope_policy import ScopePolicy
 from models.task import Task
 from runtime.execution_events import ExecutionEventType, ExecutionProgressEvent
 
@@ -294,36 +292,6 @@ class CliPresenter:
                 ("/planner plan <session_id>", "Create and preview a persisted planner plan"),
                 ("/planner apply <plan_id> [1,3,...]", "Create jobs from all or selected planner proposals"),
             ], border_style="bright_blue"),
-            Text(
-                "Tip: /operation resume now shows a session context summary and points you to /planner plan.",
-                style="dim",
-            ),
-        )
-
-    def _help_task(self) -> Group:
-        return Group(
-            Text("Task help", style="dim"),
-            Rule(style="grey50", characters="-"),
-            Text("Legacy advanced path: task commands remain available for migration and debugging, but plain-language requests now stay on the session-first entry flow.", style="dim"),
-            self._command_panel("Task Commands", [
-                ("/task create", "Create a persisted task"),
-                ("/task list [status] [limit]", "List recent tasks"),
-                ("/task recent [limit]", "Show recent tasks"),
-                ("/task find <query> [limit]", "Search tasks by title"),
-                ("/task show <id>", "Show task details"),
-                ("/task status <id>", "Show compact task status"),
-                ("/task resume <id>", "Resume and bind a task"),
-                ("/task detach", "Pause and detach the active task"),
-                ("/task complete", "Mark the active task as completed"),
-            ], border_style="cyan"),
-            self._command_panel("Runs and Checkpoints", [
-                ("/task runs <id> [limit]", "Show recent runs for a task"),
-                ("/task run <id>", "Show one run in detail"),
-                ("/task checkpoints <id> [limit]", "Show recent checkpoints"),
-                ("/task checkpoint <id>", "Show one checkpoint in detail"),
-                ("/task logs <id> [limit]", "Show recent task logs"),
-            ], border_style="magenta"),
-            Text("Tip: use 'latest' or 'last' in task-facing commands to target the most recent task.", style="dim"),
         )
 
     def _help_skill(self) -> Group:
@@ -362,9 +330,6 @@ class CliPresenter:
         elif topic == "planner":
             body = self._help_planner()
             title = "Help: planner"
-        elif topic == "task":
-            body = self._help_task()
-            title = "Help: task"
         elif topic == "skill":
             body = self._help_skill()
             title = "Help: skill"
@@ -394,86 +359,6 @@ class CliPresenter:
             if os.system("cls") == 0:
                 return
         self.console.clear(home=True)
-
-    def show_task_list(self, tasks: list[Task], *, filter_label: str | None = None) -> None:
-        if not tasks:
-            self._emit(Panel(Text("No tasks found.", style="dim"), title="Tasks", border_style="yellow", box=ASCII_BOX))
-            return
-        table = Table(title=filter_label or "Tasks", box=ASCII_BOX, expand=True, header_style="bold")
-        table.add_column("Task", style="cyan", no_wrap=True)
-        table.add_column("Status", no_wrap=True)
-        table.add_column("Updated", style="dim", no_wrap=True)
-        table.add_column("Skill", style="magenta")
-        table.add_column("Title", overflow="fold")
-        for task in tasks:
-            table.add_row(
-                task.public_id,
-                self._status_text(task.status.value),
-                self._format_timestamp_compact(task.updated_at),
-                self._render_skill_name(task.skill_profile),
-                task.title,
-            )
-        self._emit(table)
-
-    def show_operation_list(self, operations: list[Operation], *, filter_label: str | None = None) -> None:
-        if not operations:
-            self._emit(
-                Panel(Text("No operations found.", style="dim"), title="Operations", border_style="yellow", box=ASCII_BOX)
-            )
-            return
-        table = Table(title=filter_label or "Operations", box=ASCII_BOX, expand=True, header_style="bold")
-        table.add_column("Operation", style="cyan", no_wrap=True)
-        table.add_column("Status", no_wrap=True)
-        table.add_column("Updated", style="dim", no_wrap=True)
-        table.add_column("Title", overflow="fold")
-        table.add_column("Objective", overflow="fold")
-        for operation in operations:
-            table.add_row(
-                operation.public_id,
-                self._status_text(operation.status.value),
-                self._format_timestamp_compact(operation.updated_at),
-                operation.title,
-                operation.objective,
-            )
-        self._emit(table)
-
-    def show_operation_detail(self, operation: Operation, policy: ScopePolicy) -> None:
-        summary = Panel(
-            self._detail_table([
-                ("Operation ID", operation.public_id),
-                ("Internal ID", operation.id),
-                ("Title", operation.title),
-                ("Objective", operation.objective),
-                ("Status", operation.status.value),
-                ("Workspace", operation.workspace),
-                ("Scope Policy ID", policy.id),
-                ("Created At", operation.created_at),
-                ("Updated At", operation.updated_at),
-                ("Closed At", operation.closed_at or "-"),
-                ("Last Error", operation.last_error or "-"),
-            ]),
-            title="Operation",
-            border_style="cyan",
-            box=ASCII_BOX,
-        )
-        policy_panel = Panel(
-            self._detail_table([
-                ("Allowed Hosts", ", ".join(policy.allowed_hosts) or "-"),
-                ("Allowed Domains", ", ".join(policy.allowed_domains) or "-"),
-                ("Allowed CIDRs", ", ".join(policy.allowed_cidrs) or "-"),
-                ("Allowed Ports", ", ".join(str(port) for port in policy.allowed_ports) or "-"),
-                ("Allowed Protocols", ", ".join(policy.allowed_protocols) or "-"),
-                ("Denied Targets", ", ".join(policy.denied_targets) or "-"),
-                ("Tool Categories", ", ".join(policy.allowed_tool_categories) or "-"),
-                ("Max Concurrency", str(policy.max_concurrency)),
-                ("Rate Limit", str(policy.rate_limit_per_minute) if policy.rate_limit_per_minute is not None else "-"),
-                ("Confirmation Actions", ", ".join(policy.confirmation_required_actions) or "-"),
-            ]),
-            title="Scope Policy",
-            border_style="magenta",
-            box=ASCII_BOX,
-        )
-        self._emit(Group(summary, policy_panel))
 
     def show_operation_context_summary(self, summary: OperationContextSummary) -> None:
         self._emit(
@@ -1174,7 +1059,7 @@ class CliPresenter:
         *,
         skill_name: str,
         workflow_profile: str,
-        operation_label: str,
+        session_label: str,
         primary_target: str,
         planned_rows: list[dict[str, str]],
         skipped_rows: list[dict[str, str]],
@@ -1183,7 +1068,7 @@ class CliPresenter:
             self._detail_table([
                 ("Skill", skill_name),
                 ("Workflow Profile", workflow_profile),
-                ("Operation", operation_label),
+                ("Session", session_label),
                 ("Primary Target", primary_target),
                 ("Planned Jobs", str(len(planned_rows))),
                 ("Skipped Jobs", str(len(skipped_rows))),

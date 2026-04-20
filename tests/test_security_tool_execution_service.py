@@ -10,8 +10,8 @@ from app.evidence_service import EvidenceService
 from app.finding_service import FindingService
 from agent.settings import Settings
 from app.job_service import JobService
-from app.operation_service import OperationService
 from app.security_tool_execution_service import SecurityToolExecutionService
+from conftest import create_redteam_operation
 from models.job import JobStatus
 from models.operation import OperationStatus
 from runtime.timeouts import ExecutionTimedOutError
@@ -49,14 +49,14 @@ def run_http_server():
 
 def test_security_tool_execution_service_runs_job_through_scoped_runtime(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     execution_service = SecurityToolExecutionService.from_settings(settings)
 
     server, thread = run_http_server()
     try:
         port = server.server_address[1]
-        operation = operation_service.create_operation(
+        operation = create_redteam_operation(
+            settings,
             title="Recon",
             objective="Probe local service",
             allowed_hosts=["127.0.0.1"],
@@ -104,11 +104,11 @@ def test_security_tool_execution_service_blocks_out_of_scope_targets_before_tool
     monkeypatch,
 ):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     execution_service = SecurityToolExecutionService.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Recon",
         objective="Probe authorized target",
         allowed_domains=["example.com"],
@@ -137,11 +137,11 @@ def test_security_tool_execution_service_blocks_out_of_scope_targets_before_tool
 
 def test_security_tool_execution_service_returns_failed_result_for_validation_errors(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     execution_service = SecurityToolExecutionService.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Recon",
         objective="Scan in-scope ports only",
         allowed_hosts=["127.0.0.1"],
@@ -168,11 +168,11 @@ def test_security_tool_execution_service_returns_failed_result_for_validation_er
 
 def test_security_tool_execution_service_returns_failed_result_for_unknown_tool_types(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     execution_service = SecurityToolExecutionService.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Recon",
         objective="Reject unsupported tool types",
         allowed_domains=["example.com"],
@@ -196,11 +196,11 @@ def test_security_tool_execution_service_returns_failed_result_for_unknown_tool_
 
 def test_security_tool_execution_service_reports_timeouts(tmp_path, monkeypatch):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     execution_service = SecurityToolExecutionService.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Recon",
         objective="Timeout slow probes",
         allowed_hosts=["127.0.0.1"],
@@ -235,11 +235,11 @@ def test_security_tool_execution_service_enforces_job_timeout_over_argument_time
     monkeypatch,
 ):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     execution_service = SecurityToolExecutionService.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Recon",
         objective="Honor per-job timeout",
         allowed_domains=["example.com"],
@@ -291,12 +291,12 @@ def test_security_tool_execution_service_persists_findings_and_traceability_for_
     monkeypatch,
 ):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     execution_service = SecurityToolExecutionService.from_settings(settings)
     finding_service = FindingService.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Recon",
         objective="Inspect TLS findings",
         allowed_domains=["example.com"],
@@ -366,14 +366,14 @@ def test_security_tool_execution_service_returns_failed_result_when_evidence_pip
     monkeypatch,
 ):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     execution_service = SecurityToolExecutionService.from_settings(settings)
 
     server, thread = run_http_server()
     try:
         port = server.server_address[1]
-        operation = operation_service.create_operation(
+        operation = create_redteam_operation(
+            settings,
             title="Recon",
             objective="Fail artifact persistence",
             allowed_hosts=["127.0.0.1"],

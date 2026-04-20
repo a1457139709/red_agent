@@ -6,17 +6,19 @@ from datetime import datetime, timedelta
 
 from agent.settings import Settings, get_settings
 from app.job_service import JobService as AppJobService
-from app.operation_service import OperationService
+from app.session_scope import resolve_session_identifier
+from app.session_service import SessionService
 from models.job import Job, JobLogLevel, JobStatus
-from models.operation import OperationStatus
+from models.session import SessionStatus
 from models.run import utc_now_iso
 from runtime.leases import DEFAULT_JOB_LEASE_SECONDS, lease_deadline, new_lease_token
 from storage.repositories.jobs import JobRepository
+from storage.repositories.operations import OperationRepository
 from storage.sqlite import SQLiteStorage
 
 
 RETRY_BACKOFF_SECONDS = 5
-RUNNABLE_OPERATION_STATUSES = frozenset({OperationStatus.READY, OperationStatus.RUNNING})
+RUNNABLE_SESSION_STATUSES = frozenset({SessionStatus.ACTIVE})
 DEPENDENCY_FAILURE_STATUSES = frozenset(
     {
         JobStatus.FAILED,
@@ -56,12 +58,14 @@ class JobOrchestrationService:
         *,
         repository: JobRepository,
         job_service: AppJobService,
-        operation_service: OperationService,
+        session_service: SessionService,
+        operation_repository: OperationRepository,
         settings: Settings,
     ) -> None:
         self.repository = repository
         self.job_service = job_service
-        self.operation_service = operation_service
+        self.session_service = session_service
+        self.operation_repository = operation_repository
         self.settings = settings
 
     @classmethod
@@ -71,7 +75,8 @@ class JobOrchestrationService:
         return cls(
             repository=JobRepository(storage),
             job_service=AppJobService.from_settings(settings),
-            operation_service=OperationService.from_settings(settings),
+            session_service=SessionService.from_settings(settings),
+            operation_repository=OperationRepository(storage),
             settings=settings,
         )
 
@@ -213,11 +218,11 @@ class JobOrchestrationService:
         now: str | None = None,
     ) -> list[AttemptResolution]:
         timestamp = now or utc_now_iso()
-        operation_id: str | None = None
+        session_id: str | None = None
         if operation_identifier is not None:
-            operation_id = self.operation_service.require_operation(operation_identifier).id
+            session_id = self._resolve_session_id(operation_identifier)
         recovered: list[AttemptResolution] = []
-        for job in self.repository.list_stale_leases(now=timestamp, operation_id=operation_id):
+        for job in self.repository.list_stale_leases(now=timestamp, operation_id=session_id):
             if job.cancel_requested_at is not None:
                 cancelled_job = self._cancel_running_job(
                     job=job,
@@ -490,14 +495,14 @@ class JobOrchestrationService:
         jobs = self.repository.list_by_statuses(statuses)
         if operation_identifier is None:
             return jobs
-        operation = self.operation_service.require_operation(operation_identifier)
-        return [job for job in jobs if job.operation_id == operation.id]
+        session_id = self._resolve_session_id(operation_identifier)
+        return [job for job in jobs if job.session_id == session_id]
 
     def _iter_operation_jobs(self, operation_identifier: str | None) -> list[list[Job]]:
         grouped: dict[str, list[Job]] = defaultdict(list)
         if operation_identifier is not None:
-            operation = self.operation_service.require_operation(operation_identifier)
-            jobs = self.repository.list(operation.id, limit=None)
+            session_id = self._resolve_session_id(operation_identifier)
+            jobs = self.repository.list(session_id, limit=None)
             return [jobs] if jobs else []
         for job in self.repository.list_by_statuses(
             {
@@ -524,8 +529,15 @@ class JobOrchestrationService:
         return dependencies
 
     def _operation_is_runnable(self, operation_identifier: str) -> bool:
-        operation = self.operation_service.require_operation(operation_identifier)
-        return operation.status in RUNNABLE_OPERATION_STATUSES
+        session = self.session_service.require_session(self._resolve_session_id(operation_identifier))
+        return session.status in RUNNABLE_SESSION_STATUSES
+
+    def _resolve_session_id(self, identifier: str) -> str:
+        return resolve_session_identifier(
+            self.session_service,
+            identifier,
+            operation_repository=self.operation_repository,
+        )
 
 
 def job_log_level(status: JobStatus) -> JobLogLevel:

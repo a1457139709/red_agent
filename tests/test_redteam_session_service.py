@@ -15,7 +15,7 @@ def build_settings(tmp_path):
     )
 
 
-def test_redteam_session_service_bootstraps_session_scope_policy_and_operation_projection(tmp_path):
+def test_redteam_session_service_bootstraps_session_and_scope_policy(tmp_path):
     settings = build_settings(tmp_path)
     service = RedteamSessionService.from_settings(settings)
     session_service = SessionService.from_settings(settings)
@@ -40,12 +40,10 @@ def test_redteam_session_service_bootstraps_session_scope_policy_and_operation_p
     session = session_service.require_session(bundle.session.id)
     policy = scope_policy_service.require_scope_policy(bundle.scope_policy.id)
 
-    assert bundle.operation.id == bundle.session.id
     assert session.id == bundle.session.id
     assert session.mode == SessionMode.REDTEAM
     assert session.persistence_mode == SessionPersistenceMode.PERSISTENT
     assert session.status == SessionStatus.ACTIVE
-    assert session.metadata["legacy_container"] == "operation_projection"
     assert policy.session_id == bundle.session.id
     assert policy.allowed_ports == [80, 443]
     assert policy.max_concurrency == 2

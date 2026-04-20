@@ -163,7 +163,7 @@ def test_presenter_detail_views_include_key_fields_without_blob_internals():
     presenter.show_skill_workflow_plan(
         skill_name="surface-recon",
         workflow_profile="surface-recon",
-        operation_label="O0001",
+        session_label="S0001",
         primary_target="example.com",
         planned_rows=[
             {

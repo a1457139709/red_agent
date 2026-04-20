@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from models.finding_evidence_link import FindingEvidenceLink
+from storage.schema_guard import ensure_phase6_clean_runtime_reset
 from storage.sqlite import SQLiteStorage
+
+from .sessions import SessionRepository
 
 
 FINDING_EVIDENCE_LINKS_SCHEMA = """
@@ -11,7 +14,7 @@ CREATE TABLE IF NOT EXISTS finding_evidence_links (
     finding_id TEXT NOT NULL,
     evidence_id TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    FOREIGN KEY(operation_id) REFERENCES operations(id),
+    FOREIGN KEY(operation_id) REFERENCES sessions(id),
     FOREIGN KEY(finding_id) REFERENCES findings(id),
     FOREIGN KEY(evidence_id) REFERENCES evidence(id),
     UNIQUE(finding_id, evidence_id)
@@ -98,6 +101,8 @@ class FindingEvidenceLinkRepository:
         return [FindingEvidenceLink.from_row(dict(row)) for row in rows]
 
     def _ensure_schema(self) -> None:
+        SessionRepository(self.storage)
         with self.storage.connect() as connection:
+            ensure_phase6_clean_runtime_reset(connection, app_data_dir=self.storage.db_path.parent)
             connection.executescript(FINDING_EVIDENCE_LINKS_SCHEMA)
             connection.commit()

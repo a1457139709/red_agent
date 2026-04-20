@@ -1,5 +1,5 @@
 from agent.settings import Settings
-from app.operation_service import OperationService
+from conftest import create_redteam_operation
 from models.planner import (
     PlannerPlan,
     PlannerPlanStatus,
@@ -23,10 +23,9 @@ def build_settings(tmp_path):
 
 def test_planner_repository_round_trip_and_updates(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     repository = PlannerRepository(SQLiteStorage(settings.sqlite_path))
 
-    operation = operation_service.create_operation(title="Plan", objective="Persist planner state")
+    operation = create_redteam_operation(settings, title="Plan", objective="Persist planner state")
     plan = PlannerPlan.create(
         operation_id=operation.id,
         planning_mode="next_steps",

@@ -1,6 +1,6 @@
-﻿from agent.settings import Settings
+from agent.settings import Settings
 from app.job_service import JobService
-from app.operation_service import OperationService
+from conftest import create_redteam_operation
 from models.job import JobLogLevel
 
 
@@ -15,10 +15,9 @@ def build_settings(tmp_path):
 
 def test_job_service_creates_lists_and_loads_jobs(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
 
-    operation = operation_service.create_operation(title="Surface recon", objective="Map services")
+    operation = create_redteam_operation(settings, title="Surface recon", objective="Map services")
     first = job_service.create_job(
         operation_identifier=operation.public_id,
         job_type="dns_lookup",
@@ -47,10 +46,9 @@ def test_job_service_creates_lists_and_loads_jobs(tmp_path):
 
 def test_job_service_writes_and_reads_job_logs(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
 
-    operation = operation_service.create_operation(title="Probe", objective="Inspect endpoint")
+    operation = create_redteam_operation(settings, title="Probe", objective="Inspect endpoint")
     job = job_service.create_job(
         operation_identifier=operation.public_id,
         job_type="http_probe",

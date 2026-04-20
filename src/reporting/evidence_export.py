@@ -8,12 +8,15 @@ from agent.settings import Settings, get_settings
 from app.artifact_service import ArtifactService
 from app.finding_service import FindingService
 from app.job_service import JobService
-from app.operation_service import OperationService
+from app.operation_service import project_session_to_operation
 from app.report_service import ReportService
 from app.scope_policy_service import ScopePolicyService
+from app.session_scope import resolve_session_identifier
 from app.session_service import SessionService
 from models.run import utc_now_iso
+from storage.repositories.operations import OperationRepository
 from storage.session_paths import resolve_session_relative_path
+from storage.sqlite import SQLiteStorage
 
 from .findings_summary import (
     build_artifact_index_export,
@@ -47,7 +50,7 @@ class EvidenceExportService:
     def __init__(
         self,
         *,
-        operation_service: OperationService,
+        operation_repository: OperationRepository,
         scope_policy_service: ScopePolicyService,
         session_service: SessionService,
         job_service: JobService,
@@ -56,7 +59,7 @@ class EvidenceExportService:
         report_service: ReportService,
         settings: Settings,
     ) -> None:
-        self.operation_service = operation_service
+        self.operation_repository = operation_repository
         self.scope_policy_service = scope_policy_service
         self.session_service = session_service
         self.job_service = job_service
@@ -68,8 +71,9 @@ class EvidenceExportService:
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> "EvidenceExportService":
         settings = settings or get_settings()
+        storage = SQLiteStorage(settings.sqlite_path)
         return cls(
-            operation_service=OperationService.from_settings(settings),
+            operation_repository=OperationRepository(storage),
             scope_policy_service=ScopePolicyService.from_settings(settings),
             session_service=SessionService.from_settings(settings),
             job_service=JobService.from_settings(settings),
@@ -84,13 +88,18 @@ class EvidenceExportService:
         operation_identifier: str,
         export_name: str | None = None,
     ) -> OperationExportResult:
-        operation = self.operation_service.require_operation(operation_identifier)
-        session = self.session_service.require_session(operation.id)
-        policy = self.scope_policy_service.require_scope_policy_for_session(operation.id)
-        jobs = self.job_service.list_jobs(operation.id, limit=None)
-        artifacts = self.artifact_service.list_artifacts(operation.id, limit=None)
-        findings = self.finding_service.list_findings(operation.id, limit=None)
-        links = self.finding_service.list_links(operation.id)
+        session_id = resolve_session_identifier(
+            self.session_service,
+            operation_identifier,
+            operation_repository=self.operation_repository,
+        )
+        session = self.session_service.require_session(session_id)
+        policy = self.scope_policy_service.require_scope_policy_for_session(session.id)
+        operation = project_session_to_operation(session, policy)
+        jobs = self.job_service.list_jobs(session.id, limit=None)
+        artifacts = self.artifact_service.list_artifacts(session.id, limit=None)
+        findings = self.finding_service.list_findings(session.id, limit=None)
+        links = self.finding_service.list_links(session.id)
 
         export_label = _slugify(export_name or utc_now_iso().replace(":", "-"))
         export_dir = self.settings.sessions_dir / session.id / "reports"

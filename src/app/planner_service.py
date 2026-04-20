@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from agent.settings import Settings, get_settings
 from app.job_service import JobService
 from app.memory_service import MemoryService
-from app.operation_service import OperationService
+from app.operation_service import project_session_to_operation
 from app.scope_policy_service import ScopePolicyService
 from app.session_service import SessionService
 from models.job import Job
@@ -43,7 +43,6 @@ class PlannerService:
         self,
         repository: PlannerRepository,
         runtime: PlannerRuntime,
-        operation_service: OperationService,
         scope_policy_service: ScopePolicyService,
         job_service: JobService,
         memory_service: MemoryService,
@@ -52,7 +51,6 @@ class PlannerService:
     ) -> None:
         self.repository = repository
         self.runtime = runtime
-        self.operation_service = operation_service
         self.scope_policy_service = scope_policy_service
         self.session_service = session_service or SessionService.from_settings(settings)
         self.job_service = job_service
@@ -63,12 +61,10 @@ class PlannerService:
     def from_settings(cls, settings: Settings | None = None) -> "PlannerService":
         settings = settings or get_settings()
         storage = SQLiteStorage(settings.sqlite_path)
-        operation_service = OperationService.from_settings(settings)
         job_service = JobService.from_settings(settings)
         return cls(
             repository=PlannerRepository(storage),
             runtime=PlannerRuntime.from_settings(settings),
-            operation_service=operation_service,
             scope_policy_service=ScopePolicyService.from_settings(settings),
             session_service=SessionService.from_settings(settings),
             job_service=job_service,
@@ -79,7 +75,7 @@ class PlannerService:
     def create_plan(self, session_identifier: str) -> PlannerPlanBundle:
         result = self.runtime.create_plan(session_identifier)
         plan = PlannerPlan.create(
-            session_id=result.context.operation.id,
+            session_id=result.context.session.id,
             planning_mode=result.planning_mode,
             context_hash=result.context.context_hash,
             summary=result.summary,
@@ -93,7 +89,7 @@ class PlannerService:
             proposal.plan_id = plan.id
             proposals.append(proposal)
         self.repository.create_plan(plan, proposals)
-        memory_writeback = self._write_back_memory_candidates(result.context.operation.id)
+        memory_writeback = self._write_back_memory_candidates(result.context.session.id)
         return PlannerPlanBundle(plan=plan, proposals=proposals, memory_writeback=memory_writeback)
 
     def get_plan_bundle(self, identifier: str) -> PlannerPlanBundle:
@@ -109,8 +105,9 @@ class PlannerService:
         selected_indices: list[int] | None = None,
     ) -> PlannerApplyResult:
         bundle = self.get_plan_bundle(identifier)
-        operation = self.operation_service.require_operation(bundle.plan.session_id)
-        policy = self.scope_policy_service.require_scope_policy_for_session(operation.id)
+        session = self.session_service.require_session(bundle.plan.session_id)
+        policy = self.scope_policy_service.require_scope_policy_for_session(session.id)
+        operation = project_session_to_operation(session, policy)
         selectable = [
             proposal
             for proposal in bundle.proposals

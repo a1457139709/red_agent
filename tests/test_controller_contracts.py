@@ -16,7 +16,7 @@ from models.session import Session, SessionMode, SessionPersistenceMode, Session
 
 
 def test_controller_request_detects_slash_commands():
-    assert ControllerRequest(raw_input="/task list").is_slash_command
+    assert ControllerRequest(raw_input="/help").is_slash_command
     assert not ControllerRequest(raw_input="summarize this repo").is_slash_command
 
 

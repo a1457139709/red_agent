@@ -4,7 +4,7 @@ from models.scope_policy import ScopePolicy
 from storage.schema_guard import ensure_phase6_clean_runtime_reset
 from storage.sqlite import SQLiteStorage
 
-from .operations import OperationRepository
+from .sessions import SessionRepository
 
 
 SCOPE_POLICIES_SCHEMA = """
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS scope_policies (
     confirmation_required_actions TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    FOREIGN KEY(session_id) REFERENCES operations(id)
+    FOREIGN KEY(session_id) REFERENCES sessions(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_scope_policies_session_id ON scope_policies(session_id);
@@ -118,7 +118,7 @@ class ScopePolicyRepository:
         return policy
 
     def _ensure_schema(self) -> None:
-        OperationRepository(self.storage)
+        SessionRepository(self.storage)
         with self.storage.connect() as connection:
             ensure_phase6_clean_runtime_reset(connection, app_data_dir=self.storage.db_path.parent)
             connection.executescript(SCOPE_POLICIES_SCHEMA)

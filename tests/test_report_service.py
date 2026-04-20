@@ -4,9 +4,9 @@ from agent.settings import Settings
 from app.artifact_service import ArtifactService
 from app.finding_service import FindingService
 from app.job_service import JobService
-from app.operation_service import OperationService
 from app.report_service import ReportCreationError, ReportService
 from app.session_service import SessionService
+from conftest import create_redteam_operation
 from models.operation import OperationStatus
 
 
@@ -21,14 +21,14 @@ def build_settings(tmp_path):
 
 def test_report_service_writes_session_owned_report_files_and_links(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     session_service = SessionService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     artifact_service = ArtifactService.from_settings(settings)
     finding_service = FindingService.from_settings(settings)
     report_service = ReportService.from_settings(settings)
 
-    operation = operation_service.create_operation(
+    operation = create_redteam_operation(
+        settings,
         title="Reports",
         objective="Generate report output",
         allowed_hosts=["example.com"],
@@ -85,13 +85,13 @@ def test_report_service_writes_session_owned_report_files_and_links(tmp_path):
 
 def test_report_service_rolls_back_failed_creation_and_exposes_ai_prompt(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     session_service = SessionService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     artifact_service = ArtifactService.from_settings(settings)
     report_service = ReportService.from_settings(settings)
 
-    first_operation = operation_service.create_operation(
+    first_operation = create_redteam_operation(
+        settings,
         title="Primary",
         objective="Primary session",
         allowed_hosts=["one.example.com"],
@@ -99,7 +99,8 @@ def test_report_service_rolls_back_failed_creation_and_exposes_ai_prompt(tmp_pat
         allowed_ports=[443],
         status=OperationStatus.READY,
     )
-    second_operation = operation_service.create_operation(
+    second_operation = create_redteam_operation(
+        settings,
         title="Secondary",
         objective="Secondary session",
         allowed_hosts=["two.example.com"],

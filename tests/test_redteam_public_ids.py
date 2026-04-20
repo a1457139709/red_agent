@@ -1,8 +1,8 @@
-﻿from agent.settings import Settings
+from agent.settings import Settings
 from app.evidence_service import EvidenceService
 from app.finding_service import FindingService
 from app.job_service import JobService
-from app.operation_service import OperationService
+from conftest import create_redteam_operation
 
 
 def build_settings(tmp_path):
@@ -16,13 +16,12 @@ def build_settings(tmp_path):
 
 def test_redteam_public_ids_increment_by_entity_family(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     job_service = JobService.from_settings(settings)
     evidence_service = EvidenceService.from_settings(settings)
     finding_service = FindingService.from_settings(settings)
 
-    first_operation = operation_service.create_operation(title="First", objective="One")
-    second_operation = operation_service.create_operation(title="Second", objective="Two")
+    first_operation = create_redteam_operation(settings, title="First", objective="One")
+    second_operation = create_redteam_operation(settings, title="Second", objective="Two")
 
     first_job = job_service.create_job(
         operation_identifier=first_operation.public_id,
@@ -70,8 +69,8 @@ def test_redteam_public_ids_increment_by_entity_family(tmp_path):
         confidence="high",
     )
 
-    assert first_operation.public_id == "O0001"
-    assert second_operation.public_id == "O0002"
+    assert first_operation.public_id == "S0001"
+    assert second_operation.public_id == "S0002"
     assert first_job.public_id == "J0001"
     assert second_job.public_id == "J0002"
     assert first_evidence.public_id == "A0001"

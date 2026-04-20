@@ -1,5 +1,5 @@
 from agent.settings import Settings
-from app.operation_service import OperationService
+from conftest import create_redteam_operation
 from models.memory import MemoryEntry
 from storage.repositories.jobs import JobRepository
 from storage.repositories.memory import MemoryRepository
@@ -17,12 +17,11 @@ def build_settings(tmp_path):
 
 def test_memory_repository_lists_entries_and_preserves_structured_value(tmp_path):
     settings = build_settings(tmp_path)
-    operation_service = OperationService.from_settings(settings)
     storage = SQLiteStorage(settings.sqlite_path)
     JobRepository(storage)
     repository = MemoryRepository(storage)
 
-    operation = operation_service.create_operation(title="Track", objective="Persist facts")
+    operation = create_redteam_operation(settings, title="Track", objective="Persist facts")
     first = MemoryEntry.create(
         operation_id=operation.id,
         entry_type="service",
