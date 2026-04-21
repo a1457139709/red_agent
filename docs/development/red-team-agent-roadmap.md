@@ -373,7 +373,7 @@ The repository already provides:
 - `src/app/evidence_service.py`
 - `src/app/finding_service.py`
 - `src/reporting/findings_summary.py`
-- `src/reporting/evidence_export.py`
+- `src/reporting/session_report_export.py`
 
 ### Filesystem Layout
 

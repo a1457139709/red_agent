@@ -11,7 +11,6 @@ from models.finding import Finding
 from models.report import Report
 from models.report_artifact_link import ReportArtifactLink
 from models.report_finding_link import ReportFindingLink
-from storage.repositories.operations import OperationRepository
 from storage.repositories.reports import ReportRepository
 from storage.repositories.report_artifact_links import ReportArtifactLinkRepository
 from storage.repositories.report_finding_links import ReportFindingLinkRepository
@@ -20,7 +19,6 @@ from storage.repositories.findings import FindingRepository
 from storage.sqlite import SQLiteStorage
 from storage.session_paths import report_output_relative_path, resolve_session_relative_path
 
-from .session_scope import resolve_session_identifier
 from .session_service import SessionService
 
 
@@ -47,7 +45,6 @@ class ReportService:
         artifact_repository: ArtifactRepository,
         finding_repository: FindingRepository,
         session_service: SessionService,
-        operation_repository: OperationRepository,
         settings: Settings,
     ) -> None:
         self.repository = repository
@@ -56,7 +53,6 @@ class ReportService:
         self.artifact_repository = artifact_repository
         self.finding_repository = finding_repository
         self.session_service = session_service
-        self.operation_repository = operation_repository
         self.settings = settings
 
     @classmethod
@@ -70,15 +66,13 @@ class ReportService:
             ArtifactRepository(storage),
             FindingRepository(storage),
             SessionService.from_settings(settings),
-            OperationRepository(storage),
             settings,
         )
 
     def create_report(
         self,
         *,
-        session_identifier: str | None = None,
-        operation_identifier: str | None = None,
+        session_identifier: str,
         report_type: str,
         title: str,
         summary: str,
@@ -88,7 +82,7 @@ class ReportService:
         output_extension: str = ".json",
         metadata: dict | None = None,
     ) -> Report:
-        requested_identifier = session_identifier or operation_identifier
+        requested_identifier = session_identifier
         try:
             session_id = self._resolve_session_id(requested_identifier)
             session = self.session_service.require_session(session_id)
@@ -290,8 +284,4 @@ class ReportService:
     def _resolve_session_id(self, identifier: str | None) -> str:
         if not identifier:
             raise ValueError("session_identifier is required.")
-        return resolve_session_identifier(
-            self.session_service,
-            identifier,
-            operation_repository=self.operation_repository,
-        )
+        return self.session_service.require_session(identifier).id

@@ -394,8 +394,8 @@ Target boundary:
 
 Legacy boundary:
 
-- any remaining `operation_identifier` support in `ReportService.create_report(...)` is migration-only
-- it must not remain part of the Phase 7 primary report path
+- `ReportService.create_report(...)` must remain session-first
+- `operation_identifier` must not remain part of the Phase 7 primary report path
 
 ## 17. Legacy Retrieval Boundary
 
@@ -408,7 +408,7 @@ Not allowed:
 - `TaskService` as a primary retrieval dependency
 - `OperationService` as a primary retrieval dependency
 - `/task` or `/operation` as the expected user path for record lookup
-- `evidence_export.py` or old evidence/export terminology as the target architectural report path
+- `session_report_export.py` must replace old evidence/export terminology as the target architectural report path
 
 Allowed during migration:
 
@@ -492,7 +492,7 @@ Legacy files to demote further:
 
 - `src/app/task_service.py`
 - `src/app/operation_service.py`
-- `src/reporting/evidence_export.py`
+- `src/reporting/session_report_export.py`
 
 ## Final Implementation Order
 

@@ -1,3 +1,4 @@
+import inspect
 import json
 
 from agent.settings import Settings
@@ -38,12 +39,12 @@ def test_report_service_writes_session_owned_report_files_and_links(tmp_path):
     )
     session = session_service.require_session(operation.id)
     job = job_service.create_job(
-        session_identifier=operation.public_id,
+        session_identifier=session.public_id,
         job_type="http_probe",
         target_ref="https://example.com",
     )
     artifact = artifact_service.create_artifact(
-        operation_identifier=operation.public_id,
+        session_identifier=session.public_id,
         source_job_identifier=job.public_id,
         artifact_type="http_response",
         target_ref="https://example.com",
@@ -52,7 +53,7 @@ def test_report_service_writes_session_owned_report_files_and_links(tmp_path):
         artifact_path="artifacts/http_response.json",
     )
     finding = finding_service.create_finding(
-        operation_identifier=operation.public_id,
+        session_identifier=session.public_id,
         source_job_identifier=job.public_id,
         finding_type="exposed_service",
         title="Exposed service",
@@ -63,7 +64,7 @@ def test_report_service_writes_session_owned_report_files_and_links(tmp_path):
     )
 
     report = report_service.create_report(
-        operation_identifier=operation.public_id,
+        session_identifier=session.public_id,
         report_type="artifact_index",
         title="Artifact index",
         summary="Summarize session artifacts.",
@@ -109,13 +110,14 @@ def test_report_service_rolls_back_failed_creation_and_exposes_ai_prompt(tmp_pat
         status=OperationStatus.READY,
     )
     first_session = session_service.require_session(first_operation.id)
+    second_session = session_service.require_session(second_operation.id)
     second_job = job_service.create_job(
-        session_identifier=second_operation.public_id,
+        session_identifier=second_session.public_id,
         job_type="http_probe",
         target_ref="https://two.example.com",
     )
     foreign_artifact = artifact_service.create_artifact(
-        session_identifier=second_operation.public_id,
+        session_identifier=second_session.public_id,
         source_job_identifier=second_job.public_id,
         artifact_type="http_response",
         target_ref="https://two.example.com",
@@ -126,7 +128,7 @@ def test_report_service_rolls_back_failed_creation_and_exposes_ai_prompt(tmp_pat
 
     try:
         report_service.create_report(
-            session_identifier=first_operation.public_id,
+            session_identifier=first_session.public_id,
             report_type="artifact_index",
             title="Artifact index",
             summary="This should fail.",
@@ -142,7 +144,17 @@ def test_report_service_rolls_back_failed_creation_and_exposes_ai_prompt(tmp_pat
         raise AssertionError("Expected report creation failure for cross-session artifact.")
 
     reports_dir = settings.sessions_dir / first_session.id / "reports"
-    reports = report_service.list_reports(first_operation.public_id)
+    reports = report_service.list_reports(first_session.public_id)
 
     assert reports == []
     assert not reports_dir.exists() or list(reports_dir.iterdir()) == []
+
+
+def test_report_service_exposes_session_only_report_input():
+    signature = inspect.signature(ReportService.create_report)
+    source = inspect.getsource(ReportService)
+
+    assert "session_identifier" in signature.parameters
+    assert "operation_identifier" not in signature.parameters
+    assert "OperationRepository" not in source
+    assert "resolve_session_identifier" not in source

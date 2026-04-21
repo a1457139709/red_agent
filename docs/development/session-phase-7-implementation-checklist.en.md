@@ -47,7 +47,7 @@ Phase 7 does not require:
 - promoting raw `memory` to the main user-facing retrieval layer
 - primary natural-language routing in controller code
 - direct sub-agent execution of runtime queries
-- permanent legacy compatibility around `operation_identifier`
+- permanent legacy compatibility around operation-based report/export entrypoints
 
 ## Non-Goals
 
@@ -307,7 +307,7 @@ Affected files:
 
 - `src/app/report_service.py`
 - optionally `src/reporting/findings_summary.py`
-- optionally `src/reporting/evidence_export.py`
+- optionally `src/reporting/session_report_export.py`
 
 Action:
 
@@ -471,7 +471,7 @@ Files:
 Checklist:
 
 - keep `session_identifier` as the target-facing main input
-- demote `operation_identifier` to migration-only if still present
+- remove `operation_identifier` from the Phase 7 report path if still present
 - avoid putting controller-facing reuse or orchestration policy inside this service
 
 Completion check:

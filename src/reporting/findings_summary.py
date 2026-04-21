@@ -4,15 +4,13 @@ from models.artifact import Artifact
 from models.finding import Finding
 from models.finding_artifact_link import FindingArtifactLink
 from models.job import Job
-from models.operation import Operation
 from models.scope_policy import ScopePolicy
 from models.session import Session
 
 
-def build_operation_summary(
+def build_session_summary(
     *,
     session: Session,
-    operation: Operation,
     policy: ScopePolicy,
     jobs: list[Job],
     artifacts: list[Artifact],
@@ -27,18 +25,6 @@ def build_operation_summary(
         finding_status_counts[finding.status.value] = finding_status_counts.get(finding.status.value, 0) + 1
 
     return {
-        "operation": {
-            "id": operation.id,
-            "public_id": operation.public_id,
-            "title": operation.title,
-            "objective": operation.objective,
-            "workspace": operation.workspace,
-            "status": operation.status.value,
-            "created_at": operation.created_at,
-            "updated_at": operation.updated_at,
-            "closed_at": operation.closed_at,
-            "last_error": operation.last_error,
-        },
         "scope_policy": {
             "allowed_hosts": policy.allowed_hosts,
             "allowed_domains": policy.allowed_domains,
@@ -54,7 +40,6 @@ def build_operation_summary(
         "counts": {
             "jobs": len(jobs),
             "artifacts": len(artifacts),
-            "evidence": len(artifacts),
             "findings": len(findings),
         },
         "session": {
@@ -92,7 +77,6 @@ def build_findings_export(
             "id": finding.id,
             "public_id": finding.public_id,
             "session_id": finding.session_id,
-            "operation_id": finding.operation_id,
             "source_job_id": finding.source_job_id,
             "finding_type": finding.finding_type,
             "title": finding.title,
@@ -107,7 +91,6 @@ def build_findings_export(
             "created_at": finding.created_at,
             "updated_at": finding.updated_at,
             "artifact_public_ids": artifact_ids_by_finding.get(finding.id, []),
-            "evidence_public_ids": artifact_ids_by_finding.get(finding.id, []),
         }
         for finding in findings
     ]
@@ -131,11 +114,8 @@ def build_artifact_index_export(
             "id": item.id,
             "public_id": item.public_id,
             "session_id": item.session_id,
-            "operation_id": item.operation_id,
             "source_job_id": item.source_job_id,
-            "job_id": item.job_id,
             "artifact_type": item.artifact_type,
-            "evidence_type": item.evidence_type,
             "target_ref": item.target_ref,
             "title": item.title,
             "summary": item.summary,
@@ -147,16 +127,3 @@ def build_artifact_index_export(
         }
         for item in artifacts
     ]
-
-
-def build_evidence_index_export(
-    *,
-    evidence: list[Artifact],
-    links: list[FindingArtifactLink],
-    findings_by_id: dict[str, Finding],
-) -> list[dict]:
-    return build_artifact_index_export(
-        artifacts=evidence,
-        links=links,
-        findings_by_id=findings_by_id,
-    )
