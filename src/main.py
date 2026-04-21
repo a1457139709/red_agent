@@ -25,8 +25,12 @@ from controller import (
     ControllerResult,
     ControllerResultStatus,
     ExecutionBridgeKind,
+    parse_record_query_command,
     SessionSummary,
 )
+from models.artifact import Artifact
+from models.finding import Finding
+from models.report import Report
 from models.session import SessionMode
 from models.risk_policy import ConfirmationRequestPayload
 from runtime.task_runner import apply_result_to_session
@@ -287,9 +291,9 @@ def handle_help_command(
         return True
 
     topic = args[0].lower()
-    if topic not in {"skill"}:
+    if topic not in {"query", "skill"}:
         ui.show_error(
-            f"Unknown help topic: {args[0]}. Available topics: skill"
+            f"Unknown help topic: {args[0]}. Available topics: query, skill"
         )
         return True
     ui.show_help(topic)
@@ -501,8 +505,10 @@ def build_controller_request(
     question: str,
     shell_state: ShellState,
 ) -> ControllerRequest:
+    record_query = parse_record_query_command(question)
     return ControllerRequest(
         raw_input=question,
+        record_query=record_query,
         active_skill_name=shell_state.active_skill_name,
         active_session_id=shell_state.active_session_id,
         active_session_public_id=shell_state.active_session_public_id,
@@ -531,6 +537,128 @@ def render_controller_result(
             ui.show_info(result.message)
         return
 
+    if result.generated_report_payload is not None:
+        payload = result.generated_report_payload
+        if payload.report is not None:
+            ui.show_info(
+                "\n".join(
+                    [
+                        f"{'Reused' if payload.reused else 'Generated'} report for session {payload.session_summary.public_id}",
+                        f"Report type: {payload.report_type.value}",
+                    ]
+                )
+            )
+            ui.show_report_detail(
+                payload.report,
+                linked_artifact_ids=payload.linked_artifact_ids,
+                linked_finding_ids=payload.linked_finding_ids,
+            )
+            return
+        ui.show_info(
+            "\n".join(
+                [
+                    f"Prepared report flow for session {payload.session_summary.public_id}",
+                    f"Report type: {payload.report_type.value}",
+                    f"Scope: {payload.resolved_scope}",
+                ]
+            )
+        )
+        return
+
+    if result.finding_explanation_payload is not None:
+        payload = result.finding_explanation_payload
+        if payload.explanation is not None:
+            explanation = payload.explanation
+            lines = [
+                f"Finding {explanation.finding.public_id}: {explanation.finding.title}",
+                f"Target: {explanation.finding.target_ref}",
+                f"Severity: {explanation.finding.severity}",
+                f"Status: {explanation.finding.status.value}",
+                f"Linked artifacts: {_join_public_ids(explanation.linked_artifacts)}",
+                f"Source job: {explanation.source_job.public_id if explanation.source_job is not None else '-'}",
+                f"Supporting jobs: {_join_public_ids(explanation.supporting_jobs)}",
+                f"Related events: {', '.join(event.event_type.value for event in explanation.related_events) or '-'}",
+                f"Related runs: {', '.join(explanation.related_run_ids) or '-'}",
+            ]
+            if explanation.missing_segments:
+                lines.append(f"Incomplete trace: {', '.join(explanation.missing_segments)}")
+            ui.show_info("\n".join(lines))
+            return
+        ui.show_info(
+            "\n".join(
+                [
+                    f"Prepared finding explanation lookup for session {payload.session_summary.public_id}",
+                    f"Finding: {payload.finding_identifier}",
+                    f"Scope: {payload.resolved_scope}",
+                ]
+            )
+        )
+        return
+
+    if result.record_lookup_payload is not None:
+        payload = result.record_lookup_payload
+        if payload.history_summary is not None:
+            history = payload.history_summary
+            layer_summary = history.layer_summary
+            lines = [
+                f"Session {payload.session_summary.public_id}: {payload.session_summary.title}",
+                f"Mode: {payload.session_summary.mode.value}",
+                f"Status: {payload.session_summary.status.value}",
+                f"Scope: {payload.resolved_scope}",
+                (
+                    "Counts: "
+                    f"runs={layer_summary.runs}, logs={layer_summary.logs}, checkpoints={layer_summary.checkpoints}, "
+                    f"jobs={layer_summary.jobs}, events={layer_summary.events}, memory={layer_summary.memory_entries}, "
+                    f"artifacts={layer_summary.artifacts}, findings={layer_summary.findings}, reports={layer_summary.reports}"
+                ),
+                f"Recent runs: {_join_public_ids(history.recent_runs)}",
+                f"Recent jobs: {_join_public_ids(history.recent_jobs)}",
+                f"Recent artifacts: {_join_public_ids(history.recent_artifacts)}",
+                f"Recent findings: {_join_public_ids(history.recent_findings)}",
+                f"Recent reports: {_join_public_ids(history.recent_reports)}",
+            ]
+            ui.show_info("\n".join(lines))
+            return
+
+        if payload.execution_steps:
+            step_lines = [
+                (
+                    f"{step.occurred_at} | {step.source_type} | {step.title}"
+                    + (f" | job={step.job_public_id}" if step.job_public_id else "")
+                    + (f" | run={step.run_public_id}" if step.run_public_id else "")
+                    + (f" | {step.detail}" if step.detail and step.detail != "-" else "")
+                )
+                for step in payload.execution_steps
+            ]
+            ui.show_info(
+                "\n".join(
+                    [f"Execution steps for session {payload.session_summary.public_id}:"] + step_lines
+                )
+            )
+            return
+
+        if payload.artifacts:
+            ui.show_artifact_list(payload.artifacts, session_label=payload.session_summary.public_id)
+            return
+
+        if payload.findings:
+            ui.show_finding_list(payload.findings, operation_label=payload.session_summary.public_id)
+            return
+
+        if payload.reports:
+            ui.show_report_list(payload.reports, session_label=payload.session_summary.public_id)
+            return
+
+        lines = [
+            f"Loaded record lookup for session {payload.session_summary.public_id}",
+            f"Kind: {payload.query.kind.value}",
+            f"Scope: {payload.resolved_scope}",
+        ]
+        if payload.query.lookup_identifier:
+            lines.append(f"Lookup hint: {payload.query.lookup_identifier}")
+        ui.show_info("\n".join(lines))
+        return
+
     if result.session_summary is not None:
         summary = result.session_summary
         session_action = "Reused" if summary.reused else "Started"
@@ -545,6 +673,15 @@ def render_controller_result(
         ui.show_info("\n".join(lines))
     elif result.message:
         ui.show_info(result.message)
+
+
+def _join_public_ids(items: list[Artifact | Finding | Report | SessionSummary | object]) -> str:
+    labels: list[str] = []
+    for item in items:
+        label = getattr(item, "public_id", None)
+        if label:
+            labels.append(str(label))
+    return ", ".join(labels) if labels else "-"
 
 
 async def execute_controller_bridge(

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.report_flow_service import ReportFlowService
+from app.session_record_query_service import SessionRecordQueryService
 from app.session_service import SessionService
 from models.session import Session, SessionMode, SessionStatus, SessionTarget
 
@@ -13,6 +15,11 @@ from .contracts import (
     ControllerResult,
     ExecutionBridge,
     ExecutionBridgeKind,
+    FindingExplanationPayload,
+    GeneratedReportPayload,
+    RecordLookupKind,
+    RecordLookupPayload,
+    RecordQueryRequest,
     SessionSummary,
 )
 from .intents import IntentClassification, classify_input
@@ -24,14 +31,22 @@ SESSION_START_KEYWORDS = ("start", "create", "new session", "open session")
 @dataclass(slots=True)
 class AgentController:
     session_service: SessionService
+    session_record_query_service: SessionRecordQueryService
+    report_flow_service: ReportFlowService
 
     @classmethod
     def from_session_service(cls, session_service: SessionService) -> "AgentController":
-        return cls(session_service=session_service)
+        return cls(
+            session_service=session_service,
+            session_record_query_service=SessionRecordQueryService.from_settings(session_service.settings),
+            report_flow_service=ReportFlowService.from_settings(session_service.settings),
+        )
 
     def handle(self, request: ControllerRequest) -> ControllerResult:
         if request.pending_clarification is not None:
             return self._handle_clarification(request)
+        if request.record_query is not None:
+            return self._handle_structured_record_query(request)
 
         classification = classify_input(request.raw_input)
         if classification.intent == ControllerIntent.ADVANCED_COMMAND_REQUEST:
@@ -86,7 +101,13 @@ class AgentController:
                 clarification_request=resolution.next_request,
             )
         if resolution.resolved_record_scope is not None:
-            return self._handle_record_lookup_scope(request, resolution.resolved_record_scope)
+            return self._handle_record_query(
+                request=request,
+                record_query=RecordQueryRequest(
+                    kind=RecordLookupKind.SESSION_HISTORY,
+                    explicit_scope=resolution.resolved_record_scope,
+                ),
+            )
         if resolution.resolved_mode is None:
             return ControllerResult.unsupported(
                 message="I still need enough information to route that request."
@@ -106,51 +127,230 @@ class AgentController:
         request: ControllerRequest,
         classification: IntentClassification,
     ) -> ControllerResult:
-        if classification.explicit_record_scope is not None:
-            return self._handle_record_lookup_scope(request, classification.explicit_record_scope)
-        if request.active_session_public_id:
-            return self._handle_record_lookup_scope(request, request.active_session_public_id)
-        clarification = build_clarification_request(
-            kind=ClarificationKind.RECORD_SCOPE,
-            original_request=request.raw_input,
-        )
-        return ControllerResult.clarification_required(
-            message=clarification.question,
-            clarification_request=clarification,
+        return self._handle_record_query(
+            request=request,
+            record_query=RecordQueryRequest(
+                kind=RecordLookupKind.SESSION_HISTORY,
+                explicit_scope=classification.explicit_record_scope,
+            ),
         )
 
-    def _handle_record_lookup_scope(
+    def _handle_structured_record_query(
         self,
         request: ControllerRequest,
-        scope: str,
     ) -> ControllerResult:
-        session: Session | None
-        if scope == "current":
-            if request.active_session_public_id is None:
-                clarification = build_clarification_request(
-                    kind=ClarificationKind.RECORD_SCOPE,
-                    original_request=request.raw_input,
-                )
-                return ControllerResult.clarification_required(
-                    message=clarification.question,
-                    clarification_request=clarification,
-                )
-            session = self.session_service.get_session(request.active_session_public_id)
-        elif scope == "latest":
-            session = self.session_service.get_latest_session()
-        else:
-            session = self.session_service.get_session(scope)
-
-        if session is None:
+        if request.record_query is None:
             return ControllerResult.unsupported(
-                message=f"Session not found for record lookup: {scope}"
+                message="Missing record query request."
+            )
+        return self._handle_record_query(
+            request=request,
+            record_query=request.record_query,
+        )
+
+    def _handle_record_query(
+        self,
+        *,
+        request: ControllerRequest,
+        record_query: RecordQueryRequest,
+    ) -> ControllerResult:
+        resolved_scope = record_query.explicit_scope or request.active_session_public_id
+        if resolved_scope is None:
+            clarification = build_clarification_request(
+                kind=ClarificationKind.RECORD_SCOPE,
+                original_request=request.raw_input,
+            )
+            return ControllerResult.clarification_required(
+                message=clarification.question,
+                clarification_request=clarification,
             )
 
-        summary = SessionSummary.from_session(session, reused=True)
+        session = self._resolve_record_lookup_session(request=request, scope=resolved_scope)
+        if session is None:
+            return ControllerResult.unsupported(
+                message=f"Session not found for record lookup: {resolved_scope}"
+            )
+        try:
+            summary = SessionSummary.from_session(session, reused=True)
+            return self._build_record_lookup_result(
+                record_query=record_query,
+                session_summary=summary,
+                resolved_scope=resolved_scope,
+            )
+        except ValueError as exc:
+            return ControllerResult.unsupported(message=str(exc))
+
+    def _resolve_record_lookup_session(
+        self,
+        *,
+        request: ControllerRequest,
+        scope: str,
+    ) -> Session | None:
+        if scope == "current":
+            if request.active_session_public_id is None:
+                return None
+            return self.session_service.get_session(request.active_session_public_id)
+        if scope == "latest":
+            return self.session_service.get_latest_session()
+        return self.session_service.get_session(scope)
+
+    def _build_record_lookup_result(
+        self,
+        *,
+        record_query: RecordQueryRequest,
+        session_summary: SessionSummary,
+        resolved_scope: str,
+    ) -> ControllerResult:
+        if record_query.kind == RecordLookupKind.FINDING_EXPLANATION:
+            finding_identifier = record_query.lookup_identifier or ""
+            explanation = self.session_record_query_service.explain_finding(
+                session_summary.id,
+                finding_identifier,
+            )
+            return ControllerResult.handled(
+                intent=ControllerIntent.RECORD_LOOKUP_REQUEST,
+                message=f"Explained finding {finding_identifier} for session {session_summary.public_id}.",
+                session_summary=session_summary,
+                finding_explanation_payload=FindingExplanationPayload(
+                    session_summary=session_summary,
+                    query=record_query,
+                    resolved_scope=resolved_scope,
+                    finding_identifier=finding_identifier,
+                    explanation=explanation,
+                ),
+                bind_session=False,
+            )
+
+        if record_query.requests_report_generation:
+            report_type = record_query.report_type
+            if report_type is None:
+                return ControllerResult.unsupported(
+                    message="Missing report type for report request."
+                )
+            if report_type.value == "session_summary":
+                report_result = self.report_flow_service.get_or_create_session_summary(session_summary.id)
+            elif report_type.value == "findings_summary":
+                report_result = self.report_flow_service.get_or_create_findings_summary(session_summary.id)
+            else:
+                report_result = self.report_flow_service.get_or_create_operator_report(session_summary.id)
+            return ControllerResult.handled(
+                intent=ControllerIntent.RECORD_LOOKUP_REQUEST,
+                message=(
+                    f"{'Reused' if report_result.reused else 'Generated'} {report_type.value} report "
+                    f"for session {session_summary.public_id}."
+                ),
+                session_summary=session_summary,
+                generated_report_payload=GeneratedReportPayload(
+                    session_summary=session_summary,
+                    query=record_query,
+                    resolved_scope=resolved_scope,
+                    report_type=report_type,
+                    report=report_result.report,
+                    reused=report_result.reused,
+                    linked_artifact_ids=report_result.linked_artifact_ids,
+                    linked_finding_ids=report_result.linked_finding_ids,
+                ),
+                bind_session=False,
+            )
+
+        if record_query.kind == RecordLookupKind.SESSION_HISTORY:
+            history_summary = self.session_record_query_service.get_history_summary(session_summary.id)
+            return ControllerResult.handled(
+                intent=ControllerIntent.RECORD_LOOKUP_REQUEST,
+                message=f"Loaded history for session {session_summary.public_id}.",
+                session_summary=session_summary,
+                record_lookup_payload=RecordLookupPayload(
+                    session_summary=session_summary,
+                    query=record_query,
+                    resolved_scope=resolved_scope,
+                    history_summary=history_summary,
+                ),
+                bind_session=False,
+            )
+
+        if record_query.kind == RecordLookupKind.EXECUTION_STEPS:
+            execution_steps = self.session_record_query_service.list_execution_steps(
+                session_summary.id,
+            )
+            return ControllerResult.handled(
+                intent=ControllerIntent.RECORD_LOOKUP_REQUEST,
+                message=f"Loaded execution steps for session {session_summary.public_id}.",
+                session_summary=session_summary,
+                record_lookup_payload=RecordLookupPayload(
+                    session_summary=session_summary,
+                    query=record_query,
+                    resolved_scope=resolved_scope,
+                    execution_steps=execution_steps,
+                ),
+                bind_session=False,
+            )
+
+        if record_query.kind == RecordLookupKind.ARTIFACTS:
+            artifacts = self.session_record_query_service.list_artifacts(
+                session_summary.id,
+                artifact_identifier=record_query.lookup_identifier,
+            )
+            return ControllerResult.handled(
+                intent=ControllerIntent.RECORD_LOOKUP_REQUEST,
+                message=f"Loaded artifacts for session {session_summary.public_id}.",
+                session_summary=session_summary,
+                record_lookup_payload=RecordLookupPayload(
+                    session_summary=session_summary,
+                    query=record_query,
+                    resolved_scope=resolved_scope,
+                    artifacts=artifacts,
+                ),
+                bind_session=False,
+            )
+
+        if record_query.kind == RecordLookupKind.FINDINGS:
+            findings = self.session_record_query_service.list_findings(
+                session_summary.id,
+                finding_identifier=record_query.lookup_identifier,
+            )
+            return ControllerResult.handled(
+                intent=ControllerIntent.RECORD_LOOKUP_REQUEST,
+                message=f"Loaded findings for session {session_summary.public_id}.",
+                session_summary=session_summary,
+                record_lookup_payload=RecordLookupPayload(
+                    session_summary=session_summary,
+                    query=record_query,
+                    resolved_scope=resolved_scope,
+                    findings=findings,
+                ),
+                bind_session=False,
+            )
+
+        if record_query.kind == RecordLookupKind.REPORTS:
+            reports = self.session_record_query_service.list_reports(
+                session_summary.id,
+                report_identifier=record_query.lookup_identifier,
+            )
+            return ControllerResult.handled(
+                intent=ControllerIntent.RECORD_LOOKUP_REQUEST,
+                message=f"Loaded reports for session {session_summary.public_id}.",
+                session_summary=session_summary,
+                record_lookup_payload=RecordLookupPayload(
+                    session_summary=session_summary,
+                    query=record_query,
+                    resolved_scope=resolved_scope,
+                    reports=reports,
+                ),
+                bind_session=False,
+            )
+
+        lookup_label = record_query.kind.value.replace("_", " ")
+        if record_query.lookup_identifier:
+            lookup_label = f"{lookup_label} ({record_query.lookup_identifier})"
         return ControllerResult.handled(
             intent=ControllerIntent.RECORD_LOOKUP_REQUEST,
-            message=f"Session {summary.public_id}: {summary.title}",
-            session_summary=summary,
+            message=f"Prepared {lookup_label} lookup for session {session_summary.public_id}.",
+            session_summary=session_summary,
+            record_lookup_payload=RecordLookupPayload(
+                session_summary=session_summary,
+                query=record_query,
+                resolved_scope=resolved_scope,
+            ),
             bind_session=False,
         )
 

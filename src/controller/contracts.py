@@ -4,6 +4,14 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from uuid import uuid4
 
+from app.session_record_query_service import (
+    ExecutionStepView,
+    FindingExplanationTraceView,
+    SessionHistorySummaryView,
+)
+from models.artifact import Artifact
+from models.finding import Finding
+from models.report import Report
 from models.session import Session, SessionMode, SessionStatus
 
 
@@ -33,6 +41,21 @@ class ClarificationKind(StrEnum):
 class ExecutionBridgeKind(StrEnum):
     BASE_RUNTIME = "base_runtime"
     ACTIVE_SKILL_RUNTIME = "active_skill_runtime"
+
+
+class RecordLookupKind(StrEnum):
+    SESSION_HISTORY = "session_history"
+    EXECUTION_STEPS = "execution_steps"
+    ARTIFACTS = "artifacts"
+    FINDINGS = "findings"
+    REPORTS = "reports"
+    FINDING_EXPLANATION = "finding_explanation"
+
+
+class ReportType(StrEnum):
+    SESSION_SUMMARY = "session_summary"
+    FINDINGS_SUMMARY = "findings_summary"
+    OPERATOR_REPORT = "operator_report"
 
 
 @dataclass(slots=True)
@@ -81,6 +104,66 @@ class ExecutionBridge:
     prompt_text: str
 
 
+@dataclass(slots=True)
+class RecordQueryRequest:
+    kind: RecordLookupKind
+    explicit_scope: str | None = None
+    lookup_identifier: str | None = None
+    report_type: ReportType | None = None
+    source_command: str | None = None
+
+    def __post_init__(self) -> None:
+        self.kind = RecordLookupKind(self.kind)
+        if self.explicit_scope is not None:
+            normalized_scope = self.explicit_scope.strip()
+            self.explicit_scope = normalized_scope or None
+        if self.lookup_identifier is not None:
+            normalized_identifier = self.lookup_identifier.strip().upper()
+            self.lookup_identifier = normalized_identifier or None
+        if self.report_type is not None:
+            self.report_type = ReportType(self.report_type)
+        if self.source_command is not None:
+            normalized_command = self.source_command.strip().lower()
+            self.source_command = normalized_command or None
+
+    @property
+    def requests_report_generation(self) -> bool:
+        return self.report_type is not None
+
+
+@dataclass(slots=True)
+class RecordLookupPayload:
+    session_summary: SessionSummary
+    query: RecordQueryRequest
+    resolved_scope: str
+    history_summary: SessionHistorySummaryView | None = None
+    execution_steps: list[ExecutionStepView] = field(default_factory=list)
+    artifacts: list[Artifact] = field(default_factory=list)
+    findings: list[Finding] = field(default_factory=list)
+    reports: list[Report] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class FindingExplanationPayload:
+    session_summary: SessionSummary
+    query: RecordQueryRequest
+    resolved_scope: str
+    finding_identifier: str
+    explanation: FindingExplanationTraceView | None = None
+
+
+@dataclass(slots=True)
+class GeneratedReportPayload:
+    session_summary: SessionSummary
+    query: RecordQueryRequest
+    resolved_scope: str
+    report_type: ReportType
+    report: Report | None = None
+    reused: bool = False
+    linked_artifact_ids: list[str] = field(default_factory=list)
+    linked_finding_ids: list[str] = field(default_factory=list)
+
+
 class ConfirmationDecisionValue(StrEnum):
     APPROVE = "approve"
     DENY = "deny"
@@ -105,6 +188,7 @@ class ConfirmationDecision:
 @dataclass(slots=True)
 class ControllerRequest:
     raw_input: str
+    record_query: RecordQueryRequest | None = None
     active_skill_name: str | None = None
     active_session_id: str | None = None
     active_session_public_id: str | None = None
@@ -124,6 +208,9 @@ class ControllerResult:
     intent: ControllerIntent
     message: str | None = None
     session_summary: SessionSummary | None = None
+    record_lookup_payload: RecordLookupPayload | None = None
+    finding_explanation_payload: FindingExplanationPayload | None = None
+    generated_report_payload: GeneratedReportPayload | None = None
     clarification_request: ClarificationRequest | None = None
     confirmation_request: ConfirmationRequest | None = None
     execution_bridge: ExecutionBridge | None = None
@@ -136,6 +223,9 @@ class ControllerResult:
         intent: ControllerIntent,
         message: str | None = None,
         session_summary: SessionSummary | None = None,
+        record_lookup_payload: RecordLookupPayload | None = None,
+        finding_explanation_payload: FindingExplanationPayload | None = None,
+        generated_report_payload: GeneratedReportPayload | None = None,
         execution_bridge: ExecutionBridge | None = None,
         bind_session: bool = False,
     ) -> "ControllerResult":
@@ -144,6 +234,9 @@ class ControllerResult:
             intent=intent,
             message=message,
             session_summary=session_summary,
+            record_lookup_payload=record_lookup_payload,
+            finding_explanation_payload=finding_explanation_payload,
+            generated_report_payload=generated_report_payload,
             execution_bridge=execution_bridge,
             bind_session=bind_session,
         )

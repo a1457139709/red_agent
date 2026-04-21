@@ -43,6 +43,9 @@ The repository now contains two runtime families:
 - artifact-to-finding traceability links for structured review and report generation
 - JSON report generation for session summaries, findings, and artifact indexes
 - Phase 6 red-team CLI coverage for sessions, jobs, findings, artifacts, reports, and dashboards
+- Phase 7 command-first query entry contracts for session-scoped history, step, artifact, finding, report, and explanation requests
+- Phase 7 session-owned record retrieval views with traceable finding explanations
+- Phase 7 report-flow orchestration with report reuse and Markdown operator reports
 - isolated subprocess execution for typed security tools so timed-out or cancelled jobs can be terminated cleanly
 
 ## Run
@@ -68,12 +71,23 @@ Describe what you want in plain language first. Examples:
 - `What did you already do?`
 
 `Start a recon session for example.com` now starts (or reuses) a redteam session and immediately executes in the current interactive flow with progress visibility.
+`/report session_summary`, `/report findings_summary`, and `/report operator_report` now reuse the most recent session report when possible and generate a new report only when needed.
 
 Use slash commands for skill and shell-level control.
 
 - `/help`
+- `/help query`
 - `/help skill`
 - `/clear`
+- `/status [current|latest|S0001]`
+- `/history [current|latest|S0001]`
+- `/steps [current|latest|S0001]`
+- `/artifacts [current|latest|S0001]`
+- `/findings [current|latest|S0001]`
+- `/reports [current|latest|S0001]`
+- `/show <public_id> [current|latest|S0001]`
+- `/why <finding_public_id> [current|latest|S0001]`
+- `/report <session_summary|findings_summary|operator_report> [current|latest|S0001]`
 - `/skill list`
 - `/skill show <name>`
 - `/skill use <name>`
@@ -84,7 +98,7 @@ Use slash commands for skill and shell-level control.
 - `/skill-name <prompt>`
 
 `/help` now leads with natural-language examples and keeps command groups in advanced help topics.
-Use `/help skill` for detailed command help.
+Use `/help query` for session-aware retrieval/report commands and `/help skill` for skill command help.
 `/clear` resets only the in-memory context and clears the screen while preserving active session binding and active shell skill.
 
 ## Red-Team Runtime Status

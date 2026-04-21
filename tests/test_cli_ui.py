@@ -19,6 +19,7 @@ def test_presenter_help_and_observation_render_clean_text():
     presenter = build_presenter(outputs)
 
     presenter.show_help()
+    presenter.show_help("query")
     presenter.show_help("skill")
     presenter.show_help("artifact")
     presenter.show_observation(
@@ -32,19 +33,24 @@ def test_presenter_help_and_observation_render_clean_text():
     assert "Advanced Help Topics" in outputs[0]
     assert "Summarize this repository structure" in outputs[0]
     assert "skill" in outputs[0]
+    assert "query" in outputs[0]
     assert "operation" not in outputs[0]
     assert "job" not in outputs[0]
+    assert "/help query" in outputs[0]
     assert "/help skill" in outputs[0]
     assert "/clear" in outputs[0]
-    assert "Skill Commands" in outputs[1]
-    assert "Shorthand Invocation" in outputs[1]
-    assert "/skill-name <prompt>" in outputs[1]
-    assert "Artifact Commands" in outputs[2]
-    assert "/artifact list <session_id> [limit]" in outputs[2]
-    assert "/evidence" not in outputs[2]
-    assert "line1" in outputs[3]
-    assert "line3" in outputs[3]
-    assert "[truncated for display]" in outputs[3]
+    assert "Query Commands" in outputs[1]
+    assert "/history [scope]" in outputs[1]
+    assert "/report <session_summary|findings_summary|operator_report> [scope]" in outputs[1]
+    assert "Skill Commands" in outputs[2]
+    assert "Shorthand Invocation" in outputs[2]
+    assert "/skill-name <prompt>" in outputs[2]
+    assert "Artifact Commands" in outputs[3]
+    assert "/artifact list <session_id> [limit]" in outputs[3]
+    assert "/evidence" not in outputs[3]
+    assert "line1" in outputs[4]
+    assert "line3" in outputs[4]
+    assert "[truncated for display]" in outputs[4]
 
 
 def test_presenter_clear_screen_is_silent_for_callback_presenter():

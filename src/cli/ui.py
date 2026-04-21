@@ -226,6 +226,7 @@ class CliPresenter:
         topics = Table(box=ASCII_BOX, expand=True, header_style="bold")
         topics.add_column("Topic", style="bold cyan", no_wrap=True)
         topics.add_column("Purpose", style="white")
+        topics.add_row("query", "Session-first record lookup and report commands")
         topics.add_row("finding", "Session-owned findings and artifact links")
         topics.add_row("artifact", "Inspect raw session artifacts")
         topics.add_row("report", "Inspect persisted session reports")
@@ -238,8 +239,29 @@ class CliPresenter:
             Rule(style="grey50", characters="-"),
             Panel(examples, title="Natural-Language First", border_style="green", box=ASCII_BOX),
             Panel(topics, title="Advanced Help Topics", border_style="bright_blue", box=ASCII_BOX),
-            Text("Drill down with /help skill for advanced command details.", style="dim"),
+            Text("Drill down with /help query or /help skill for command details.", style="dim"),
             Text("Session shortcuts: /clear, /reset, /exit, /quit", style="dim"),
+        )
+
+    def _help_query(self) -> Group:
+        return Group(
+            Text("Query help", style="dim"),
+            Rule(style="grey50", characters="-"),
+            self._command_panel("Query Commands", [
+                ("/status [scope]", "Show the current session-focused history/status summary"),
+                ("/history [scope]", "Look up session history with current-session default scope"),
+                ("/steps [scope]", "Look up execution step history for a session"),
+                ("/artifacts [scope]", "Look up session artifacts"),
+                ("/findings [scope]", "Look up session findings"),
+                ("/reports [scope]", "Look up persisted session reports"),
+                ("/show <public_id> [scope]", "Resolve one session/artifact/finding/report public id in session scope"),
+                ("/why <finding_public_id> [scope]", "Explain a finding through the Phase 7 trace flow"),
+                (
+                    "/report <session_summary|findings_summary|operator_report> [scope]",
+                    "Request a session-scoped report flow",
+                ),
+            ], border_style="bright_blue"),
+            Text("Scope may be current, latest, or a session id like S0001. No scope means the active session.", style="dim"),
         )
 
     def _help_finding(self) -> Group:
@@ -315,6 +337,9 @@ class CliPresenter:
         if topic is None:
             body = self._help_overview()
             title = "red-code"
+        elif topic == "query":
+            body = self._help_query()
+            title = "Help: query"
         elif topic == "finding":
             body = self._help_finding()
             title = "Help: finding"

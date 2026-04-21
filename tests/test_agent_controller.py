@@ -4,7 +4,13 @@ import main as main_module
 from runtime.execution_events import ExecutionOutcome
 from agent.settings import Settings
 from agent.state import SessionState
+from app.artifact_service import ArtifactService
+from app.finding_service import FindingService
+from app.job_service import JobService
+from app.report_service import ReportService
+from app.run_service import RunService
 from app.session_service import SessionService
+from app.session_event_service import SessionEventService
 from controller.agent_controller import AgentController
 from controller.contracts import (
     ClarificationKind,
@@ -13,6 +19,8 @@ from controller.contracts import (
     ControllerResult,
     ControllerResultStatus,
     ExecutionBridgeKind,
+    RecordLookupKind,
+    ReportType,
 )
 from main import (
     ShellState,
@@ -22,7 +30,10 @@ from main import (
     render_controller_result,
     run_interactive_shell,
 )
+from models.job import JobStatus
+from models.run import TaskLogLevel
 from models.session import SessionMode
+from models.session_event import SessionEventLevel, SessionEventType
 from tools import build_tool_registry
 from tools.executor import ToolExecutor
 
@@ -64,6 +75,81 @@ def build_settings(tmp_path):
         openai_model="test-model",
         working_directory=tmp_path,
     )
+
+
+def seed_record_lookup_session(tmp_path):
+    settings = build_settings(tmp_path)
+    session_service = SessionService.from_settings(settings)
+    run_service = RunService.from_settings(settings)
+    job_service = JobService.from_settings(settings)
+    event_service = SessionEventService.from_settings(settings)
+    artifact_service = ArtifactService.from_settings(settings)
+    finding_service = FindingService.from_settings(settings)
+    report_service = ReportService.from_settings(settings)
+    controller = AgentController.from_session_service(session_service)
+
+    session = session_service.create_session(
+        title="Lookup Session",
+        goal="Return query records",
+        mode="redteam",
+        status="active",
+    )
+    run = run_service.start_run(session.public_id)
+    run_service.write_log(
+        session_identifier=session.public_id,
+        run_id=run.id,
+        level=TaskLogLevel.INFO,
+        message="tool_completed",
+        payload={"tool_name": "http_probe"},
+    )
+    run = run_service.complete_run(run.id, step_count=1)
+    job = job_service.create_job(
+        session_identifier=session.public_id,
+        job_type="http_probe",
+        target_ref="https://example.com",
+        status=JobStatus.SUCCEEDED,
+    )
+    event_service.create_event(
+        session_identifier=session.public_id,
+        job_identifier=job.public_id,
+        event_type=SessionEventType.EXECUTION_SUCCEEDED,
+        level=SessionEventLevel.INFO,
+        tool_name="http_probe",
+        tool_category="recon",
+        target_ref="https://example.com",
+        message="Probe completed.",
+        payload={"run_id": run.public_id},
+    )
+    artifact = artifact_service.create_artifact(
+        session_identifier=session.public_id,
+        source_job_identifier=job.public_id,
+        artifact_type="http_response",
+        target_ref="https://example.com",
+        title="HTTP response",
+        summary="Captured response.",
+    )
+    finding = finding_service.create_finding(
+        session_identifier=session.public_id,
+        source_job_identifier=job.public_id,
+        finding_type="reachable_service",
+        title="Reachable service",
+        target_ref="https://example.com",
+        severity="medium",
+        confidence="high",
+        summary="Responded successfully.",
+    )
+    finding_service.link_artifacts(finding.public_id, [artifact.public_id])
+    report = report_service.create_report(
+        session_identifier=session.public_id,
+        report_type="session_summary",
+        title="Session summary",
+        summary="Summarize the session.",
+        artifact_identifiers=[artifact.public_id],
+        finding_identifiers=[finding.public_id],
+        output_payload={"ok": True},
+    )
+
+    return settings, controller, session, artifact, finding, report
 
 
 def test_agent_controller_creates_and_reuses_normal_session(tmp_path):
@@ -154,7 +240,131 @@ def test_agent_controller_record_lookup_prefers_active_session(tmp_path):
     assert result.intent == ControllerIntent.RECORD_LOOKUP_REQUEST
     assert result.session_summary is not None
     assert result.session_summary.public_id == session.public_id
+    assert result.record_lookup_payload is not None
+    assert result.record_lookup_payload.query.kind == RecordLookupKind.SESSION_HISTORY
     assert not result.bind_session
+
+
+def test_agent_controller_handles_structured_history_command_with_active_session(tmp_path):
+    _settings, controller, session, _artifact, _finding, _report = seed_record_lookup_session(tmp_path)
+
+    result = controller.handle(
+        build_controller_request(
+            question="/history",
+            shell_state=ShellState(
+                active_session_id=session.id,
+                active_session_public_id=session.public_id,
+                active_session_mode=session.mode,
+            ),
+        )
+    )
+
+    assert result.status == ControllerResultStatus.HANDLED
+    assert result.intent == ControllerIntent.RECORD_LOOKUP_REQUEST
+    assert result.record_lookup_payload is not None
+    assert result.record_lookup_payload.query.kind == RecordLookupKind.SESSION_HISTORY
+    assert result.record_lookup_payload.resolved_scope == session.public_id
+    assert result.record_lookup_payload.history_summary is not None
+    assert result.record_lookup_payload.history_summary.layer_summary.artifacts == 1
+    assert result.session_summary is not None
+    assert result.session_summary.public_id == session.public_id
+
+
+def test_agent_controller_structured_history_command_requires_scope_without_active_session(tmp_path):
+    settings = build_settings(tmp_path)
+    session_service = SessionService.from_settings(settings)
+    controller = AgentController.from_session_service(session_service)
+
+    result = controller.handle(
+        build_controller_request(
+            question="/history",
+            shell_state=ShellState(),
+        )
+    )
+
+    assert result.status == ControllerResultStatus.CLARIFICATION_REQUIRED
+    assert result.clarification_request is not None
+    assert result.clarification_request.kind == ClarificationKind.RECORD_SCOPE
+
+
+def test_agent_controller_handles_structured_report_command_with_explicit_scope(tmp_path):
+    _settings, controller, session, _artifact, _finding, _report = seed_record_lookup_session(tmp_path)
+
+    result = controller.handle(
+        build_controller_request(
+            question=f"/report operator_report {session.public_id}",
+            shell_state=ShellState(),
+        )
+    )
+
+    assert result.status == ControllerResultStatus.HANDLED
+    assert result.generated_report_payload is not None
+    assert result.generated_report_payload.report_type == ReportType.OPERATOR_REPORT
+    assert result.generated_report_payload.resolved_scope == session.public_id
+    assert result.generated_report_payload.report is not None
+    assert result.generated_report_payload.report.report_type == ReportType.OPERATOR_REPORT.value
+    assert not result.generated_report_payload.reused
+    assert result.session_summary is not None
+    assert result.session_summary.public_id == session.public_id
+
+
+def test_agent_controller_reuses_existing_generated_report(tmp_path):
+    _settings, controller, session, _artifact, _finding, _report = seed_record_lookup_session(tmp_path)
+
+    first = controller.handle(
+        build_controller_request(
+            question=f"/report operator_report {session.public_id}",
+            shell_state=ShellState(),
+        )
+    )
+    second = controller.handle(
+        build_controller_request(
+            question=f"/report operator_report {session.public_id}",
+            shell_state=ShellState(),
+        )
+    )
+
+    assert first.generated_report_payload is not None
+    assert second.generated_report_payload is not None
+    assert not first.generated_report_payload.reused
+    assert second.generated_report_payload.reused
+    assert second.generated_report_payload.report is not None
+    assert first.generated_report_payload.report is not None
+    assert second.generated_report_payload.report.public_id == first.generated_report_payload.report.public_id
+
+
+def test_agent_controller_returns_real_artifact_records_for_structured_lookup(tmp_path):
+    _settings, controller, session, artifact, _finding, _report = seed_record_lookup_session(tmp_path)
+
+    result = controller.handle(
+        build_controller_request(
+            question=f"/show {artifact.public_id} {session.public_id}",
+            shell_state=ShellState(),
+        )
+    )
+
+    assert result.status == ControllerResultStatus.HANDLED
+    assert result.record_lookup_payload is not None
+    assert [item.public_id for item in result.record_lookup_payload.artifacts] == [artifact.public_id]
+
+
+def test_agent_controller_returns_traceable_finding_explanation(tmp_path):
+    _settings, controller, session, artifact, finding, _report = seed_record_lookup_session(tmp_path)
+
+    result = controller.handle(
+        build_controller_request(
+            question=f"/why {finding.public_id} {session.public_id}",
+            shell_state=ShellState(),
+        )
+    )
+
+    assert result.status == ControllerResultStatus.HANDLED
+    assert result.finding_explanation_payload is not None
+    assert result.finding_explanation_payload.explanation is not None
+    explanation = result.finding_explanation_payload.explanation
+    assert explanation.finding.public_id == finding.public_id
+    assert [item.public_id for item in explanation.linked_artifacts] == [artifact.public_id]
+    assert explanation.missing_segments == []
 
 
 def test_agent_controller_active_task_does_not_override_normal_session_routing(tmp_path):
@@ -409,6 +619,7 @@ def test_build_controller_request_and_clear_command_preserve_session_binding(tmp
     request = build_controller_request(question="inspect configs", shell_state=shell_state)
     assert request.active_session_public_id == "S0001"
     assert request.pending_clarification is not None
+    assert request.record_query is None
 
     handle_clear_command("/clear", shell_state=shell_state, session_state=session_state)
 
@@ -426,6 +637,18 @@ def test_build_prompt_prefers_session_binding():
     )
 
     assert build_prompt(shell_state) == "\nnormal:S0001 > "
+
+
+def test_build_controller_request_parses_record_query_commands():
+    request = build_controller_request(
+        question="/why F0001 latest",
+        shell_state=ShellState(),
+    )
+
+    assert request.record_query is not None
+    assert request.record_query.kind == RecordLookupKind.FINDING_EXPLANATION
+    assert request.record_query.lookup_identifier == "F0001"
+    assert request.record_query.explicit_scope == "latest"
 
 
 def test_run_interactive_shell_rejects_removed_operation_job_and_evidence_commands(

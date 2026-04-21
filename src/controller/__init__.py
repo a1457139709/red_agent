@@ -12,8 +12,15 @@ from .contracts import (
     ControllerResultStatus,
     ExecutionBridge,
     ExecutionBridgeKind,
+    FindingExplanationPayload,
+    GeneratedReportPayload,
+    RecordLookupKind,
+    RecordLookupPayload,
+    RecordQueryRequest,
+    ReportType,
     SessionSummary,
 )
+from .record_query_parser import parse_record_query_command
 
 __all__ = [
     "AgentController",
@@ -29,5 +36,12 @@ __all__ = [
     "ControllerResultStatus",
     "ExecutionBridge",
     "ExecutionBridgeKind",
+    "FindingExplanationPayload",
+    "GeneratedReportPayload",
+    "RecordLookupKind",
+    "RecordLookupPayload",
+    "RecordQueryRequest",
+    "ReportType",
     "SessionSummary",
+    "parse_record_query_command",
 ]
