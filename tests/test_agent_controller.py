@@ -52,11 +52,11 @@ class FakeExecutionService:
         skill_service,
         tool_executor,
         settings,
+        conversation_context=None,
+        interaction_port=None,
         skill_name: str | None = None,
-        on_progress=None,
         on_info=None,
         on_error=None,
-        on_confirmation=None,
     ) -> ExecutionOutcome:
         self.calls.append(
             {

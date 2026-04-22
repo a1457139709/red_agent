@@ -5,7 +5,9 @@ from agent.settings import Settings
 from agent.state import SessionState
 from app.execution_service import ExecutionService
 from app.session_service import SessionService
-from models.risk_policy import ConfirmationRequestPayload, RiskLevel
+from controller.contracts import ConfirmationDecision, ConfirmationDecisionValue, ConfirmationRequest
+from models.conversation_context import ConversationContext
+from models.risk_policy import RiskLevel
 from models.session import SessionMode, SessionStatus
 from runtime.execution_events import ExecutionEventType
 from tools.executor import ToolExecutor
@@ -55,6 +57,44 @@ def build_settings(tmp_path) -> Settings:
     )
 
 
+class FakeInteractionPort:
+    def __init__(self, *, approve: bool) -> None:
+        self.approve = approve
+        self.events = []
+        self.confirmations: list[ConfirmationRequest] = []
+        self.decisions: list[ConfirmationDecision] = []
+
+    def emit_controller_result(self, result, context) -> None:
+        return None
+
+    def emit_execution_progress(self, event, context) -> None:
+        self.events.append(event)
+
+    def emit_final_answer(self, text, context) -> None:
+        return None
+
+    def emit_interaction_error(self, message, context) -> None:
+        return None
+
+    def request_confirmation(
+        self,
+        request: ConfirmationRequest,
+        context: ConversationContext,
+    ) -> ConfirmationDecision:
+        self.confirmations.append(request)
+        return ConfirmationDecision(
+            request_id=request.request_id,
+            decision=(
+                ConfirmationDecisionValue.APPROVE
+                if self.approve
+                else ConfirmationDecisionValue.DENY
+            ),
+        )
+
+    def emit_confirmation_resolved(self, decision, context) -> None:
+        self.decisions.append(decision)
+
+
 def test_execution_service_blocks_denied_confirmation_and_records_events(tmp_path):
     settings = build_settings(tmp_path)
     session_service = SessionService.from_settings(settings)
@@ -83,8 +123,7 @@ def test_execution_service_blocks_denied_confirmation_and_records_events(tmp_pat
         confirmation_policy_service=ExecutionService.from_settings(settings).confirmation_policy_service,
         tool_access_policy_service=ExecutionService.from_settings(settings).tool_access_policy_service,
     )
-    events = []
-    confirmations: list[ConfirmationRequestPayload] = []
+    interaction_port = FakeInteractionPort(approve=False)
 
     outcome = asyncio.run(
         execution_service.execute_session(
@@ -94,14 +133,14 @@ def test_execution_service_blocks_denied_confirmation_and_records_events(tmp_pat
             skill_service=FakeSkillService(["poc_execute"]),
             tool_executor=ToolExecutor({"poc_execute": FakeTool("poc_execute")}),
             settings=settings,
-            on_progress=events.append,
-            on_confirmation=lambda payload: (confirmations.append(payload) or False),
+            conversation_context=ConversationContext(),
+            interaction_port=interaction_port,
         )
     )
 
     assert outcome.status == "blocked"
-    assert len(confirmations) == 1
-    assert [event.event_type for event in events if event.event_type in {
+    assert len(interaction_port.confirmations) == 1
+    assert [event.event_type for event in interaction_port.events if event.event_type in {
         ExecutionEventType.CONFIRMATION_REQUIRED,
         ExecutionEventType.CONFIRMATION_DENIED,
     }] == [
@@ -141,7 +180,7 @@ def test_execution_service_resumes_when_confirmation_is_approved(tmp_path):
         confirmation_policy_service=ExecutionService.from_settings(settings).confirmation_policy_service,
         tool_access_policy_service=ExecutionService.from_settings(settings).tool_access_policy_service,
     )
-    events = []
+    interaction_port = FakeInteractionPort(approve=True)
 
     outcome = asyncio.run(
         execution_service.execute_session(
@@ -151,13 +190,15 @@ def test_execution_service_resumes_when_confirmation_is_approved(tmp_path):
             skill_service=FakeSkillService(["poc_execute"]),
             tool_executor=ToolExecutor({"poc_execute": FakeTool("poc_execute")}),
             settings=settings,
-            on_progress=events.append,
-            on_confirmation=lambda payload: True,
+            conversation_context=ConversationContext(),
+            interaction_port=interaction_port,
         )
     )
 
     assert outcome.status == "completed"
-    assert ExecutionEventType.CONFIRMATION_APPROVED in [event.event_type for event in events]
+    assert ExecutionEventType.CONFIRMATION_APPROVED in [
+        event.event_type for event in interaction_port.events
+    ]
 
 
 def test_execution_service_requires_confirmation_for_unknown_redteam_action(tmp_path):
@@ -188,8 +229,7 @@ def test_execution_service_requires_confirmation_for_unknown_redteam_action(tmp_
         confirmation_policy_service=ExecutionService.from_settings(settings).confirmation_policy_service,
         tool_access_policy_service=ExecutionService.from_settings(settings).tool_access_policy_service,
     )
-    events = []
-    confirmations: list[ConfirmationRequestPayload] = []
+    interaction_port = FakeInteractionPort(approve=False)
 
     outcome = asyncio.run(
         execution_service.execute_session(
@@ -199,16 +239,16 @@ def test_execution_service_requires_confirmation_for_unknown_redteam_action(tmp_
             skill_service=FakeSkillService(["unknown_new_action"]),
             tool_executor=ToolExecutor({"unknown_new_action": FakeTool("unknown_new_action")}),
             settings=settings,
-            on_progress=events.append,
-            on_confirmation=lambda payload: (confirmations.append(payload) or False),
+            conversation_context=ConversationContext(),
+            interaction_port=interaction_port,
         )
     )
 
     assert outcome.status == "blocked"
-    assert len(confirmations) == 1
-    assert confirmations[0].action_name == "unknown_new_action"
-    assert confirmations[0].risk_level == RiskLevel.ELEVATED
-    assert [event.event_type for event in events if event.event_type in {
+    assert len(interaction_port.confirmations) == 1
+    assert interaction_port.confirmations[0].action_name == "unknown_new_action"
+    assert interaction_port.confirmations[0].risk_level == RiskLevel.ELEVATED.value
+    assert [event.event_type for event in interaction_port.events if event.event_type in {
         ExecutionEventType.CONFIRMATION_REQUIRED,
         ExecutionEventType.CONFIRMATION_DENIED,
     }] == [

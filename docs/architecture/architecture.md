@@ -22,10 +22,11 @@ One naming detail is worth calling out: the product is branded as `red-code`, bu
 
 ```text
 src/
-  main.py                # shell loop, slash commands, prompt routing, active task/skill state
+  main.py                # CLI adapter shell loop, slash commands, and prompt routing
   cli/ui.py              # Rich presenter for help, task, run, checkpoint, and skill output
   agent/                 # model provider, prompt assembly, session state, context compression
-  app/                   # task, run, checkpoint, skill, and v2 execution services
+  app/                   # task, run, checkpoint, skill, execution, and shared session interaction services
+  web/                   # Web-ready DTOs, serializers, conversation store, and adapter helpers
   orchestration/         # v2 scope validation, admission, scheduling, and job orchestration
   runtime/               # bound-task runner plus v2 lease, timeout, and worker helpers
   models/                # domain entities and serialization helpers
@@ -41,15 +42,16 @@ This document explains the implemented runtime as it exists today. For the appro
 
 ### 1. Shell and Presentation
 
-`src/main.py` is the composition root. It builds settings, services, the controller, the tool executor, and the interactive loop.
+`src/main.py` is now the CLI composition root and adapter entrypoint. It builds settings, services, the controller, the tool executor, and the interactive loop, but shared controller-plus-execution orchestration now lives outside the shell entrypoint.
 
-The shell owns three pieces of session-local routing state:
+The CLI shell keeps adapter-local conversation state through `ConversationContext`:
 
-- `active_task_id`
-- `active_task_public_id`
 - `active_skill_name`
+- `active_session_id`
+- `active_session_public_id`
+- `pending_clarification`
 
-`run_interactive_shell(...)` now routes plain-text input through the controller first, then dispatches advanced slash commands as fallback. It still handles:
+`SessionInteractionService` is the shared interaction layer above `AgentController` and `ExecutionService`. `run_interactive_shell(...)` uses that shared service for plain-text interaction, then dispatches advanced slash commands as CLI-only fallback. The CLI adapter still handles:
 
 - session commands such as `/clear`, `/reset`, `/exit`, and `/quit`
 - task commands under `/task ...`
@@ -57,7 +59,7 @@ The shell owns three pieces of session-local routing state:
 - one-shot skill shorthand such as `/security-audit <prompt>`
 - normal prompts in either base mode, active-skill mode, or bound-task mode
 
-All human-facing structured output is rendered by `src/cli/ui.py` rather than being assembled ad hoc in the shell loop.
+All human-facing structured output is rendered by `src/cli/ui.py`. Web-facing payloads are serialized separately under `src/web/serialization.py` and do not depend on Rich output.
 
 ### 2. Prompt and Model Runtime
 

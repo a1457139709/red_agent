@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass
 from typing import Callable
 
 from agent.logger import ColoredOutput, reset_steps
@@ -13,26 +12,31 @@ from app.artifact_service import ArtifactService
 from app.dashboard_service import DashboardService
 from app.execution_service import ExecutionService
 from app.finding_service import FindingService
+from app.interaction_port import InteractionPort
 from app.planner_service import PlannerService
 from app.report_service import ReportService
+from app.session_interaction_service import (
+    SessionInteractionService,
+    build_controller_request_from_context,
+)
 from app.session_service import SessionService
 from app.skill_service import SkillService
 from app.skill_workflow_service import SkillWorkflowPlan, SkillWorkflowService
 from controller import (
     AgentController,
     ClarificationRequest,
+    ConfirmationDecision,
+    ConfirmationDecisionValue,
+    ConfirmationRequest,
     ControllerRequest,
     ControllerResult,
     ControllerResultStatus,
-    ExecutionBridgeKind,
-    parse_record_query_command,
     SessionSummary,
 )
 from models.artifact import Artifact
+from models.conversation_context import ConversationContext
 from models.finding import Finding
 from models.report import Report
-from models.session import SessionMode
-from models.risk_policy import ConfirmationRequestPayload
 from runtime.task_runner import apply_result_to_session
 from cli.ui import CliPresenter, get_presenter
 from skills.registry import SkillRegistry
@@ -45,20 +49,8 @@ InputFn = Callable[[str], str]
 NONE_LABEL = "none"
 
 
-@dataclass
-class ShellState:
-    active_skill_name: str | None = None
-    active_session_id: str | None = None
-    active_session_public_id: str | None = None
-    active_session_mode: SessionMode | None = None
-    active_session_title: str | None = None
-    active_session_target_summary: str | None = None
-    pending_clarification: ClarificationRequest | None = None
-
-    def active_session_label(self) -> str | None:
-        if self.active_session_public_id:
-            return self.active_session_public_id
-        return self.active_session_id
+class ShellState(ConversationContext):
+    pass
 
 
 def create_skill_service(settings: Settings | None = None) -> SkillService:
@@ -485,19 +477,11 @@ def copy_session_state(target: SessionState, source: SessionState) -> None:
 
 
 def clear_active_session(shell_state: ShellState) -> None:
-    shell_state.active_session_id = None
-    shell_state.active_session_public_id = None
-    shell_state.active_session_mode = None
-    shell_state.active_session_title = None
-    shell_state.active_session_target_summary = None
+    shell_state.clear_active_session()
 
 
 def bind_session_summary(shell_state: ShellState, summary: SessionSummary) -> None:
-    shell_state.active_session_id = summary.id
-    shell_state.active_session_public_id = summary.public_id
-    shell_state.active_session_mode = summary.mode
-    shell_state.active_session_title = summary.title
-    shell_state.active_session_target_summary = summary.target_summary
+    shell_state.bind_session(summary)
 
 
 def build_controller_request(
@@ -505,17 +489,9 @@ def build_controller_request(
     question: str,
     shell_state: ShellState,
 ) -> ControllerRequest:
-    record_query = parse_record_query_command(question)
-    return ControllerRequest(
-        raw_input=question,
-        record_query=record_query,
-        active_skill_name=shell_state.active_skill_name,
-        active_session_id=shell_state.active_session_id,
-        active_session_public_id=shell_state.active_session_public_id,
-        active_session_mode=shell_state.active_session_mode,
-        active_session_title=shell_state.active_session_title,
-        active_session_target_summary=shell_state.active_session_target_summary,
-        pending_clarification=shell_state.pending_clarification,
+    return build_controller_request_from_context(
+        question=question,
+        conversation_context=shell_state,
     )
 
 
@@ -709,53 +685,110 @@ async def execute_controller_bridge(
         return
 
     reset_steps()
-    skill_name = (
-        shell_state.active_skill_name
-        if result.execution_bridge.kind == ExecutionBridgeKind.ACTIVE_SKILL_RUNTIME
-        else None
-    )
-    outcome = await execution_service.execute_session(
+    await execution_service.execute_session(
         session_identifier=session_identifier,
         prompt_text=result.execution_bridge.prompt_text,
         session_state=session_state,
         skill_service=skill_service,
         tool_executor=tool_executor,
         settings=settings,
-        skill_name=skill_name,
-        on_progress=ui.show_execution_progress,
+        conversation_context=shell_state,
+        interaction_port=CliInteractionPort(
+            ui=ui,
+            input_func=input_func,
+        ),
+        skill_name=(
+            shell_state.active_skill_name
+            if result.execution_bridge.kind.value == "active_skill_runtime"
+            else None
+        ),
         on_info=ColoredOutput.print_info,
         on_error=ColoredOutput.print_error,
-        on_confirmation=lambda payload: prompt_execution_confirmation(
-            payload=payload,
-            input_func=input_func,
-            ui=ui,
-        ),
     )
-
-    text = outcome.response
-    if outcome.is_completed:
-        ColoredOutput.print_final_answer(text)
-    else:
-        ColoredOutput.print_error(outcome.error or text)
 
 
 def prompt_execution_confirmation(
     *,
-    payload: ConfirmationRequestPayload,
+    request: ConfirmationRequest,
     input_func: InputFn,
     ui: CliPresenter,
-) -> bool:
-    target_summary = payload.target_summary or "-"
+) -> ConfirmationDecision:
+    target_summary = request.target_summary or "-"
     prompt = (
-        f"Approve action '{payload.action_name}' "
-        f"(risk: {payload.risk_level.value}, target: {target_summary})? [y/N]: "
+        f"Approve action '{request.action_name}' "
+        f"(risk: {request.risk_level}, target: {target_summary})? [y/N]: "
     )
     ui.show_info(
-        f"Confirmation required: {payload.action_name} | risk={payload.risk_level.value} | "
-        f"reason={payload.reason}"
+        f"Confirmation required: {request.action_name} | risk={request.risk_level} | "
+        f"reason={request.reason}"
     )
     answer = input_func(prompt).strip().lower()
-    return answer in {"y", "yes"}
+    decision = (
+        ConfirmationDecisionValue.APPROVE
+        if answer in {"y", "yes"}
+        else ConfirmationDecisionValue.DENY
+    )
+    return ConfirmationDecision(
+        request_id=request.request_id,
+        decision=decision,
+    )
+
+
+class CliInteractionPort(InteractionPort):
+    def __init__(
+        self,
+        *,
+        ui: CliPresenter,
+        input_func: InputFn = input,
+    ) -> None:
+        self.ui = ui
+        self.input_func = input_func
+
+    def emit_controller_result(
+        self,
+        result: ControllerResult,
+        context: ConversationContext,
+    ) -> None:
+        render_controller_result(result, ui=self.ui)
+
+    def emit_execution_progress(
+        self,
+        event,
+        context: ConversationContext,
+    ) -> None:
+        self.ui.show_execution_progress(event)
+
+    def emit_final_answer(
+        self,
+        text: str,
+        context: ConversationContext,
+    ) -> None:
+        ColoredOutput.print_final_answer(text)
+
+    def emit_interaction_error(
+        self,
+        message: str,
+        context: ConversationContext,
+    ) -> None:
+        ColoredOutput.print_error(message)
+
+    def request_confirmation(
+        self,
+        request: ConfirmationRequest,
+        context: ConversationContext,
+    ) -> ConfirmationDecision:
+        return prompt_execution_confirmation(
+            request=request,
+            input_func=self.input_func,
+            ui=self.ui,
+        )
+
+    def emit_confirmation_resolved(
+        self,
+        decision: ConfirmationDecision,
+        context: ConversationContext,
+    ) -> None:
+        return None
 
 
 async def run_prompt_with_runtime(
@@ -1149,12 +1182,20 @@ async def run_interactive_shell(
         settings,
         session_service=session_service,
     )
+    interaction_service = SessionInteractionService.from_services(
+        controller=controller,
+        execution_service=execution_service,
+    )
     planner_service = PlannerService.from_settings(settings)
     finding_service = FindingService.from_settings(settings)
     artifact_service = ArtifactService.from_settings(settings)
     report_service = ReportService.from_settings(settings)
     dashboard_service = DashboardService.from_settings(settings)
     ui = get_presenter()
+    interaction_port = CliInteractionPort(
+        ui=ui,
+        input_func=input_func,
+    )
     while True:
         try:
             question = input_func(build_prompt(shell_state)).strip()
@@ -1168,7 +1209,7 @@ async def run_interactive_shell(
         if question == "/reset":
             session_state.reset()
             shell_state.active_skill_name = None
-            shell_state.pending_clarification = None
+            shell_state.clear_pending_clarification()
             clear_active_session(shell_state)
             ColoredOutput.print_header("Session reset")
             continue
@@ -1184,13 +1225,17 @@ async def run_interactive_shell(
             continue
 
         try:
-            controller_result = controller.handle(
-                build_controller_request(question=question, shell_state=shell_state)
+            interaction_outcome = await interaction_service.handle_message(
+                question=question,
+                conversation_context=shell_state,
+                session_state=session_state,
+                skill_service=skill_service,
+                tool_executor=tool_executor,
+                settings=settings,
+                interaction_port=interaction_port,
             )
 
-            if controller_result.status == ControllerResultStatus.DELEGATED_TO_ADVANCED_COMMAND:
-                shell_state.pending_clarification = None
-
+            if interaction_outcome.advanced_command_delegated:
                 if handle_help_command(question):
                     continue
 
@@ -1268,27 +1313,6 @@ async def run_interactive_shell(
 
                 ui.show_error(f"Unknown command: {question}")
                 continue
-
-            if controller_result.status == ControllerResultStatus.CLARIFICATION_REQUIRED:
-                shell_state.pending_clarification = controller_result.clarification_request
-            else:
-                shell_state.pending_clarification = None
-
-            if controller_result.bind_session and controller_result.session_summary is not None:
-                bind_session_summary(shell_state, controller_result.session_summary)
-
-            render_controller_result(controller_result, ui=ui)
-            await execute_controller_bridge(
-                result=controller_result,
-                shell_state=shell_state,
-                session_state=session_state,
-                skill_service=skill_service,
-                tool_executor=tool_executor,
-                settings=settings,
-                execution_service=execution_service,
-                ui=ui,
-                input_func=input_func,
-            )
         except Exception as exc:
             ColoredOutput.print_error(str(exc))
 

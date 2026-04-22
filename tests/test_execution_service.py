@@ -4,6 +4,8 @@ from agent.settings import Settings
 from agent.state import SessionState
 from app.execution_service import ExecutionService
 from app.session_service import SessionService
+from controller.contracts import ConfirmationDecision, ConfirmationDecisionValue, ConfirmationRequest
+from models.conversation_context import ConversationContext
 from models.session import SessionMode, SessionStatus
 from runtime.execution_events import ExecutionOutcome
 from tools.executor import ToolExecutor
@@ -38,6 +40,36 @@ def build_tool_executor() -> ToolExecutor:
     return ToolExecutor({})
 
 
+class FakeInteractionPort:
+    def __init__(self) -> None:
+        self.progress_events = []
+
+    def emit_controller_result(self, result, context) -> None:
+        return None
+
+    def emit_execution_progress(self, event, context) -> None:
+        self.progress_events.append(event)
+
+    def emit_final_answer(self, text, context) -> None:
+        return None
+
+    def emit_interaction_error(self, message, context) -> None:
+        return None
+
+    def request_confirmation(
+        self,
+        request: ConfirmationRequest,
+        context: ConversationContext,
+    ) -> ConfirmationDecision:
+        return ConfirmationDecision(
+            request_id=request.request_id,
+            decision=ConfirmationDecisionValue.APPROVE,
+        )
+
+    def emit_confirmation_resolved(self, decision, context) -> None:
+        return None
+
+
 def test_execution_service_sets_session_active_and_clears_last_error_on_success(tmp_path):
     settings = build_settings(tmp_path)
     session_service = SessionService.from_settings(settings)
@@ -58,6 +90,7 @@ def test_execution_service_sets_session_active_and_clears_last_error_on_success(
     session_service.update_session_status(session.id, SessionStatus.ACTIVE, last_error="old error")
     runner = FakeForegroundRunner(ExecutionOutcome(status="completed", response="done"))
     service = ExecutionService(session_service=session_service, foreground_runner=runner)
+    interaction_port = FakeInteractionPort()
 
     outcome = asyncio.run(
         service.execute_session(
@@ -67,6 +100,8 @@ def test_execution_service_sets_session_active_and_clears_last_error_on_success(
             skill_service=FakeSkillService(),
             tool_executor=build_tool_executor(),
             settings=settings,
+            conversation_context=ConversationContext(),
+            interaction_port=interaction_port,
         )
     )
 
@@ -95,6 +130,7 @@ def test_execution_service_persists_last_error_and_keeps_active_on_failure(tmp_p
         )
     )
     service = ExecutionService(session_service=session_service, foreground_runner=runner)
+    interaction_port = FakeInteractionPort()
 
     outcome = asyncio.run(
         service.execute_session(
@@ -104,6 +140,8 @@ def test_execution_service_persists_last_error_and_keeps_active_on_failure(tmp_p
             skill_service=FakeSkillService(),
             tool_executor=build_tool_executor(),
             settings=settings,
+            conversation_context=ConversationContext(),
+            interaction_port=interaction_port,
         )
     )
 
@@ -121,6 +159,7 @@ def test_execution_service_returns_failed_outcome_for_missing_session(tmp_path):
         session_service=session_service,
         foreground_runner=FakeForegroundRunner(ExecutionOutcome(status="completed", response="unused")),
     )
+    interaction_port = FakeInteractionPort()
 
     outcome = asyncio.run(
         service.execute_session(
@@ -130,6 +169,8 @@ def test_execution_service_returns_failed_outcome_for_missing_session(tmp_path):
             skill_service=FakeSkillService(),
             tool_executor=build_tool_executor(),
             settings=settings,
+            conversation_context=ConversationContext(),
+            interaction_port=interaction_port,
         )
     )
 

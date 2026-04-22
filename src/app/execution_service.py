@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 
 from agent.settings import Settings, get_settings
 from agent.state import SessionState
+from app.interaction_port import InteractionPort
 from app.confirmation_policy_service import (
     ConfirmationPolicyService,
     RiskPolicyConfigurationError,
@@ -13,6 +14,12 @@ from app.confirmation_policy_service import (
 from app.session_service import SessionService
 from app.skill_service import SkillService
 from app.tool_access_policy_service import ToolAccessDecisionStatus, ToolAccessPolicyService
+from controller.contracts import (
+    ConfirmationDecision,
+    ConfirmationDecisionValue,
+    ConfirmationRequest,
+)
+from models.conversation_context import ConversationContext
 from models.scope_policy import ScopePolicy
 from models.risk_policy import ConfirmationRequestPayload, RiskLevel
 from models.session import Session, SessionMode, SessionStatus, SessionTarget, SessionTargetKind
@@ -35,7 +42,6 @@ from tools.executor import (
 
 ProgressCallback = Callable[[ExecutionProgressEvent], None] | None
 InfoCallback = Callable[[str], None] | None
-ConfirmationCallback = Callable[[ConfirmationRequestPayload], bool] | None
 
 RISK_SCOPED_ACTIONS = {
     "dns_lookup",
@@ -112,11 +118,11 @@ class ExecutionService:
         skill_service: SkillService,
         tool_executor: ToolExecutor,
         settings: Settings,
+        conversation_context: ConversationContext,
+        interaction_port: InteractionPort,
         skill_name: str | None = None,
-        on_progress: ProgressCallback = None,
         on_info: InfoCallback = None,
         on_error: InfoCallback = None,
-        on_confirmation: ConfirmationCallback = None,
     ) -> ExecutionOutcome:
         try:
             session = self.session_service.require_session(session_identifier)
@@ -138,10 +144,13 @@ class ExecutionService:
             skill_name=skill_name,
             execution_gate=self._build_execution_gate(
                 session=session,
-                on_progress=on_progress,
-                on_confirmation=on_confirmation,
+                interaction_port=interaction_port,
+                conversation_context=conversation_context,
             ),
-            on_progress=on_progress,
+            on_progress=self._build_progress_callback(
+                interaction_port=interaction_port,
+                conversation_context=conversation_context,
+            ),
             on_info=on_info,
             on_error=on_error,
         )
@@ -185,13 +194,17 @@ class ExecutionService:
         self,
         *,
         session: Session,
-        on_progress: ProgressCallback,
-        on_confirmation: ConfirmationCallback,
+        interaction_port: InteractionPort,
+        conversation_context: ConversationContext,
     ):
         confirmation_policy_service = self.confirmation_policy_service
         tool_access_policy_service = self.tool_access_policy_service
         security_tool_executor = SecurityToolExecutor(SECURITY_TOOL_REGISTRY)
         scope_validator = ScopeValidator()
+        on_progress = self._build_progress_callback(
+            interaction_port=interaction_port,
+            conversation_context=conversation_context,
+        )
         assert confirmation_policy_service is not None
         assert tool_access_policy_service is not None
 
@@ -219,9 +232,9 @@ class ExecutionService:
                 )
                 if not self._request_confirmation(
                     payload=payload,
-                    on_progress=on_progress,
-                    on_confirmation=on_confirmation,
                     session=session,
+                    interaction_port=interaction_port,
+                    conversation_context=conversation_context,
                 ):
                     return ToolExecutionGateDecision(
                         status="deny",
@@ -262,9 +275,9 @@ class ExecutionService:
             assert payload is not None
             if self._request_confirmation(
                 payload=payload,
-                on_progress=on_progress,
-                on_confirmation=on_confirmation,
                 session=session,
+                interaction_port=interaction_port,
+                conversation_context=conversation_context,
             ):
                 return None
             return ToolExecutionGateDecision(
@@ -426,17 +439,23 @@ class ExecutionService:
         self,
         *,
         payload: ConfirmationRequestPayload,
-        on_progress: ProgressCallback,
-        on_confirmation: ConfirmationCallback,
         session: Session,
+        interaction_port: InteractionPort,
+        conversation_context: ConversationContext,
     ) -> bool:
         self._emit_confirmation_event(
             event_type=ExecutionEventType.CONFIRMATION_REQUIRED,
             payload=payload,
-            on_progress=on_progress,
+            interaction_port=interaction_port,
+            conversation_context=conversation_context,
             session=session,
         )
-        approved = False if on_confirmation is None else bool(on_confirmation(payload))
+        decision = interaction_port.request_confirmation(
+            self._build_confirmation_request(payload),
+            conversation_context,
+        )
+        interaction_port.emit_confirmation_resolved(decision, conversation_context)
+        approved = decision.decision == ConfirmationDecisionValue.APPROVE
         self._emit_confirmation_event(
             event_type=(
                 ExecutionEventType.CONFIRMATION_APPROVED
@@ -444,22 +463,45 @@ class ExecutionService:
                 else ExecutionEventType.CONFIRMATION_DENIED
             ),
             payload=payload,
-            on_progress=on_progress,
+            interaction_port=interaction_port,
+            conversation_context=conversation_context,
             session=session,
         )
         return approved
+
+    def _build_confirmation_request(
+        self,
+        payload: ConfirmationRequestPayload,
+    ) -> ConfirmationRequest:
+        return ConfirmationRequest(
+            action_name=payload.action_name,
+            risk_level=payload.risk_level.value,
+            target_summary=payload.target_summary,
+            reason=payload.reason,
+            message=payload.message,
+        )
+
+    def _build_progress_callback(
+        self,
+        *,
+        interaction_port: InteractionPort,
+        conversation_context: ConversationContext,
+    ) -> Callable[[ExecutionProgressEvent], None]:
+        def emit(event: ExecutionProgressEvent) -> None:
+            interaction_port.emit_execution_progress(event, conversation_context)
+
+        return emit
 
     def _emit_confirmation_event(
         self,
         *,
         event_type: ExecutionEventType,
         payload: ConfirmationRequestPayload,
-        on_progress: ProgressCallback,
+        interaction_port: InteractionPort,
+        conversation_context: ConversationContext,
         session: Session,
     ) -> None:
-        if on_progress is None:
-            return
-        on_progress(
+        interaction_port.emit_execution_progress(
             ExecutionProgressEvent(
                 event_type=event_type,
                 session_id=session.id,
@@ -471,5 +513,6 @@ class ExecutionService:
                 action_name=payload.action_name,
                 risk_level=payload.risk_level.value,
                 reason=payload.reason,
-            )
+            ),
+            conversation_context,
         )

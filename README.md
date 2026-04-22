@@ -46,6 +46,8 @@ The repository now contains two runtime families:
 - Phase 7 command-first query entry contracts for session-scoped history, step, artifact, finding, report, and explanation requests
 - Phase 7 session-owned record retrieval views with traceable finding explanations
 - Phase 7 report-flow orchestration with report reuse and Markdown operator reports
+- Phase 8 shared `ConversationContext` and `SessionInteractionService` extraction above the controller and execution services
+- Phase 8 Web-ready DTO, serialization, conversation store, and transport-neutral interaction adapter contracts
 - isolated subprocess execution for typed security tools so timed-out or cancelled jobs can be terminated cleanly
 
 ## Run
@@ -133,6 +135,9 @@ Phase 2 through Phase 7 currently deliver:
 - redteam requests that execute in the current session by default (no manual secondary run stage)
 - deterministic risk policy loading from `.red-code/config/risk-policy.json` with built-in defaults
 - structured confirmation events (`confirmation_required`, `confirmation_approved`, `confirmation_denied`) and execution blocking on denied confirmations
+- adapter-neutral conversation binding through `ConversationContext` instead of CLI-only shell state
+- shared interaction orchestration through `SessionInteractionService`, with CLI and Web-style adapters on the same controller path
+- explicit Web serialization contracts under `src/web/` for conversation snapshots, interactive stream events, session resources, reports, and dashboards
 
 The current runtime still intentionally does not yet deliver:
 
@@ -202,6 +207,7 @@ Core source areas:
 - `src/main.py`
 - `src/agent/`
 - `src/app/`
+- `src/web/`
 - `src/runtime/`
 - `src/models/`
 - `src/skills/`
