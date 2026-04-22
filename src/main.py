@@ -744,35 +744,35 @@ class CliInteractionPort(InteractionPort):
         self.ui = ui
         self.input_func = input_func
 
-    def emit_controller_result(
+    async def emit_controller_result(
         self,
         result: ControllerResult,
         context: ConversationContext,
     ) -> None:
         render_controller_result(result, ui=self.ui)
 
-    def emit_execution_progress(
+    async def emit_execution_progress(
         self,
         event,
         context: ConversationContext,
     ) -> None:
         self.ui.show_execution_progress(event)
 
-    def emit_final_answer(
+    async def emit_final_answer(
         self,
         text: str,
         context: ConversationContext,
     ) -> None:
         ColoredOutput.print_final_answer(text)
 
-    def emit_interaction_error(
+    async def emit_interaction_error(
         self,
         message: str,
         context: ConversationContext,
     ) -> None:
         ColoredOutput.print_error(message)
 
-    def request_confirmation(
+    async def request_confirmation(
         self,
         request: ConfirmationRequest,
         context: ConversationContext,
@@ -783,7 +783,7 @@ class CliInteractionPort(InteractionPort):
             ui=self.ui,
         )
 
-    def emit_confirmation_resolved(
+    async def emit_confirmation_resolved(
         self,
         decision: ConfirmationDecision,
         context: ConversationContext,

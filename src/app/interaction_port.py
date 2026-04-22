@@ -9,42 +9,42 @@ from runtime.execution_events import ExecutionProgressEvent
 
 
 class InteractionPort(Protocol):
-    def emit_controller_result(
+    async def emit_controller_result(
         self,
         result: ControllerResult,
         context: ConversationContext,
     ) -> None:
         ...
 
-    def emit_execution_progress(
+    async def emit_execution_progress(
         self,
         event: ExecutionProgressEvent,
         context: ConversationContext,
     ) -> None:
         ...
 
-    def emit_final_answer(
+    async def emit_final_answer(
         self,
         text: str,
         context: ConversationContext,
     ) -> None:
         ...
 
-    def emit_interaction_error(
+    async def emit_interaction_error(
         self,
         message: str,
         context: ConversationContext,
     ) -> None:
         ...
 
-    def request_confirmation(
+    async def request_confirmation(
         self,
         request: ConfirmationRequest,
         context: ConversationContext,
     ) -> ConfirmationDecision:
         ...
 
-    def emit_confirmation_resolved(
+    async def emit_confirmation_resolved(
         self,
         decision: ConfirmationDecision,
         context: ConversationContext,

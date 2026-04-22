@@ -11,7 +11,7 @@ from .contracts import (
     WebEventKind,
 )
 from .conversation_store import InMemoryConversationStore
-from .interaction_adapter import WebInteractionAdapter
+from .interaction_adapter import WebInteractionAdapter, WebInteractionStream
 
 __all__ = [
     "ConfirmationDecisionDto",
@@ -24,4 +24,5 @@ __all__ = [
     "InMemoryConversationStore",
     "WebEventKind",
     "WebInteractionAdapter",
+    "WebInteractionStream",
 ]

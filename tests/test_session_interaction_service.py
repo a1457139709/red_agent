@@ -31,19 +31,19 @@ class FakeInteractionPort:
         self.final_answers = []
         self.errors = []
 
-    def emit_controller_result(self, result, context) -> None:
+    async def emit_controller_result(self, result, context) -> None:
         self.controller_results.append(result)
 
-    def emit_execution_progress(self, event, context) -> None:
+    async def emit_execution_progress(self, event, context) -> None:
         return None
 
-    def emit_final_answer(self, text, context) -> None:
+    async def emit_final_answer(self, text, context) -> None:
         self.final_answers.append(text)
 
-    def emit_interaction_error(self, message, context) -> None:
+    async def emit_interaction_error(self, message, context) -> None:
         self.errors.append(message)
 
-    def request_confirmation(
+    async def request_confirmation(
         self,
         request: ConfirmationRequest,
         context: ConversationContext,
@@ -53,7 +53,7 @@ class FakeInteractionPort:
             decision=ConfirmationDecisionValue.APPROVE,
         )
 
-    def emit_confirmation_resolved(self, decision, context) -> None:
+    async def emit_confirmation_resolved(self, decision, context) -> None:
         return None
 
 

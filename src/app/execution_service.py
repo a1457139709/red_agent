@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import urlsplit
@@ -76,6 +77,26 @@ SECURITY_TOOL_NAMES = frozenset(SECURITY_TOOL_REGISTRY.keys())
 
 
 @dataclass(slots=True)
+class _ThreadsafeInteractionBridge:
+    interaction_port: InteractionPort
+    conversation_context: ConversationContext
+    loop: asyncio.AbstractEventLoop
+
+    def emit_execution_progress(self, event: ExecutionProgressEvent) -> None:
+        self._run(self.interaction_port.emit_execution_progress(event, self.conversation_context))
+
+    def request_confirmation(self, request: ConfirmationRequest) -> ConfirmationDecision:
+        return self._run(self.interaction_port.request_confirmation(request, self.conversation_context))
+
+    def emit_confirmation_resolved(self, decision: ConfirmationDecision) -> None:
+        self._run(self.interaction_port.emit_confirmation_resolved(decision, self.conversation_context))
+
+    def _run(self, awaitable):
+        future = asyncio.run_coroutine_threadsafe(awaitable, self.loop)
+        return future.result()
+
+
+@dataclass(slots=True)
 class ExecutionService:
     session_service: SessionService
     foreground_runner: ForegroundRunner
@@ -134,23 +155,21 @@ class ExecutionService:
         except Exception as exc:
             return self._failed_outcome(str(exc))
 
-        outcome = await self.foreground_runner.run(
+        interaction_bridge = _ThreadsafeInteractionBridge(
+            interaction_port=interaction_port,
+            conversation_context=conversation_context,
+            loop=asyncio.get_running_loop(),
+        )
+        outcome = await asyncio.to_thread(
+            self._run_foreground_execution,
             session=session,
             prompt_text=prompt_text,
             session_state=session_state,
             skill_service=skill_service,
             tool_executor=tool_executor,
             settings=settings,
+            interaction_bridge=interaction_bridge,
             skill_name=skill_name,
-            execution_gate=self._build_execution_gate(
-                session=session,
-                interaction_port=interaction_port,
-                conversation_context=conversation_context,
-            ),
-            on_progress=self._build_progress_callback(
-                interaction_port=interaction_port,
-                conversation_context=conversation_context,
-            ),
             on_info=on_info,
             on_error=on_error,
         )
@@ -174,6 +193,41 @@ class ExecutionService:
 
         return outcome
 
+    def _run_foreground_execution(
+        self,
+        *,
+        session: Session,
+        prompt_text: str,
+        session_state: SessionState,
+        skill_service: SkillService,
+        tool_executor: ToolExecutor,
+        settings: Settings,
+        interaction_bridge: _ThreadsafeInteractionBridge,
+        skill_name: str | None,
+        on_info: InfoCallback,
+        on_error: InfoCallback,
+    ) -> ExecutionOutcome:
+        return asyncio.run(
+            self.foreground_runner.run(
+                session=session,
+                prompt_text=prompt_text,
+                session_state=session_state,
+                skill_service=skill_service,
+                tool_executor=tool_executor,
+                settings=settings,
+                skill_name=skill_name,
+                execution_gate=self._build_execution_gate(
+                    session=session,
+                    interaction_bridge=interaction_bridge,
+                ),
+                on_progress=self._build_progress_callback(
+                    interaction_bridge=interaction_bridge,
+                ),
+                on_info=on_info,
+                on_error=on_error,
+            )
+        )
+
     def _mark_execution_started(self, session: Session) -> Session:
         return self.session_service.update_session_status(
             session.id,
@@ -194,17 +248,12 @@ class ExecutionService:
         self,
         *,
         session: Session,
-        interaction_port: InteractionPort,
-        conversation_context: ConversationContext,
+        interaction_bridge: _ThreadsafeInteractionBridge,
     ):
         confirmation_policy_service = self.confirmation_policy_service
         tool_access_policy_service = self.tool_access_policy_service
         security_tool_executor = SecurityToolExecutor(SECURITY_TOOL_REGISTRY)
         scope_validator = ScopeValidator()
-        on_progress = self._build_progress_callback(
-            interaction_port=interaction_port,
-            conversation_context=conversation_context,
-        )
         assert confirmation_policy_service is not None
         assert tool_access_policy_service is not None
 
@@ -233,8 +282,7 @@ class ExecutionService:
                 if not self._request_confirmation(
                     payload=payload,
                     session=session,
-                    interaction_port=interaction_port,
-                    conversation_context=conversation_context,
+                    interaction_bridge=interaction_bridge,
                 ):
                     return ToolExecutionGateDecision(
                         status="deny",
@@ -276,8 +324,7 @@ class ExecutionService:
             if self._request_confirmation(
                 payload=payload,
                 session=session,
-                interaction_port=interaction_port,
-                conversation_context=conversation_context,
+                interaction_bridge=interaction_bridge,
             ):
                 return None
             return ToolExecutionGateDecision(
@@ -440,21 +487,18 @@ class ExecutionService:
         *,
         payload: ConfirmationRequestPayload,
         session: Session,
-        interaction_port: InteractionPort,
-        conversation_context: ConversationContext,
+        interaction_bridge: _ThreadsafeInteractionBridge,
     ) -> bool:
         self._emit_confirmation_event(
             event_type=ExecutionEventType.CONFIRMATION_REQUIRED,
             payload=payload,
-            interaction_port=interaction_port,
-            conversation_context=conversation_context,
+            interaction_bridge=interaction_bridge,
             session=session,
         )
-        decision = interaction_port.request_confirmation(
+        decision = interaction_bridge.request_confirmation(
             self._build_confirmation_request(payload),
-            conversation_context,
         )
-        interaction_port.emit_confirmation_resolved(decision, conversation_context)
+        interaction_bridge.emit_confirmation_resolved(decision)
         approved = decision.decision == ConfirmationDecisionValue.APPROVE
         self._emit_confirmation_event(
             event_type=(
@@ -463,8 +507,7 @@ class ExecutionService:
                 else ExecutionEventType.CONFIRMATION_DENIED
             ),
             payload=payload,
-            interaction_port=interaction_port,
-            conversation_context=conversation_context,
+            interaction_bridge=interaction_bridge,
             session=session,
         )
         return approved
@@ -484,11 +527,10 @@ class ExecutionService:
     def _build_progress_callback(
         self,
         *,
-        interaction_port: InteractionPort,
-        conversation_context: ConversationContext,
+        interaction_bridge: _ThreadsafeInteractionBridge,
     ) -> Callable[[ExecutionProgressEvent], None]:
         def emit(event: ExecutionProgressEvent) -> None:
-            interaction_port.emit_execution_progress(event, conversation_context)
+            interaction_bridge.emit_execution_progress(event)
 
         return emit
 
@@ -497,11 +539,10 @@ class ExecutionService:
         *,
         event_type: ExecutionEventType,
         payload: ConfirmationRequestPayload,
-        interaction_port: InteractionPort,
-        conversation_context: ConversationContext,
+        interaction_bridge: _ThreadsafeInteractionBridge,
         session: Session,
     ) -> None:
-        interaction_port.emit_execution_progress(
+        interaction_bridge.emit_execution_progress(
             ExecutionProgressEvent(
                 event_type=event_type,
                 session_id=session.id,
@@ -513,6 +554,5 @@ class ExecutionService:
                 action_name=payload.action_name,
                 risk_level=payload.risk_level.value,
                 reason=payload.reason,
-            ),
-            conversation_context,
+            )
         )

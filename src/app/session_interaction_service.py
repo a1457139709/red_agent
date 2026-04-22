@@ -99,7 +99,7 @@ class SessionInteractionService:
         if controller_result.bind_session and controller_result.session_summary is not None:
             conversation_context.bind_session(controller_result.session_summary)
 
-        interaction_port.emit_controller_result(controller_result, conversation_context)
+        await interaction_port.emit_controller_result(controller_result, conversation_context)
 
         final_text: str | None = None
         if controller_result.execution_bridge is not None:
@@ -110,7 +110,7 @@ class SessionInteractionService:
             )
             if session_identifier is None:
                 message = "Execution bridge is missing an active session binding."
-                interaction_port.emit_interaction_error(message, conversation_context)
+                await interaction_port.emit_interaction_error(message, conversation_context)
                 return InteractionOutcome(
                     conversation_context=conversation_context,
                     controller_result=controller_result,
@@ -135,10 +135,10 @@ class SessionInteractionService:
             )
             final_text = execution_outcome.response
             if execution_outcome.is_completed:
-                interaction_port.emit_final_answer(final_text, conversation_context)
+                await interaction_port.emit_final_answer(final_text, conversation_context)
             else:
                 message = execution_outcome.error or final_text
-                interaction_port.emit_interaction_error(message, conversation_context)
+                await interaction_port.emit_interaction_error(message, conversation_context)
                 return InteractionOutcome(
                     conversation_context=conversation_context,
                     controller_result=controller_result,
