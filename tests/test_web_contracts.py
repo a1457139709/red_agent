@@ -25,6 +25,7 @@ def test_web_contract_dtos_hold_serializable_fields():
     snapshot = ConversationSnapshotDto(
         conversation_id="conv-1",
         active_skill_name="security-audit",
+        requested_session_mode="normal",
         active_session_id="session-1",
         active_session_public_id="S0001",
         active_session_mode="normal",

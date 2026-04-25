@@ -27,6 +27,7 @@ from main import (
     build_controller_request,
     build_prompt,
     handle_clear_command,
+    handle_redteam_command,
     render_controller_result,
     run_interactive_shell,
 )
@@ -183,7 +184,10 @@ def test_agent_controller_starts_redteam_session_with_execution_bridge(tmp_path)
     controller = AgentController.from_session_service(session_service)
 
     result = controller.handle(
-        ControllerRequest(raw_input="Start a recon session for example.com")
+        ControllerRequest(
+            raw_input="Scan example.com for open services",
+            requested_session_mode=SessionMode.REDTEAM,
+        )
     )
 
     assert result.status == ControllerResultStatus.HANDLED
@@ -195,25 +199,18 @@ def test_agent_controller_starts_redteam_session_with_execution_bridge(tmp_path)
     assert result.bind_session
 
 
-def test_agent_controller_requires_clarification_for_bare_target_and_resolves_answer(tmp_path):
+def test_agent_controller_keeps_ambiguous_target_requests_in_normal_flow(tmp_path):
     settings = build_settings(tmp_path)
     session_service = SessionService.from_settings(settings)
     controller = AgentController.from_session_service(session_service)
 
-    first = controller.handle(ControllerRequest(raw_input="look at example.com"))
-    resolved = controller.handle(
-        ControllerRequest(
-            raw_input="one-off check",
-            pending_clarification=first.clarification_request,
-        )
-    )
+    result = controller.handle(ControllerRequest(raw_input="look at example.com"))
 
-    assert first.status == ControllerResultStatus.CLARIFICATION_REQUIRED
-    assert first.clarification_request is not None
-    assert first.clarification_request.kind == ClarificationKind.BARE_TARGET
-    assert resolved.status == ControllerResultStatus.HANDLED
-    assert resolved.execution_bridge is not None
-    assert resolved.execution_bridge.kind == ExecutionBridgeKind.BASE_RUNTIME
+    assert result.status == ControllerResultStatus.HANDLED
+    assert result.intent == ControllerIntent.NORMAL_REQUEST
+    assert result.clarification_request is None
+    assert result.execution_bridge is not None
+    assert result.execution_bridge.kind == ExecutionBridgeKind.BASE_RUNTIME
 
 
 def test_agent_controller_record_lookup_prefers_active_session(tmp_path):
@@ -385,7 +382,7 @@ def test_agent_controller_active_task_does_not_override_normal_session_routing(t
     assert result.intent == ControllerIntent.NORMAL_REQUEST
 
 
-def test_agent_controller_active_task_does_not_override_record_lookup_or_redteam_startup(tmp_path):
+def test_agent_controller_active_task_does_not_override_record_lookup_or_explicit_redteam_mode(tmp_path):
     settings = build_settings(tmp_path)
     session_service = SessionService.from_settings(settings)
     controller = AgentController.from_session_service(session_service)
@@ -406,10 +403,11 @@ def test_agent_controller_active_task_does_not_override_record_lookup_or_redteam
     )
     redteam_result = controller.handle(
         ControllerRequest(
-            raw_input="Start a recon session for example.com",
+            raw_input="Scan example.com for open services",
+            requested_session_mode=SessionMode.REDTEAM,
         )
     )
-    clarification_result = controller.handle(
+    normal_result = controller.handle(
         ControllerRequest(
             raw_input="scan this host",
         )
@@ -420,41 +418,42 @@ def test_agent_controller_active_task_does_not_override_record_lookup_or_redteam
     assert redteam_result.intent == ControllerIntent.REDTEAM_REQUEST
     assert redteam_result.execution_bridge is not None
     assert redteam_result.execution_bridge.kind == ExecutionBridgeKind.BASE_RUNTIME
-    assert clarification_result.status == ControllerResultStatus.CLARIFICATION_REQUIRED
-    assert clarification_result.execution_bridge is None
+    assert normal_result.intent == ControllerIntent.NORMAL_REQUEST
+    assert normal_result.execution_bridge is not None
 
 
-def test_agent_controller_clarification_preserves_all_resolved_targets_in_execution_prompt(tmp_path):
+def test_agent_controller_preserves_all_detected_targets_in_execution_prompt(tmp_path):
     settings = build_settings(tmp_path)
     session_service = SessionService.from_settings(settings)
     controller = AgentController.from_session_service(session_service)
 
-    first = controller.handle(ControllerRequest(raw_input="scan this host"))
-    resolved = controller.handle(
+    result = controller.handle(
         ControllerRequest(
-            raw_input="Use example.com and 10.0.0.1 for a one-off check",
-            pending_clarification=first.clarification_request,
+            raw_input="Inspect example.com and 10.0.0.1 for exposed services",
         )
     )
 
-    assert first.status == ControllerResultStatus.CLARIFICATION_REQUIRED
-    assert resolved.status == ControllerResultStatus.HANDLED
-    assert resolved.execution_bridge is not None
-    assert resolved.execution_bridge.kind == ExecutionBridgeKind.BASE_RUNTIME
-    assert resolved.execution_bridge.prompt_text.startswith("scan this host\nTargets:\n")
-    assert "- domain: example.com" in resolved.execution_bridge.prompt_text
-    assert "- ip: 10.0.0.1" in resolved.execution_bridge.prompt_text
-    assert resolved.session_summary is not None
-    assert resolved.session_summary.target_summary is not None
-    assert "example.com" in resolved.session_summary.target_summary
-    assert "10.0.0.1" in resolved.session_summary.target_summary
+    assert result.status == ControllerResultStatus.HANDLED
+    assert result.execution_bridge is not None
+    assert result.execution_bridge.kind == ExecutionBridgeKind.BASE_RUNTIME
+    assert "example.com" in result.execution_bridge.prompt_text
+    assert "10.0.0.1" in result.execution_bridge.prompt_text
+    assert result.session_summary is not None
+    assert result.session_summary.target_summary is not None
+    assert "example.com" in result.session_summary.target_summary
+    assert "10.0.0.1" in result.session_summary.target_summary
 
 
 def test_render_controller_result_uses_callback_presenter(tmp_path):
     outputs = []
     session_service = SessionService.from_settings(build_settings(tmp_path))
     controller = AgentController.from_session_service(session_service)
-    result = controller.handle(ControllerRequest(raw_input="Start a recon session for example.com"))
+    result = controller.handle(
+        ControllerRequest(
+            raw_input="Scan example.com for open services",
+            requested_session_mode=SessionMode.REDTEAM,
+        )
+    )
     presenter = main_module.CliPresenter.for_callbacks(info_output=outputs.append, error_output=outputs.append)
 
     render_controller_result(result, ui=presenter)
@@ -505,7 +504,7 @@ def test_run_interactive_shell_routes_plain_text_through_controller_and_skill_br
     assert shell_state.active_session_mode is not None
     assert shell_state.active_session_mode.value == "normal"
     assert shell_state.active_session_public_id is not None
-    assert build_prompt(shell_state) == "\nskill:security-audit > "
+    assert build_prompt(shell_state).startswith("\nskill:security-audit normal:")
     assert "done" in captured["answers"]
 
 
@@ -569,7 +568,7 @@ def test_run_interactive_shell_redteam_startup_executes_in_foreground(
     skill_service = main_module.create_skill_service()
     execution_service = FakeExecutionService()
     tool_executor = ToolExecutor(build_tool_registry())
-    responses = iter(["Start a recon session for example.com", "/quit"])
+    responses = iter(["/redteam on", "Scan example.com for open services", "/quit"])
 
     def fake_input(_prompt):
         return next(responses)
@@ -592,13 +591,14 @@ def test_run_interactive_shell_redteam_startup_executes_in_foreground(
     assert shell_state.active_session_mode.value == "redteam"
     assert build_prompt(shell_state).startswith("\nredteam:")
     assert len(execution_service.calls) == 1
-    assert execution_service.calls[0]["prompt_text"] == "Start a recon session for example.com"
+    assert execution_service.calls[0]["prompt_text"] == "Scan example.com for open services"
 
 
 def test_build_controller_request_and_clear_command_preserve_session_binding(tmp_path):
     session_state = SessionState()
     session_state.append_user_message("hello")
     shell_state = ShellState(
+        requested_session_mode=SessionMode.REDTEAM,
         active_session_id="session-1",
         active_session_public_id="S0001",
         active_session_mode=SessionMode.NORMAL,
@@ -608,15 +608,16 @@ def test_build_controller_request_and_clear_command_preserve_session_binding(tmp
         pending_clarification=ControllerResult.clarification_required(
             message="clarify",
             clarification_request=main_module.ClarificationRequest(
-                kind="bare_target",
-                question="One-off or persistent?",
-                missing_fields=["mode"],
-                original_request="look at example.com",
+                kind="record_scope",
+                question="Which session should I use?",
+                missing_fields=["session_scope"],
+                original_request="what did you already do?",
             ),
         ).clarification_request,
     )
 
     request = build_controller_request(question="inspect configs", shell_state=shell_state)
+    assert request.requested_session_mode == SessionMode.REDTEAM
     assert request.active_session_public_id == "S0001"
     assert request.pending_clarification is not None
     assert request.record_query is None
@@ -625,18 +626,39 @@ def test_build_controller_request_and_clear_command_preserve_session_binding(tmp
 
     assert shell_state.active_session_public_id == "S0001"
     assert shell_state.active_session_mode == SessionMode.NORMAL
+    assert shell_state.requested_session_mode == SessionMode.REDTEAM
     assert shell_state.pending_clarification is None
     assert shell_state.active_skill_name == "security-audit"
 
 
 def test_build_prompt_prefers_session_binding():
     shell_state = ShellState(
+        requested_session_mode=SessionMode.NORMAL,
         active_session_id="session-1",
         active_session_public_id="S0001",
         active_session_mode=SessionMode.NORMAL,
     )
 
     assert build_prompt(shell_state) == "\nnormal:S0001 > "
+
+
+def test_handle_redteam_command_toggles_requested_mode():
+    shell_state = ShellState()
+    outputs: list[str] = []
+    presenter = main_module.CliPresenter.for_callbacks(
+        info_output=outputs.append,
+        success_output=outputs.append,
+        error_output=outputs.append,
+    )
+
+    assert handle_redteam_command("/redteam current", shell_state=shell_state, presenter=presenter)
+    assert shell_state.requested_session_mode == SessionMode.NORMAL
+    assert handle_redteam_command("/redteam on", shell_state=shell_state, presenter=presenter)
+    assert shell_state.requested_session_mode == SessionMode.REDTEAM
+    assert handle_redteam_command("/redteam toggle", shell_state=shell_state, presenter=presenter)
+    assert shell_state.requested_session_mode == SessionMode.NORMAL
+    assert any("Current mode: normal" in message for message in outputs)
+    assert any("Switched to redteam mode." in message for message in outputs)
 
 
 def test_build_controller_request_parses_record_query_commands():

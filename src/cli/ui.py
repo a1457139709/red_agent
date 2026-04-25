@@ -220,7 +220,8 @@ class CliPresenter:
         examples.add_column("Example", style="bold green", no_wrap=True)
         examples.add_column("What Happens", style="white")
         examples.add_row("Summarize this repository structure", "Starts or reuses a normal session and runs the normal prompt flow.")
-        examples.add_row("Start a recon session for example.com", "Starts or reuses a redteam session, executes in foreground, and renders progress in-session.")
+        examples.add_row("/redteam on", "Switches the next plain-language requests into redteam session mode.")
+        examples.add_row("Scan example.com for open services", "Runs in the currently selected mode and reuses that mode's active session when possible.")
         examples.add_row("What did you already do?", "Looks up the current or requested session context.")
 
         topics = Table(box=ASCII_BOX, expand=True, header_style="bold")
@@ -240,7 +241,7 @@ class CliPresenter:
             Panel(examples, title="Natural-Language First", border_style="green", box=ASCII_BOX),
             Panel(topics, title="Advanced Help Topics", border_style="bright_blue", box=ASCII_BOX),
             Text("Drill down with /help query or /help skill for command details.", style="dim"),
-            Text("Session shortcuts: /clear, /reset, /exit, /quit", style="dim"),
+            Text("Session shortcuts: /redteam [on|off|toggle|current], /clear, /reset, /exit, /quit", style="dim"),
         )
 
     def _help_query(self) -> Group:

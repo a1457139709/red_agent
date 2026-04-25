@@ -7,7 +7,7 @@ from app.session_record_query_service import SessionRecordQueryService
 from app.session_service import SessionService
 from models.session import Session, SessionMode, SessionStatus, SessionTarget
 
-from .clarification import ClarificationResolution, apply_clarification_answer, build_clarification_request
+from .clarification import apply_clarification_answer, build_clarification_request
 from .contracts import (
     ClarificationKind,
     ControllerIntent,
@@ -56,38 +56,13 @@ class AgentController:
                 message=classification.unsupported_reason
                 or "I couldn't route that request."
             )
-        if classification.intent == ControllerIntent.CLARIFICATION_REQUIRED:
-            return self._build_clarification_result(request.raw_input, classification)
         if classification.intent == ControllerIntent.RECORD_LOOKUP_REQUEST:
             return self._handle_record_lookup(request, classification)
-        if classification.intent == ControllerIntent.REDTEAM_REQUEST:
-            return self._handle_session_request(
-                request=request,
-                classification=classification,
-                mode=SessionMode.REDTEAM,
-                execute=True,
-            )
         return self._handle_session_request(
             request=request,
             classification=classification,
-            mode=SessionMode.NORMAL,
+            mode=request.requested_session_mode,
             execute=True,
-        )
-
-    def _build_clarification_result(
-        self,
-        raw_input: str,
-        classification: IntentClassification,
-    ) -> ControllerResult:
-        target_label = classification.extracted_targets[0].value if classification.extracted_targets else None
-        clarification = build_clarification_request(
-            kind=classification.clarification_kind or ClarificationKind.MISSING_TARGET,
-            original_request=raw_input,
-            target_label=target_label,
-        )
-        return ControllerResult.clarification_required(
-            message=clarification.question,
-            clarification_request=clarification,
         )
 
     def _handle_clarification(self, request: ControllerRequest) -> ControllerResult:
@@ -108,18 +83,8 @@ class AgentController:
                     explicit_scope=resolution.resolved_record_scope,
                 ),
             )
-        if resolution.resolved_mode is None:
-            return ControllerResult.unsupported(
-                message="I still need enough information to route that request."
-            )
-        classification = classify_input(request.pending_clarification.original_request)
-        return self._handle_session_request(
-            request=request,
-            classification=classification,
-            mode=resolution.resolved_mode,
-            execute=resolution.resolved_mode == SessionMode.NORMAL,
-            forced_targets=resolution.resolved_targets,
-            original_request=request.pending_clarification.original_request,
+        return ControllerResult.unsupported(
+            message="I still need a session scope like current, latest, or S0001."
         )
 
     def _handle_record_lookup(

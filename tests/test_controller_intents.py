@@ -1,4 +1,4 @@
-from controller.contracts import ClarificationKind, ControllerIntent
+from controller.contracts import ControllerIntent
 from controller.intents import classify_input, extract_record_scope, extract_targets
 from models.session import SessionTargetKind
 
@@ -6,20 +6,17 @@ from models.session import SessionTargetKind
 def test_classify_input_detects_top_level_intents():
     assert classify_input("/skill list").intent == ControllerIntent.ADVANCED_COMMAND_REQUEST
     assert classify_input("Summarize this repository structure").intent == ControllerIntent.NORMAL_REQUEST
-    assert classify_input("Start a recon session for example.com").intent == ControllerIntent.REDTEAM_REQUEST
+    assert classify_input("Start a recon session for example.com").intent == ControllerIntent.NORMAL_REQUEST
     assert classify_input("What did you already do?").intent == ControllerIntent.RECORD_LOOKUP_REQUEST
 
 
-def test_classify_input_marks_ambiguous_requests_for_clarification():
-    bare_target = classify_input("look at example.com")
-    missing_target = classify_input("scan this host")
+def test_classify_input_keeps_plain_text_requests_in_normal_flow():
+    target_request = classify_input("look at example.com")
+    security_request = classify_input("scan this host")
 
-    assert bare_target.intent == ControllerIntent.CLARIFICATION_REQUIRED
-    assert bare_target.clarification_kind == ClarificationKind.BARE_TARGET
-    assert bare_target.extracted_targets[0].value == "example.com"
-
-    assert missing_target.intent == ControllerIntent.CLARIFICATION_REQUIRED
-    assert missing_target.clarification_kind == ClarificationKind.MISSING_TARGET
+    assert target_request.intent == ControllerIntent.NORMAL_REQUEST
+    assert target_request.extracted_targets[0].value == "example.com"
+    assert security_request.intent == ControllerIntent.NORMAL_REQUEST
 
 
 def test_classify_input_rejects_unsupported_noise():

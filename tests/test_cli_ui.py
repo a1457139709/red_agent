@@ -39,6 +39,7 @@ def test_presenter_help_and_observation_render_clean_text():
     assert "/help query" in outputs[0]
     assert "/help skill" in outputs[0]
     assert "/clear" in outputs[0]
+    assert "/redteam [on|off|toggle|current]" in outputs[0]
     assert "Query Commands" in outputs[1]
     assert "/history [scope]" in outputs[1]
     assert "/report <session_summary|findings_summary|operator_report> [scope]" in outputs[1]

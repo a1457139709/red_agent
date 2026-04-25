@@ -97,6 +97,12 @@ def test_session_interaction_service_binds_session_and_executes(tmp_path):
 def test_session_interaction_service_preserves_clarification_between_turns(tmp_path):
     settings = build_settings(tmp_path)
     session_service = SessionService.from_settings(settings)
+    session_service.create_session(
+        title="History Session",
+        goal="Review history",
+        mode="normal",
+        status="active",
+    )
     interaction_service = SessionInteractionService.from_services(
         controller=AgentController.from_session_service(session_service),
         execution_service=FakeExecutionService(),
@@ -106,7 +112,7 @@ def test_session_interaction_service_preserves_clarification_between_turns(tmp_p
 
     first = asyncio.run(
         interaction_service.handle_message(
-            question="look at example.com",
+            question="what did you already do?",
             conversation_context=context,
             session_state=SessionState(),
             skill_service=FakeSkillService(),
@@ -121,7 +127,7 @@ def test_session_interaction_service_preserves_clarification_between_turns(tmp_p
 
     second = asyncio.run(
         interaction_service.handle_message(
-            question="one-off check",
+            question="latest",
             conversation_context=context,
             session_state=SessionState(),
             skill_service=FakeSkillService(),
@@ -133,4 +139,4 @@ def test_session_interaction_service_preserves_clarification_between_turns(tmp_p
 
     assert second.controller_result is not None
     assert context.pending_clarification is None
-    assert context.active_session_public_id is not None
+    assert second.controller_result.record_lookup_payload is not None

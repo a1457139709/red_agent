@@ -190,6 +190,7 @@ class ControllerRequest:
     raw_input: str
     record_query: RecordQueryRequest | None = None
     active_skill_name: str | None = None
+    requested_session_mode: SessionMode = SessionMode.NORMAL
     active_session_id: str | None = None
     active_session_public_id: str | None = None
     active_session_mode: SessionMode | None = None

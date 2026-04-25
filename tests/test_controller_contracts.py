@@ -38,10 +38,10 @@ def test_controller_result_helpers_build_structured_payloads():
     session.public_id = "S0001"
     summary = SessionSummary.from_session(session, reused=False)
     clarification = ClarificationRequest(
-        kind=ClarificationKind.BARE_TARGET,
-        question="One-off or persistent?",
-        missing_fields=["mode"],
-        original_request="look at example.com",
+        kind=ClarificationKind.RECORD_SCOPE,
+        question="Which session should I use?",
+        missing_fields=["session_scope"],
+        original_request="what did you already do",
     )
 
     handled = ControllerResult.handled(

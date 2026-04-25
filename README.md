@@ -69,10 +69,11 @@ The repository now contains two runtime families:
 Describe what you want in plain language first. Examples:
 
 - `Summarize this repository structure`
-- `Start a recon session for example.com`
+- `/redteam on`
+- `Scan example.com for open services`
 - `What did you already do?`
 
-`Start a recon session for example.com` now starts (or reuses) a redteam session and immediately executes in the current interactive flow with progress visibility.
+Plain-language requests now default to the normal agent flow. Use `/redteam on` to switch subsequent plain-language requests into redteam mode, and `/redteam off` to return to normal mode.
 `/report session_summary`, `/report findings_summary`, and `/report operator_report` now reuse the most recent session report when possible and generate a new report only when needed.
 
 Use slash commands for skill and shell-level control.
@@ -80,6 +81,7 @@ Use slash commands for skill and shell-level control.
 - `/help`
 - `/help query`
 - `/help skill`
+- `/redteam [on|off|toggle|current]`
 - `/clear`
 - `/status [current|latest|S0001]`
 - `/history [current|latest|S0001]`
@@ -132,7 +134,7 @@ Phase 2 through Phase 7 currently deliver:
 - planner write-back of newly derived stable facts into structured memory
 - foreground execution closure for session-first requests via `ExecutionService` and `ForegroundRunner`
 - structured execution progress events for in-session rendering (`execution_started`, step events, terminal events)
-- redteam requests that execute in the current session by default (no manual secondary run stage)
+- explicit `/redteam` mode switching for foreground redteam execution in the current session (no manual secondary run stage)
 - deterministic risk policy loading from `.red-code/config/risk-policy.json` with built-in defaults
 - structured confirmation events (`confirmation_required`, `confirmation_approved`, `confirmation_denied`) and execution blocking on denied confirmations
 - adapter-neutral conversation binding through `ConversationContext` instead of CLI-only shell state

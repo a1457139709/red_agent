@@ -29,6 +29,7 @@ class ClarificationRequestDto:
 class ConversationSnapshotDto:
     conversation_id: str
     active_skill_name: str | None
+    requested_session_mode: str
     active_session_id: str | None
     active_session_public_id: str | None
     active_session_mode: str | None

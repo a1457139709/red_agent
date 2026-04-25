@@ -28,6 +28,7 @@ def build_controller_request_from_context(
         raw_input=question,
         record_query=record_query,
         active_skill_name=conversation_context.active_skill_name,
+        requested_session_mode=conversation_context.requested_session_mode,
         active_session_id=conversation_context.active_session_id,
         active_session_public_id=conversation_context.active_session_public_id,
         active_session_mode=conversation_context.active_session_mode,

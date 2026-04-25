@@ -20,23 +20,25 @@ def test_web_serialization_converts_conversation_context(tmp_path):
     context = ConversationContext(
         conversation_id="conv-1",
         active_skill_name="security-audit",
+        requested_session_mode=SessionMode.REDTEAM,
         active_session_id="session-1",
         active_session_public_id="S0001",
         active_session_title="Session",
         active_session_target_summary="example.com",
         pending_clarification=ClarificationRequest(
-            kind=ClarificationKind.BARE_TARGET,
-            question="One-off or persistent?",
-            missing_fields=["mode"],
-            original_request="look at example.com",
+            kind=ClarificationKind.RECORD_SCOPE,
+            question="Which session should I use?",
+            missing_fields=["session_scope"],
+            original_request="what did you already do",
         ),
     )
 
     dto = serialize_conversation_snapshot(context)
 
     assert dto.conversation_id == "conv-1"
+    assert dto.requested_session_mode == "redteam"
     assert dto.pending_clarification is not None
-    assert dto.pending_clarification.kind == "bare_target"
+    assert dto.pending_clarification.kind == "record_scope"
 
 
 def test_web_serialization_converts_controller_result(tmp_path):

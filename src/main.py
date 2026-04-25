@@ -37,6 +37,7 @@ from models.artifact import Artifact
 from models.conversation_context import ConversationContext
 from models.finding import Finding
 from models.report import Report
+from models.session import SessionMode
 from runtime.task_runner import apply_result_to_session
 from cli.ui import CliPresenter, get_presenter
 from skills.registry import SkillRegistry
@@ -68,12 +69,16 @@ def create_skill_service(settings: Settings | None = None) -> SkillService:
 
 
 def build_prompt(shell_state: ShellState) -> str:
+    mode_label = shell_state.requested_session_mode.value
     if shell_state.active_skill_name:
-        return f"\nskill:{shell_state.active_skill_name} > "
+        session_label = shell_state.active_session_label()
+        if session_label and shell_state.active_session_mode == shell_state.requested_session_mode:
+            return f"\nskill:{shell_state.active_skill_name} {mode_label}:{session_label} > "
+        return f"\nskill:{shell_state.active_skill_name} {mode_label} > "
     session_label = shell_state.active_session_label()
-    if session_label and shell_state.active_session_mode is not None:
-        return f"\n{shell_state.active_session_mode.value}:{session_label} > "
-    return "\n> "
+    if session_label and shell_state.active_session_mode == shell_state.requested_session_mode:
+        return f"\n{mode_label}:{session_label} > "
+    return f"\n{mode_label} > "
 
 
 def parse_skill_command(command: str) -> tuple[str, list[str]] | None:
@@ -149,6 +154,15 @@ def parse_help_command(command: str) -> list[str] | None:
     return parts[1:]
 
 
+def parse_redteam_command(command: str) -> list[str] | None:
+    stripped = command.strip()
+    if not stripped.startswith("/redteam"):
+        return None
+
+    parts = stripped.split()
+    return parts[1:]
+
+
 def parse_skill_shorthand(
     command: str,
     *,
@@ -165,6 +179,7 @@ def parse_skill_shorthand(
         or stripped.startswith("/report")
         or stripped.startswith("/dashboard")
         or stripped.startswith("/planner")
+        or stripped.startswith("/redteam")
     ):
         return None
 
@@ -320,6 +335,58 @@ def handle_clear_command(
         ).clear_screen()
     else:
         ColoredOutput.clear_screen()
+    return True
+
+
+def handle_redteam_command(
+    command: str,
+    *,
+    shell_state: ShellState,
+    presenter: CliPresenter | None = None,
+    text_output: OutputFn | None = None,
+    info_output: OutputFn | None = None,
+    error_output: OutputFn | None = None,
+    success_output: OutputFn | None = None,
+) -> bool:
+    args = parse_redteam_command(command)
+    if args is None:
+        return False
+
+    ui = _resolve_presenter(
+        presenter,
+        text_output=text_output,
+        info_output=info_output,
+        error_output=error_output,
+        success_output=success_output,
+    )
+    action = args[0].lower() if args else "toggle"
+
+    if len(args) > 1:
+        ui.show_error("Usage: /redteam [on|off|toggle|current]")
+        return True
+
+    if action == "current":
+        ui.show_info(f"Current mode: {shell_state.requested_session_mode.value}")
+        return True
+    if action == "toggle":
+        next_mode = (
+            SessionMode.REDTEAM
+            if shell_state.requested_session_mode == SessionMode.NORMAL
+            else SessionMode.NORMAL
+        )
+        shell_state.set_requested_session_mode(next_mode)
+        ui.show_success(f"Switched to {next_mode.value} mode.")
+        return True
+    if action in {"on", "enable"}:
+        shell_state.set_requested_session_mode(SessionMode.REDTEAM)
+        ui.show_success("Switched to redteam mode.")
+        return True
+    if action in {"off", "disable", "normal"}:
+        shell_state.set_requested_session_mode(SessionMode.NORMAL)
+        ui.show_success("Switched to normal mode.")
+        return True
+
+    ui.show_error(f"Unknown redteam mode command: {action}")
     return True
 
 
@@ -1209,6 +1276,7 @@ async def run_interactive_shell(
         if question == "/reset":
             session_state.reset()
             shell_state.active_skill_name = None
+            shell_state.set_requested_session_mode(SessionMode.NORMAL)
             shell_state.clear_pending_clarification()
             clear_active_session(shell_state)
             ColoredOutput.print_header("Session reset")
@@ -1237,6 +1305,12 @@ async def run_interactive_shell(
 
             if interaction_outcome.advanced_command_delegated:
                 if handle_help_command(question):
+                    continue
+
+                if handle_redteam_command(
+                    question,
+                    shell_state=shell_state,
+                ):
                     continue
 
                 if handle_skill_command(

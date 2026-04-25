@@ -6,7 +6,7 @@ import re
 
 from models.session import SessionTarget, SessionTargetKind
 
-from .contracts import ClarificationKind, ControllerIntent
+from .contracts import ControllerIntent
 
 
 URL_PATTERN = re.compile(r"https?://[^\s/$.?#].[^\s]*", re.IGNORECASE)
@@ -16,32 +16,6 @@ DOMAIN_PATTERN = re.compile(r"\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]
 HOST_PATTERN = re.compile(r"\b[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9-]{1,63})+\b", re.IGNORECASE)
 SESSION_ID_PATTERN = re.compile(r"\bS\d{4}\b", re.IGNORECASE)
 
-SECURITY_KEYWORDS = (
-    "scan",
-    "recon",
-    "redteam",
-    "red-team",
-    "security",
-    "tls",
-    "dns",
-    "banner",
-    "probe",
-    "enumerate",
-    "enum",
-    "attack surface",
-    "port",
-    "host",
-    "target",
-)
-PERSISTENCE_KEYWORDS = (
-    "session",
-    "persistent",
-    "long-running",
-    "long running",
-    "keep track",
-    "track",
-    "engagement",
-)
 RECORD_LOOKUP_KEYWORDS = (
     "what did you already do",
     "what have you done",
@@ -55,25 +29,11 @@ RECORD_LOOKUP_KEYWORDS = (
     "what's the status",
     "whats the status",
 )
-BARE_TARGET_VERBS = (
-    "look at",
-    "check",
-    "inspect",
-    "review",
-    "analyze",
-    "analyse",
-)
-
-
 @dataclass(slots=True)
 class IntentClassification:
     intent: ControllerIntent
     extracted_targets: list[SessionTarget] = field(default_factory=list)
-    security_flavored: bool = False
-    persistence_hint: bool = False
-    bare_target: bool = False
     explicit_record_scope: str | None = None
-    clarification_kind: ClarificationKind | None = None
     unsupported_reason: str | None = None
 
 
@@ -97,8 +57,6 @@ def classify_input(raw_input: str) -> IntentClassification:
         )
 
     extracted_targets = extract_targets(text)
-    security_flavored = any(keyword in lowered for keyword in SECURITY_KEYWORDS)
-    persistence_hint = any(keyword in lowered for keyword in PERSISTENCE_KEYWORDS)
     explicit_record_scope = extract_record_scope(text)
 
     if any(keyword in lowered for keyword in RECORD_LOOKUP_KEYWORDS):
@@ -107,38 +65,9 @@ def classify_input(raw_input: str) -> IntentClassification:
             explicit_record_scope=explicit_record_scope,
         )
 
-    bare_target = _is_bare_target_request(text, extracted_targets)
-    if extracted_targets and (bare_target or (security_flavored and not persistence_hint)):
-        return IntentClassification(
-            intent=ControllerIntent.CLARIFICATION_REQUIRED,
-            extracted_targets=extracted_targets,
-            security_flavored=security_flavored,
-            persistence_hint=persistence_hint,
-            bare_target=True,
-            clarification_kind=ClarificationKind.BARE_TARGET,
-        )
-
-    if security_flavored and not extracted_targets:
-        return IntentClassification(
-            intent=ControllerIntent.CLARIFICATION_REQUIRED,
-            security_flavored=True,
-            persistence_hint=persistence_hint,
-            clarification_kind=ClarificationKind.MISSING_TARGET,
-        )
-
-    if security_flavored and persistence_hint:
-        return IntentClassification(
-            intent=ControllerIntent.REDTEAM_REQUEST,
-            extracted_targets=extracted_targets,
-            security_flavored=True,
-            persistence_hint=True,
-        )
-
     return IntentClassification(
         intent=ControllerIntent.NORMAL_REQUEST,
         extracted_targets=extracted_targets,
-        security_flavored=security_flavored,
-        persistence_hint=persistence_hint,
     )
 
 
@@ -203,28 +132,6 @@ def extract_record_scope(text: str) -> str | None:
     if "current" in lowered:
         return "current"
     return None
-
-
-def infer_persistence_mode_from_answer(answer: str) -> str | None:
-    lowered = answer.strip().lower()
-    if any(token in lowered for token in ("redteam", "red-team", "persistent", "session", "long")):
-        return "redteam"
-    if any(token in lowered for token in ("temporary", "one-off", "one off", "quick", "normal", "just once")):
-        return "normal"
-    return None
-
-
-def _is_bare_target_request(text: str, extracted_targets: list[SessionTarget]) -> bool:
-    if len(extracted_targets) != 1:
-        return False
-    target_value = re.escape(extracted_targets[0].value)
-    bare_patterns = [
-        rf"^\s*{target_value}\s*$",
-        rf"^\s*(?:{'|'.join(re.escape(verb) for verb in BARE_TARGET_VERBS)})\s+{target_value}\s*$",
-        rf"^\s*(?:scan|recon|probe|inspect)\s+{target_value}\s*$",
-    ]
-    return any(re.match(pattern, text, re.IGNORECASE) for pattern in bare_patterns)
-
 
 def _add_ip_target(
     match: Match[str],

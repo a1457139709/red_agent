@@ -72,6 +72,7 @@ def serialize_conversation_snapshot(
     return ConversationSnapshotDto(
         conversation_id=context.conversation_id,
         active_skill_name=context.active_skill_name,
+        requested_session_mode=context.requested_session_mode.value,
         active_session_id=context.active_session_id,
         active_session_public_id=context.active_session_public_id,
         active_session_mode=(

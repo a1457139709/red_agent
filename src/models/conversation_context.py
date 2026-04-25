@@ -11,6 +11,7 @@ from models.session import SessionMode
 class ConversationContext:
     conversation_id: str = field(default_factory=lambda: str(uuid4()))
     active_skill_name: str | None = None
+    requested_session_mode: SessionMode = SessionMode.NORMAL
     active_session_id: str | None = None
     active_session_public_id: str | None = None
     active_session_mode: SessionMode | None = None
@@ -39,3 +40,6 @@ class ConversationContext:
 
     def clear_pending_clarification(self) -> None:
         self.pending_clarification = None
+
+    def set_requested_session_mode(self, mode: SessionMode) -> None:
+        self.requested_session_mode = SessionMode(mode)
