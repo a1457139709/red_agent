@@ -4,11 +4,10 @@ from langchain_core.messages import AIMessage
 
 import runtime.task_runner as task_runner_module
 from agent.settings import Settings
+from app.capability_service import CapabilityService
 from app.run_service import RunService
-from app.skill_service import SkillService
 from app.task_service import TaskService
 from runtime.task_runner import TaskRunner
-from skills.registry import SkillRegistry
 from tools import build_tool_registry
 from tools.executor import ToolExecutor
 from tools.policy import CapabilityTier, RuntimeSafetyPolicy
@@ -23,17 +22,12 @@ def build_settings(tmp_path):
     )
 
 
-def create_skill_service() -> SkillService:
-    tool_names = list(build_tool_registry().keys())
-    return SkillService(
-        SkillRegistry.built_in(known_tool_names=set(tool_names)),
-        base_tool_names=tool_names,
-        default_task_skill_name=None,
-    )
+def create_capability_service() -> CapabilityService:
+    return CapabilityService.from_settings()
 
 
 def test_skill_runtime_policies_match_base_and_security_skill():
-    service = create_skill_service()
+    service = create_capability_service()
 
     base_runtime = asyncio.run(service.build_base_runtime_config(context_summary="summary"))
     security_runtime = asyncio.run(
@@ -97,7 +91,7 @@ def test_task_runner_persists_safety_audit_logs(monkeypatch, tmp_path):
     settings = build_settings(tmp_path)
     task_service = TaskService.from_settings(settings)
     run_service = RunService.from_settings(settings)
-    runner = TaskRunner(task_service, run_service, create_skill_service())
+    runner = TaskRunner(task_service, run_service, create_capability_service())
     tool_executor = ToolExecutor(
         build_tool_registry(),
         confirm_command=lambda prompt: False,

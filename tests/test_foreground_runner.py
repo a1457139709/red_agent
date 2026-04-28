@@ -29,7 +29,7 @@ class FakeRuntimeConfig:
         return settings
 
 
-class FakeSkillService:
+class FakeCapabilityService:
     def __init__(self) -> None:
         self.base_calls = 0
         self.skill_calls: list[str] = []
@@ -77,7 +77,7 @@ def test_foreground_runner_emits_started_tool_and_completed_events(tmp_path):
     settings = build_settings(tmp_path)
     session = build_session(tmp_path)
     session_state = SessionState()
-    skill_service = FakeSkillService()
+    capability_service = FakeCapabilityService()
     tool_executor = ToolExecutor({"fake_tool": FakeTool()})
     applied = {"count": 0}
 
@@ -111,7 +111,7 @@ def test_foreground_runner_emits_started_tool_and_completed_events(tmp_path):
             session=session,
             prompt_text="inspect",
             session_state=session_state,
-            skill_service=skill_service,
+            capability_service=capability_service,
             tool_executor=tool_executor,
             settings=settings,
             on_progress=events.append,
@@ -121,7 +121,7 @@ def test_foreground_runner_emits_started_tool_and_completed_events(tmp_path):
     assert outcome.is_completed
     assert outcome.response == "done"
     assert applied["count"] == 1
-    assert skill_service.base_calls == 1
+    assert capability_service.base_calls == 1
     assert [event.event_type for event in events] == [
         ExecutionEventType.EXECUTION_STARTED,
         ExecutionEventType.STEP_STARTED,
@@ -135,7 +135,7 @@ def test_foreground_runner_returns_failed_outcome_when_agent_loop_raises(tmp_pat
     settings = build_settings(tmp_path)
     session = build_session(tmp_path)
     session_state = SessionState()
-    skill_service = FakeSkillService()
+    capability_service = FakeCapabilityService()
     tool_executor = ToolExecutor({"fake_tool": FakeTool()})
 
     async def failing_agent_loop(*args, **kwargs):
@@ -154,7 +154,7 @@ def test_foreground_runner_returns_failed_outcome_when_agent_loop_raises(tmp_pat
             session=session,
             prompt_text="inspect",
             session_state=session_state,
-            skill_service=skill_service,
+            capability_service=capability_service,
             tool_executor=tool_executor,
             settings=settings,
             on_progress=events.append,
@@ -172,7 +172,7 @@ def test_foreground_runner_maps_cancelled_agent_loop_to_paused_outcome(tmp_path)
     settings = build_settings(tmp_path)
     session = build_session(tmp_path)
     session_state = SessionState()
-    skill_service = FakeSkillService()
+    capability_service = FakeCapabilityService()
     tool_executor = ToolExecutor({"fake_tool": FakeTool()})
 
     async def cancelled_agent_loop(*args, **kwargs):
@@ -191,7 +191,7 @@ def test_foreground_runner_maps_cancelled_agent_loop_to_paused_outcome(tmp_path)
             session=session,
             prompt_text="inspect",
             session_state=session_state,
-            skill_service=skill_service,
+            capability_service=capability_service,
             tool_executor=tool_executor,
             settings=settings,
             on_progress=events.append,
@@ -212,7 +212,7 @@ def test_foreground_runner_maps_non_completed_status_to_execution_failed(tmp_pat
     settings = build_settings(tmp_path)
     session = build_session(tmp_path)
     session_state = SessionState()
-    skill_service = FakeSkillService()
+    capability_service = FakeCapabilityService()
     tool_executor = ToolExecutor({"fake_tool": FakeTool()})
 
     async def fake_agent_loop(*args, **kwargs):
@@ -236,7 +236,7 @@ def test_foreground_runner_maps_non_completed_status_to_execution_failed(tmp_pat
             session=session,
             prompt_text="inspect",
             session_state=session_state,
-            skill_service=skill_service,
+            capability_service=capability_service,
             tool_executor=tool_executor,
             settings=settings,
             on_progress=events.append,
@@ -252,7 +252,7 @@ def test_foreground_runner_maps_gate_block_to_blocked_outcome(tmp_path):
     settings = build_settings(tmp_path)
     session = build_session(tmp_path)
     session_state = SessionState()
-    skill_service = FakeSkillService()
+    capability_service = FakeCapabilityService()
     tool_executor = ToolExecutor({"fake_tool": FakeTool()})
 
     async def fake_agent_loop(*args, **kwargs):
@@ -273,7 +273,7 @@ def test_foreground_runner_maps_gate_block_to_blocked_outcome(tmp_path):
             session=session,
             prompt_text="inspect",
             session_state=session_state,
-            skill_service=skill_service,
+            capability_service=capability_service,
             tool_executor=tool_executor,
             settings=settings,
             execution_gate=lambda request: ToolExecutionGateDecision(

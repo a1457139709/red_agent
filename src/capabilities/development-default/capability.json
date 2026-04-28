@@ -6,6 +6,10 @@
   "description": "Help with local development tasks such as reading code, refactoring, testing, and updating documentation.",
   "modes": ["normal"],
   "parameters": [],
+  "metadata": {
+    "category": "development",
+    "risk_level": "medium"
+  },
   "tools": {
     "allowed": [
       "bash",
@@ -27,6 +31,7 @@
     "style": "prompt_assist",
     "profile": "development-default"
   },
+  "user_invocable": true,
   "session": {
     "supports_one_shot": true,
     "supports_persistent": true,

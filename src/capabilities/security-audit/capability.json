@@ -6,6 +6,11 @@
   "description": "Review a local project for security issues, risky configurations, unsafe command usage, and exposed secrets.",
   "modes": ["normal", "redteam"],
   "parameters": [],
+  "metadata": {
+    "category": "security",
+    "risk_level": "medium",
+    "mode": "audit"
+  },
   "tools": {
     "allowed": ["bash", "list_dir", "read_file", "search"]
   },
@@ -17,6 +22,7 @@
     "style": "prompt_assist",
     "profile": "security-audit"
   },
+  "user_invocable": true,
   "session": {
     "supports_one_shot": true,
     "supports_persistent": true,

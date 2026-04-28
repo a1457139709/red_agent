@@ -43,8 +43,8 @@ def build_settings(tmp_path):
 
 def test_handle_module_command_lists_and_shows_modules(tmp_path):
     settings = build_settings(tmp_path)
-    skill_service = main_module.create_skill_service(settings)
-    module_service = main_module.create_module_service(settings, skill_service=skill_service)
+    capability_service = main_module.create_capability_service(settings)
+    module_service = main_module.create_module_service(settings, capability_service=capability_service)
     session_service = SessionService.from_settings(settings)
     execution_service = FakeExecutionService()
     outputs = []
@@ -84,8 +84,8 @@ def test_handle_module_command_lists_and_shows_modules(tmp_path):
 
 def test_handle_module_command_runs_one_shot_module(tmp_path, monkeypatch):
     settings = build_settings(tmp_path)
-    skill_service = main_module.create_skill_service(settings)
-    module_service = main_module.create_module_service(settings, skill_service=skill_service)
+    capability_service = main_module.create_capability_service(settings)
+    module_service = main_module.create_module_service(settings, capability_service=capability_service)
     session_service = SessionService.from_settings(settings)
     execution_service = FakeExecutionService()
     answers = []

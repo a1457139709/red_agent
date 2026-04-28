@@ -23,7 +23,7 @@ class FakeForegroundRunner:
         return self.outcome
 
 
-class FakeSkillService:
+class FakeCapabilityService:
     pass
 
 
@@ -97,7 +97,7 @@ def test_execution_service_sets_session_active_and_clears_last_error_on_success(
             session_identifier=session.id,
             prompt_text="inspect",
             session_state=SessionState(),
-            skill_service=FakeSkillService(),
+            capability_service=FakeCapabilityService(),
             tool_executor=build_tool_executor(),
             settings=settings,
             conversation_context=ConversationContext(),
@@ -137,7 +137,7 @@ def test_execution_service_persists_last_error_and_keeps_active_on_failure(tmp_p
             session_identifier=session.id,
             prompt_text="inspect",
             session_state=SessionState(),
-            skill_service=FakeSkillService(),
+            capability_service=FakeCapabilityService(),
             tool_executor=build_tool_executor(),
             settings=settings,
             conversation_context=ConversationContext(),
@@ -166,7 +166,7 @@ def test_execution_service_returns_failed_outcome_for_missing_session(tmp_path):
             session_identifier="S9999",
             prompt_text="inspect",
             session_state=SessionState(),
-            skill_service=FakeSkillService(),
+            capability_service=FakeCapabilityService(),
             tool_executor=build_tool_executor(),
             settings=settings,
             conversation_context=ConversationContext(),

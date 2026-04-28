@@ -10,31 +10,6 @@ from models.capability import CapabilityKind
 from models.session import SessionMode
 
 
-class FakeSkillService:
-    def __init__(self, names: set[str] | None = None) -> None:
-        self.names = names or {"development-default"}
-        self.calls = []
-
-    def get_skill(self, name: str):
-        return object() if name in self.names else None
-
-    async def build_skill_runtime_config(
-        self,
-        *,
-        skill_name: str,
-        context_summary: str,
-        allow_model_invocation: bool = True,
-    ):
-        self.calls.append(
-            {
-                "skill_name": skill_name,
-                "context_summary": context_summary,
-                "allow_model_invocation": allow_model_invocation,
-            }
-        )
-        return {"runtime": skill_name}
-
-
 def write_capability(root: Path, name: str, **overrides) -> Path:
     directory = root / name
     directory.mkdir(parents=True, exist_ok=True)
@@ -46,9 +21,11 @@ def write_capability(root: Path, name: str, **overrides) -> Path:
         "description": f"{name} capability.",
         "modes": ["normal"],
         "parameters": [],
+        "metadata": {"category": "test"},
         "tools": {"allowed": ["read_file"]},
         "risk": {"default": "safe", "actions": []},
         "execution": {"style": "prompt_assist", "profile": name},
+        "user_invocable": True,
         "session": {
             "supports_one_shot": True,
             "supports_persistent": True,
@@ -58,13 +35,15 @@ def write_capability(root: Path, name: str, **overrides) -> Path:
     payload.update(overrides)
     path = directory / "capability.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
+    if payload["kind"] == "skill":
+        (directory / "prompt.md").write_text(f"# {name}\n\nPrompt body.", encoding="utf-8")
     return path
 
 
-def build_service(root: Path, *, skill_service=None) -> CapabilityService:
+def build_service(root: Path) -> CapabilityService:
     return CapabilityService(
         CapabilityRegistry(root, known_tool_names={"read_file", "dns_lookup", "http_probe"}),
-        skill_service=skill_service,
+        base_tool_names=["read_file", "dns_lookup", "http_probe"],
     )
 
 
@@ -166,10 +145,15 @@ def test_validate_parameters_rejects_missing_and_wrong_type(tmp_path):
         service.validate_parameters("surface-recon", {"target": 123})
 
 
-def test_prompt_assist_runtime_config_uses_legacy_skill_bridge(tmp_path):
-    write_capability(tmp_path, "development-default")
-    skill_service = FakeSkillService({"development-default"})
-    service = build_service(tmp_path, skill_service=skill_service)
+def test_prompt_assist_runtime_config_reads_prompt_from_capability(tmp_path):
+    write_capability(
+        tmp_path,
+        "development-default",
+        shell="powershell",
+        model="gpt-test",
+        effort="medium",
+    )
+    service = build_service(tmp_path)
 
     runtime_config = asyncio.run(
         service.build_prompt_assist_runtime_config(
@@ -179,24 +163,27 @@ def test_prompt_assist_runtime_config_uses_legacy_skill_bridge(tmp_path):
         )
     )
 
-    assert runtime_config == {"runtime": "development-default"}
-    assert skill_service.calls == [
-        {
-            "skill_name": "development-default",
-            "context_summary": "ctx",
-            "allow_model_invocation": False,
-        }
-    ]
+    assert runtime_config.capability is not None
+    assert runtime_config.capability.manifest.name == "development-default"
+    assert "Prompt body." in runtime_config.system_prompt
+    assert runtime_config.allowed_tools == ["read_file"]
+    assert runtime_config.model_name == "gpt-test"
+    assert runtime_config.reasoning_effort == "medium"
+    assert runtime_config.preferred_shell == "powershell"
 
 
-def test_prompt_assist_runtime_config_requires_legacy_skill_bridge(tmp_path):
-    write_capability(tmp_path, "new-skill")
-    service = build_service(tmp_path, skill_service=FakeSkillService({"development-default"}))
+def test_prompt_assist_runtime_config_rejects_workflow_only_skill(tmp_path):
+    write_capability(
+        tmp_path,
+        "workflow-skill",
+        disable_model_invocation=True,
+    )
+    service = build_service(tmp_path)
 
-    with pytest.raises(CapabilityValidationError, match="no legacy SKILL.md bridge"):
+    with pytest.raises(CapabilityValidationError, match="disables direct model invocation"):
         asyncio.run(
             service.build_prompt_assist_runtime_config(
-                capability_name="new-skill",
+                capability_name="workflow-skill",
                 context_summary="ctx",
             )
         )

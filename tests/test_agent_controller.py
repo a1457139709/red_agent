@@ -51,7 +51,7 @@ class FakeExecutionService:
         session_identifier: str,
         prompt_text: str,
         session_state,
-        skill_service,
+        capability_service,
         tool_executor,
         settings,
         conversation_context=None,
@@ -508,7 +508,7 @@ def test_run_interactive_shell_routes_plain_text_through_controller_and_skill_br
     shell_state = ShellState(active_skill_name="security-audit")
     session_service = SessionService.from_settings(settings)
     controller = AgentController.from_session_service(session_service)
-    skill_service = main_module.create_skill_service()
+    capability_service = main_module.create_capability_service()
     execution_service = FakeExecutionService()
     tool_executor = ToolExecutor(build_tool_registry())
     captured = {"answers": []}
@@ -530,7 +530,7 @@ def test_run_interactive_shell_routes_plain_text_through_controller_and_skill_br
             session_service=session_service,
             controller=controller,
             execution_service=execution_service,
-            skill_service=skill_service,
+            capability_service=capability_service,
             input_func=fake_input,
         )
     )
@@ -558,7 +558,7 @@ def test_run_interactive_shell_keeps_plain_text_on_session_flow_with_active_sess
     )
     session_service = SessionService.from_settings(settings)
     controller = AgentController.from_session_service(session_service)
-    skill_service = main_module.create_skill_service()
+    capability_service = main_module.create_capability_service()
     execution_service = FakeExecutionService()
     tool_executor = ToolExecutor(build_tool_registry())
     captured = {"answers": []}
@@ -580,7 +580,7 @@ def test_run_interactive_shell_keeps_plain_text_on_session_flow_with_active_sess
             session_service=session_service,
             controller=controller,
             execution_service=execution_service,
-            skill_service=skill_service,
+            capability_service=capability_service,
             input_func=fake_input,
         )
     )
@@ -602,7 +602,7 @@ def test_run_interactive_shell_redteam_startup_executes_in_foreground(
     shell_state = ShellState()
     session_service = SessionService.from_settings(settings)
     controller = AgentController.from_session_service(session_service)
-    skill_service = main_module.create_skill_service()
+    capability_service = main_module.create_capability_service()
     execution_service = FakeExecutionService()
     tool_executor = ToolExecutor(build_tool_registry())
     responses = iter(["/redteam on", "Scan example.com for open services", "/quit"])
@@ -619,7 +619,7 @@ def test_run_interactive_shell_redteam_startup_executes_in_foreground(
             session_service=session_service,
             controller=controller,
             execution_service=execution_service,
-            skill_service=skill_service,
+            capability_service=capability_service,
             input_func=fake_input,
         )
     )
@@ -639,8 +639,11 @@ def test_run_interactive_shell_routes_explicit_module_request_to_module_runtime(
     session_state = SessionState()
     shell_state = ShellState()
     session_service = SessionService.from_settings(settings)
-    skill_service = main_module.create_skill_service(settings)
-    module_service = main_module.create_module_service(settings, skill_service=skill_service)
+    capability_service = main_module.create_capability_service(settings)
+    module_service = main_module.create_module_service(
+        settings,
+        capability_service=capability_service,
+    )
     controller = AgentController.from_session_service(
         session_service,
         module_names=tuple(capability.manifest.name for capability in module_service.list_modules()),
@@ -666,7 +669,7 @@ def test_run_interactive_shell_routes_explicit_module_request_to_module_runtime(
             session_service=session_service,
             controller=controller,
             execution_service=execution_service,
-            skill_service=skill_service,
+            capability_service=capability_service,
             module_service=module_service,
             input_func=fake_input,
         )
@@ -776,7 +779,7 @@ def test_run_interactive_shell_rejects_removed_operation_job_and_evidence_comman
     shell_state = ShellState()
     session_service = SessionService.from_settings(settings)
     controller = AgentController.from_session_service(session_service)
-    skill_service = main_module.create_skill_service()
+    capability_service = main_module.create_capability_service()
     execution_service = FakeExecutionService()
     tool_executor = ToolExecutor(build_tool_registry())
     errors: list[str] = []
@@ -801,7 +804,7 @@ def test_run_interactive_shell_rejects_removed_operation_job_and_evidence_comman
             session_service=session_service,
             controller=controller,
             execution_service=execution_service,
-            skill_service=skill_service,
+            capability_service=capability_service,
             input_func=fake_input,
         )
     )

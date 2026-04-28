@@ -1,24 +1,3 @@
----
-name: development-default
-description: Help with local development tasks such as reading code, refactoring, testing, and updating documentation. Use when working on a local repository and you want standard coding assistance.
-license: Proprietary
-compatibility: Agent Skills baseline with Claude-compatible extensions
-allowed-tools:
-  - bash
-  - delete_file
-  - edit_file
-  - list_dir
-  - read_file
-  - search
-  - web_fetch
-  - web_search
-  - write_file
-metadata:
-  category: development
-  risk_level: medium
-user-invocable: true
----
-
 # Development Default
 
 Work as a local development assistant.

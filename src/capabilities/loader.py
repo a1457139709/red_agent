@@ -38,12 +38,23 @@ def load_capability_from_file(manifest_file: Path) -> LoadedCapability:
         raise CapabilityLoadError(f"{manifest_file}: capability manifest must be a JSON object")
 
     root_dir = manifest_file.parent
+    manifest = _parse_manifest(payload, source=str(manifest_file))
+    prompt_file = root_dir / "prompt.md"
+    prompt_body = ""
+    if manifest.kind == CapabilityKind.SKILL:
+        if not prompt_file.exists():
+            raise CapabilityLoadError(f"{manifest_file}: skill capabilities require prompt.md")
+        prompt_body = prompt_file.read_text(encoding="utf-8").strip()
+        if not prompt_body:
+            raise CapabilityLoadError(f"{prompt_file}: prompt body is required")
     return LoadedCapability(
-        manifest=_parse_manifest(payload, source=str(manifest_file)),
+        manifest=manifest,
         root_dir=root_dir,
         manifest_file=manifest_file,
         references=_list_dir_files(root_dir / "references"),
         scripts=_list_dir_files(root_dir / "scripts"),
+        prompt_file=prompt_file if manifest.kind == CapabilityKind.SKILL else None,
+        prompt_body=prompt_body,
     )
 
 
@@ -75,6 +86,13 @@ def _parse_manifest(payload: dict[str, Any], *, source: str) -> CapabilityManife
         risk=_parse_risk(_require_object(payload, "risk", source=source), source=source),
         execution=_parse_execution(_require_object(payload, "execution", source=source), source=source),
         session=_parse_session(_require_object(payload, "session", source=source), source=source),
+        metadata=_optional_string_keyed_map(payload, "metadata"),
+        argument_hint=_optional_string(payload, "argument_hint", source=source),
+        user_invocable=_optional_bool(payload, "user_invocable", source=source),
+        disable_model_invocation=_optional_bool(payload, "disable_model_invocation", source=source),
+        model=_optional_string(payload, "model", source=source),
+        effort=_optional_string(payload, "effort", source=source),
+        shell=_optional_string(payload, "shell", source=source),
     )
 
 
@@ -188,6 +206,39 @@ def _require_int(payload: dict[str, Any], key: str, *, source: str) -> int:
     if not isinstance(value, int):
         raise CapabilityLoadError(f"{source}: field '{key}' must be an integer")
     return value
+
+
+def _optional_string(payload: dict[str, Any], key: str, *, source: str) -> str | None:
+    value = payload.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise CapabilityLoadError(f"{source}: field '{key}' must be a string")
+    normalized = value.strip()
+    return normalized or None
+
+
+def _optional_bool(payload: dict[str, Any], key: str, *, source: str) -> bool | None:
+    value = payload.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise CapabilityLoadError(f"{source}: field '{key}' must be a boolean")
+    return value
+
+
+def _optional_string_keyed_map(payload: dict[str, Any], key: str) -> dict[str, Any]:
+    value = payload.get(key)
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise CapabilityLoadError(f"field '{key}' must be an object")
+    normalized: dict[str, Any] = {}
+    for child_key, child_value in value.items():
+        if not isinstance(child_key, str) or not child_key.strip():
+            raise CapabilityLoadError(f"field '{key}' contains an invalid key")
+        normalized[child_key.strip()] = child_value
+    return normalized
 
 
 def _parse_enum(enum_type, value: str, field_name: str, source: str):

@@ -22,8 +22,6 @@ from app.session_interaction_service import (
     build_controller_request_from_context,
 )
 from app.session_service import SessionService
-from app.skill_service import SkillService
-from app.skill_workflow_service import SkillWorkflowPlan, SkillWorkflowService
 from capabilities.registry import CapabilityRegistry
 from controller import (
     AgentController,
@@ -43,7 +41,6 @@ from models.report import Report
 from models.session import SessionMode
 from runtime.task_runner import apply_result_to_session
 from cli.ui import CliPresenter, get_presenter
-from skills.registry import SkillRegistry
 from tools import build_tool_registry
 from tools.executor import ToolExecutor
 
@@ -57,40 +54,28 @@ class ShellState(ConversationContext):
     pass
 
 
-def create_skill_service(settings: Settings | None = None) -> SkillService:
+def create_capability_service(
+    settings: Settings | None = None,
+) -> CapabilityService:
     settings = settings or get_settings()
     tool_names = list(build_tool_registry().keys())
-    registry = SkillRegistry.built_in_and_local(
+    registry = CapabilityRegistry.built_in_and_local(
         known_tool_names=set(tool_names),
-        local_root=settings.skills_dir,
+        local_root=settings.capabilities_dir,
     )
-    return SkillService(
+    return CapabilityService(
         registry,
         base_tool_names=tool_names,
         default_task_skill_name=None,
     )
 
 
-def create_capability_service(
-    settings: Settings | None = None,
-    *,
-    skill_service: SkillService | None = None,
-) -> CapabilityService:
-    settings = settings or get_settings()
-    tool_names = set(build_tool_registry().keys())
-    registry = CapabilityRegistry.built_in_and_local(
-        known_tool_names=tool_names,
-        local_root=settings.app_data_dir / "capabilities",
-    )
-    return CapabilityService(registry, skill_service=skill_service)
-
-
 def create_module_service(
     settings: Settings | None = None,
     *,
-    skill_service: SkillService | None = None,
+    capability_service: CapabilityService | None = None,
 ) -> ModuleService:
-    return ModuleService(create_capability_service(settings, skill_service=skill_service))
+    return ModuleService(capability_service or create_capability_service(settings))
 
 
 def build_prompt(shell_state: ShellState) -> str:
@@ -224,7 +209,7 @@ def parse_redteam_command(command: str) -> list[str] | None:
 def parse_skill_shorthand(
     command: str,
     *,
-    skill_service: SkillService,
+    capability_service: CapabilityService,
 ) -> tuple[str, str] | None:
     stripped = command.strip()
     # Reserve the built-in slash commands first. Any other `/name ...` form can
@@ -250,7 +235,7 @@ def parse_skill_shorthand(
         return None
 
     skill_name = raw_parts[0]
-    if skill_service.get_skill(skill_name) is None:
+    if capability_service.get_skill(skill_name) is None:
         return None
 
     prompt = raw_parts[1].strip() if len(raw_parts) > 1 else ""
@@ -260,36 +245,6 @@ def parse_skill_shorthand(
 def _confirm_choice(input_func: InputFn, prompt: str) -> bool:
     response = input_func(prompt).strip().lower()
     return response in {"y", "yes"}
-
-
-def _workflow_plan_rows(plan: SkillWorkflowPlan) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
-    # Normalize plan objects into presenter-friendly rows once so the CLI and
-    # callback renderers show the same workflow preview.
-    planned_rows = [
-        {
-            "type": job.job_type,
-            "target": job.target_ref,
-            "arguments": json.dumps(job.arguments, ensure_ascii=False, sort_keys=True),
-            "timeout": str(job.timeout_seconds) if job.timeout_seconds is not None else "-",
-            "retry": str(job.retry_limit),
-            "notes": (
-                "requires confirmation"
-                if job.requires_confirmation
-                else (job.admission_message or job.summary or "-")
-            ),
-        }
-        for job in plan.planned_jobs
-    ]
-    skipped_rows = [
-        {
-            "type": job.job_type,
-            "target": job.target_ref,
-            "reason": job.reason,
-            "summary": job.summary or "-",
-        }
-        for job in plan.skipped_jobs
-    ]
-    return planned_rows, skipped_rows
 
 
 def _build_callback_presenter(
@@ -456,7 +411,7 @@ def handle_skill_command(
     command: str,
     *,
     shell_state: ShellState | None = None,
-    skill_service: SkillService | None = None,
+    capability_service: CapabilityService | None = None,
     presenter: CliPresenter | None = None,
     text_output: OutputFn | None = None,
     info_output: OutputFn | None = None,
@@ -469,7 +424,7 @@ def handle_skill_command(
         return False
 
     shell_state = shell_state or ShellState()
-    skill_service = skill_service or create_skill_service()
+    capability_service = capability_service or create_capability_service()
     ui = _resolve_presenter(
         presenter,
         text_output=text_output,
@@ -485,21 +440,21 @@ def handle_skill_command(
             return True
 
         if action == "list":
-            ui.show_skill_list(skill_service.list_skills())
+            ui.show_skill_list(capability_service.list_skills())
             return True
 
         if action == "show":
             if len(args) != 1:
                 ui.show_error("Usage: /skill show <name>")
                 return True
-            ui.show_skill_detail(skill_service.require_skill(args[0]))
+            ui.show_skill_detail(capability_service.require_skill(args[0]))
             return True
 
         if action == "use":
             if len(args) != 1:
                 ui.show_error("Usage: /skill use <name>")
                 return True
-            skill = skill_service.require_user_invocable_skill(args[0])
+            skill = capability_service.require_user_invocable_skill(args[0])
             shell_state.active_skill_name = skill.manifest.name
             ui.show_success(f"Activated skill {skill.manifest.name}.")
             return True
@@ -516,9 +471,9 @@ def handle_skill_command(
 
         if action == "reload":
             previous_skill = shell_state.active_skill_name
-            skill_service.reload()
+            capability_service.reload()
             ui.show_success("Reloaded skills from disk.")
-            if previous_skill and skill_service.get_skill(previous_skill) is None:
+            if previous_skill and capability_service.get_skill(previous_skill) is None:
                 shell_state.active_skill_name = None
                 ui.show_success(f"cleared missing active skill {previous_skill}")
             return True
@@ -881,7 +836,7 @@ async def execute_controller_bridge(
     result: ControllerResult,
     shell_state: ShellState,
     session_state: SessionState,
-    skill_service: SkillService,
+    capability_service: CapabilityService,
     module_service: ModuleService,
     tool_executor: ToolExecutor,
     settings: Settings,
@@ -948,7 +903,7 @@ async def execute_controller_bridge(
         session_identifier=session_identifier,
         prompt_text=result.execution_bridge.prompt_text,
         session_state=session_state,
-        skill_service=skill_service,
+        capability_service=capability_service,
         tool_executor=tool_executor,
         settings=settings,
         conversation_context=shell_state,
@@ -1432,14 +1387,15 @@ async def run_interactive_shell(
     session_service: SessionService | None = None,
     controller: AgentController | None = None,
     execution_service: ExecutionService | None = None,
-    skill_service: SkillService,
+    capability_service: CapabilityService | None = None,
     module_service: ModuleService | None = None,
     input_func: InputFn = input,
 ) -> None:
     session_service = session_service or SessionService.from_settings(settings)
+    capability_service = capability_service or create_capability_service(settings)
     module_service = module_service or create_module_service(
         settings,
-        skill_service=skill_service,
+        capability_service=capability_service,
     )
     controller = controller or AgentController.from_session_service(
         session_service,
@@ -1498,7 +1454,7 @@ async def run_interactive_shell(
                 question=question,
                 conversation_context=shell_state,
                 session_state=session_state,
-                skill_service=skill_service,
+                capability_service=capability_service,
                 tool_executor=tool_executor,
                 settings=settings,
                 interaction_port=interaction_port,
@@ -1517,7 +1473,7 @@ async def run_interactive_shell(
                 if handle_skill_command(
                     question,
                     shell_state=shell_state,
-                    skill_service=skill_service,
+                    capability_service=capability_service,
                     input_func=input_func,
                 ):
                     continue
@@ -1533,7 +1489,10 @@ async def run_interactive_shell(
                 ):
                     continue
 
-                skill_shorthand = parse_skill_shorthand(question, skill_service=skill_service)
+                skill_shorthand = parse_skill_shorthand(
+                    question,
+                    capability_service=capability_service,
+                )
                 if skill_shorthand is not None:
                     skill_name, shorthand_prompt = skill_shorthand
                     if not shorthand_prompt:
@@ -1541,7 +1500,7 @@ async def run_interactive_shell(
                         continue
                     reset_steps()
                     try:
-                        runtime_config = await skill_service.build_skill_runtime_config(
+                        runtime_config = await capability_service.build_skill_runtime_config(
                             skill_name=skill_name,
                             context_summary=session_state.context_summary,
                         )
@@ -1612,8 +1571,8 @@ async def main() -> None:
         settings,
         session_service=session_service,
     )
-    skill_service = create_skill_service(settings)
-    module_service = create_module_service(settings, skill_service=skill_service)
+    capability_service = create_capability_service(settings)
+    module_service = create_module_service(settings, capability_service=capability_service)
     controller = AgentController.from_session_service(
         session_service,
         module_names=tuple(capability.manifest.name for capability in module_service.list_modules()),
@@ -1631,7 +1590,7 @@ async def main() -> None:
         session_service=session_service,
         controller=controller,
         execution_service=execution_service,
-        skill_service=skill_service,
+        capability_service=capability_service,
         module_service=module_service,
     )
 

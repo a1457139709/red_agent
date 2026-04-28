@@ -5,13 +5,13 @@ from dataclasses import dataclass
 
 from agent.settings import Settings
 from agent.state import SessionState
+from app.capability_service import CapabilityService
 from app.dashboard_service import DashboardService
 from app.interaction_port import InteractionPort
 from app.report_flow_service import ReportFlowService, ReportFlowResult
 from app.session_interaction_service import SessionInteractionService
 from app.session_record_query_service import SessionRecordQueryService
 from app.session_service import SessionService
-from app.skill_service import SkillService
 from controller.contracts import (
     ConfirmationDecision,
     ConfirmationDecisionValue,
@@ -219,9 +219,9 @@ class WebInteractionAdapter:
         conversation_id: str,
         raw_input: str,
         session_state: SessionState,
-        skill_service: SkillService,
         tool_executor: ToolExecutor,
         settings: Settings,
+        capability_service: CapabilityService,
     ) -> WebInteractionStream:
         context = self.conversation_store.get(conversation_id)
         event_queue: asyncio.Queue = asyncio.Queue()
@@ -236,7 +236,7 @@ class WebInteractionAdapter:
                 raw_input=raw_input,
                 context=context,
                 session_state=session_state,
-                skill_service=skill_service,
+                capability_service=capability_service,
                 tool_executor=tool_executor,
                 settings=settings,
                 interaction_port=interaction_port,
@@ -255,7 +255,7 @@ class WebInteractionAdapter:
         raw_input: str,
         context: ConversationContext,
         session_state: SessionState,
-        skill_service: SkillService,
+        capability_service: CapabilityService,
         tool_executor: ToolExecutor,
         settings: Settings,
         interaction_port: _WebInteractionPort,
@@ -266,7 +266,7 @@ class WebInteractionAdapter:
                 question=raw_input,
                 conversation_context=context,
                 session_state=session_state,
-                skill_service=skill_service,
+                capability_service=capability_service,
                 tool_executor=tool_executor,
                 settings=settings,
                 interaction_port=interaction_port,
@@ -292,15 +292,15 @@ class WebInteractionAdapter:
         conversation_id: str,
         raw_input: str,
         session_state: SessionState,
-        skill_service: SkillService,
         tool_executor: ToolExecutor,
         settings: Settings,
+        capability_service: CapabilityService,
     ) -> ConversationMessageResponseDto:
         stream = await self.start_message(
             conversation_id=conversation_id,
             raw_input=raw_input,
             session_state=session_state,
-            skill_service=skill_service,
+            capability_service=capability_service,
             tool_executor=tool_executor,
             settings=settings,
         )

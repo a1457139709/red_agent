@@ -50,6 +50,10 @@ class Settings:
         return self.app_data_dir / "skills"
 
     @property
+    def capabilities_dir(self) -> Path:
+        return self.app_data_dir / "capabilities"
+
+    @property
     def config_dir(self) -> Path:
         return self.app_data_dir / "config"
 

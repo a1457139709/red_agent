@@ -7,13 +7,12 @@ from agent.context import build_compressed_context, compress_context, should_com
 from agent.loop import agent_loop
 from agent.settings import Settings
 from agent.state import SessionState
+from app.capability_service import CapabilityService
 from app.checkpoint_service import CheckpointService
 from app.run_service import RunService
-from app.skill_service import SkillService
 from app.task_service import TaskService
 from models.run import RunFailureKind, TaskLogLevel
 from models.task import Task, TaskStatus
-from skills.registry import SkillRegistry
 from tools import build_tool_registry
 from tools.executor import ToolExecutionError, ToolExecutionEvent, ToolExecutor
 from tools.policy import SafetyAuditEvent
@@ -69,16 +68,13 @@ class TaskRunner:
         self,
         task_service: TaskService,
         run_service: RunService,
-        skill_service: SkillService | None = None,
+        capability_service: CapabilityService | None = None,
         checkpoint_service: CheckpointService | None = None,
     ) -> None:
         self.task_service = task_service
         self.run_service = run_service
         self.checkpoint_service = checkpoint_service or CheckpointService.from_settings(run_service.settings)
-        self.skill_service = skill_service or SkillService(
-            SkillRegistry.built_in(known_tool_names=set(build_tool_registry().keys())),
-            base_tool_names=list(build_tool_registry().keys()),
-        )
+        self.capability_service = capability_service or CapabilityService.from_settings(run_service.settings)
 
     async def run_prompt(
         self,
@@ -107,11 +103,11 @@ class TaskRunner:
         try:
             try:
                 if task.skill_profile is None:
-                    runtime_config = await self.skill_service.build_base_runtime_config(
+                    runtime_config = await self.capability_service.build_base_runtime_config(
                         context_summary=session_state.context_summary,
                     )
                 else:
-                    runtime_config = await self.skill_service.build_skill_runtime_config(
+                    runtime_config = await self.capability_service.build_skill_runtime_config(
                         skill_name=task.skill_profile,
                         context_summary=session_state.context_summary,
                     )
@@ -311,7 +307,7 @@ class TaskRunner:
             raise ValueError(f"Task {task.id} cannot be resumed from status {task.status.value}")
 
         if task.skill_profile is not None:
-            self.skill_service.resolve_skill(task.skill_profile)
+            self.capability_service.resolve_skill(task.skill_profile)
 
         if task.last_checkpoint:
             session_state = self.checkpoint_service.load_checkpoint_state(task.last_checkpoint)

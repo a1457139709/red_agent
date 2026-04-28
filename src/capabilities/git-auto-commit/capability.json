@@ -6,6 +6,12 @@
   "description": "Summarize current local git repository changes and create a focused commit.",
   "modes": ["normal"],
   "parameters": [],
+  "metadata": {
+    "category": "development",
+    "risk_level": "medium",
+    "mode": "commit"
+  },
+  "argument_hint": "summarize the current git changes and create a commit",
   "tools": {
     "allowed": ["bash", "list_dir", "read_file", "search"]
   },
@@ -17,6 +23,7 @@
     "style": "prompt_assist",
     "profile": "git-auto-commit"
   },
+  "user_invocable": true,
   "session": {
     "supports_one_shot": true,
     "supports_persistent": true,

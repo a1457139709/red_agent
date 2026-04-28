@@ -30,7 +30,6 @@ from models.planner import (
 )
 from models.report import Report
 from models.run import Run, TaskLogEntry
-from models.skill import LoadedSkill
 from models.task import Task
 from runtime.execution_events import ExecutionEventType, ExecutionProgressEvent
 
@@ -1071,7 +1070,7 @@ class CliPresenter:
             )
         return table
 
-    def show_skill_list(self, skills: list[LoadedSkill]) -> None:
+    def show_skill_list(self, skills: list[LoadedCapability]) -> None:
         if not skills:
             self._emit(Panel(Text("No skills found.", style="dim"), title="Skills", border_style="yellow", box=ASCII_BOX))
             return
@@ -1083,7 +1082,7 @@ class CliPresenter:
             table.add_row(skill.manifest.name, skill.source, skill.manifest.description)
         self._emit(table)
 
-    def show_skill_detail(self, skill: LoadedSkill) -> None:
+    def show_skill_detail(self, skill: LoadedCapability) -> None:
         metadata = skill.manifest.metadata or {}
         metadata_text = "\n".join(
             f"{key}: {value}" for key, value in sorted(metadata.items())
@@ -1092,9 +1091,8 @@ class CliPresenter:
         summary = Panel(
             self._detail_table([
                 ("Name", skill.manifest.name),
+                ("Display Name", skill.manifest.display_name),
                 ("Description", skill.manifest.description),
-                ("License", skill.manifest.license),
-                ("Compatibility", skill.manifest.compatibility),
                 ("Source", skill.source),
                 ("Invocation Mode", invocation_mode),
                 ("User Invocable", "yes" if skill.manifest.is_user_invocable else "no"),
@@ -1102,10 +1100,11 @@ class CliPresenter:
                 ("Shell", skill.manifest.shell or "-"),
                 ("Model", skill.manifest.model or "-"),
                 ("Reasoning Effort", skill.manifest.effort or "-"),
-                ("Workflow Profile", skill.manifest.workflow_profile or "-"),
                 ("Argument Hint", skill.manifest.argument_hint or "-"),
-                ("Allowed Tools", ", ".join(skill.manifest.allowed_tools)),
-                ("Path", str(skill.skill_file)),
+                ("Modes", ", ".join(mode.value for mode in skill.manifest.modes)),
+                ("Allowed Tools", ", ".join(skill.manifest.tools.allowed)),
+                ("Prompt Path", str(skill.prompt_file) if skill.prompt_file is not None else "-"),
+                ("Path", str(skill.manifest_file)),
             ]),
             title="Skill Detail",
             border_style="green",

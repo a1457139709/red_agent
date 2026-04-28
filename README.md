@@ -5,7 +5,7 @@
 - a controller-first natural-language entry flow
 - a LangChain tool-calling loop
 - a persisted task runtime
-- an explicit `SKILL.md` skill system
+- a capability-first skill/module runtime
 - a controlled local execution boundary
 - a session-first red-team runtime
 
@@ -21,8 +21,9 @@ The repository now contains two runtime families:
 - interactive local CLI
 - Rich-based CLI presentation layer
 - hierarchical help output with topic drill-down
-- built-in and user-local `SKILL.md` prompt-assist skills
-- Phase 5 `capability.json` contracts for skills and modules
+- built-in and user-local capability-backed prompt-assist skills
+- `capability.json` plus `prompt.md` contracts for prompt-assist skills
+- `capability.json` contracts for executable modules
 - explicit skill activation and one-shot skill invocation
 - bounded module execution for `surface-recon` and `web-enum` through the session risk/scope gate
 - file tools: read, write, edit, list, search, delete
@@ -188,38 +189,27 @@ Artifact public IDs now use the Phase 6 `A0001` format. During repository initia
 
 `SessionRecordLocator.get_layer_summary(...)` now returns exact per-layer counts backed by repository `COUNT(*)` queries. It is intended for accurate session health and retrieval summaries, while the separate `list_*` helpers remain available for preview-style record inspection.
 
-## Skill Locations
+## Capability Locations
 
-Built-in skills live under:
+Built-in capabilities live under:
 
-- `src/skills/`
+- `src/capabilities/`
 
-User-local skills live under:
+User-local capabilities live under:
 
-- `.red-code/skills/`
+- `.red-code/capabilities/`
 
 Example:
 
 ```text
 .red-code/
-  skills/
+  capabilities/
     my-skill/
-      SKILL.md
+      capability.json
+      prompt.md
 ```
 
-If a local skill has the same name as a built-in skill, the local skill overrides it after `/skill reload`.
-
-## Capability Locations
-
-Built-in Phase 5 capability manifests live under:
-
-- `src/capabilities/`
-
-User-local capability manifests live under:
-
-- `.red-code/capabilities/`
-
-Example:
+Executable modules omit `prompt.md` and use only `capability.json`:
 
 ```text
 .red-code/
@@ -240,7 +230,7 @@ Core source areas:
 - `src/web/`
 - `src/runtime/`
 - `src/models/`
-- `src/skills/`
+- `src/capabilities/`
 - `src/storage/`
 - `src/tools/`
 - `src/utils/`
@@ -260,18 +250,19 @@ Current docs:
 
 The docs index is at `docs/README.md`.
 
-## Built-In Skills
+## Built-In Capabilities
 
-The current built-in skills are:
+Prompt-assist skills:
 
 - `development-default`
 - `git-auto-commit`
 - `security-audit`
-- `surface-recon`
 - `weather-query-example`
-- `web-enum`
 
-`surface-recon` and `web-enum` are Phase 5 modules. Their legacy `SKILL.md` files remain only as migration/debug prompt bridges; the target execution path is `/module run <name> <target> [json_overrides]`.
+Executable modules:
+
+- `surface-recon`
+- `web-enum`
 
 ## Tests
 

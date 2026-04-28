@@ -273,3 +273,10 @@ At minimum, tests should cover:
 - missing skill handling
 - prompt assembly with an activated skill
 
+# RETIRED DOCUMENT
+
+This document describes the removed `SKILL.md` runtime and is retained only for migration history.
+The current runtime uses capability directories under `src/capabilities/` and `.red-code/capabilities/`,
+with `capability.json` for metadata and `prompt.md` for prompt-assist skill bodies.
+
+Do not use this document as the current runtime contract.

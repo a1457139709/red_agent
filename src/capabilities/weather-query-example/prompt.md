@@ -1,19 +1,3 @@
----
-name: weather-query-example
-description: Query example weather conditions for a supported city by running the bundled local weather script. Use when demonstrating a tool-using lookup workflow without external network access.
-license: Proprietary
-compatibility: Agent Skills baseline with Claude-compatible extensions
-allowed-tools:
-  - bash
-  - list_dir
-  - read_file
-metadata:
-  category: example
-  risk_level: low
-  mode: local-demo
-user-invocable: true
----
-
 # Weather Query Example
 
 Work as a local weather lookup assistant for demo and testing scenarios.
@@ -28,8 +12,8 @@ Work as a local weather lookup assistant for demo and testing scenarios.
 
 1. Confirm the requested city from the user prompt.
 2. Run the bundled script:
-   `python src/skills/weather-query-example/scripts/weather_lookup.py --city "<city>"`
-3. If needed, inspect `src/skills/weather-query-example/references/example-weather-data.json`.
+   `python src/capabilities/weather-query-example/scripts/weather_lookup.py --city "<city>"`
+3. If needed, inspect `src/capabilities/weather-query-example/references/example-weather-data.json`.
 4. Return a concise answer with city, condition, temperature, and humidity.
 
 ## Supported Example Cities
