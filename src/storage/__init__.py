@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from importlib import import_module
 
-__all__ = ["RunRepository", "SQLiteStorage", "TaskRepository"]
+__all__ = ["RunRepository", "SQLiteStorage"]
 
 _EXPORTS = {
     "RunRepository": ".runs",
     "SQLiteStorage": ".sqlite",
-    "TaskRepository": ".tasks",
 }
 
 

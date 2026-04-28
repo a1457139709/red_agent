@@ -10,7 +10,7 @@ from app.session_event_service import SessionEventService
 from app.session_record_query_service import SessionRecordQueryService
 from app.session_service import SessionService
 from models.job import JobLogLevel, JobStatus
-from models.run import TaskLogLevel
+from models.run import SessionLogLevel
 from models.session import SessionMode, SessionStatus
 from models.session_event import SessionEventLevel, SessionEventType
 
@@ -44,7 +44,7 @@ def seed_session_records(settings):
     run_service.write_log(
         session_identifier=session.public_id,
         run_id=run.id,
-        level=TaskLogLevel.INFO,
+        level=SessionLogLevel.INFO,
         message="tool_completed",
         payload={"tool_name": "http_probe", "result_summary": "200 OK"},
     )

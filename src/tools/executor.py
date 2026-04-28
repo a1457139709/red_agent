@@ -9,6 +9,7 @@ from typing import Any
 from models.scope_policy import ScopePolicy
 from orchestration.scope_validator import TargetDescriptor
 from tools.contracts import SecurityTool, SecurityToolInvocation, SecurityToolResult
+from tools.error_signals import RECOVERABLE_TOOL_ERROR_PREFIX
 from tools.policy import CapabilityTier, RuntimeSafetyPolicy, SafetyAuditEvent, get_tool_capability
 from utils.safety import detect_danger, is_sensitive_path, resolve_safe_path
 
@@ -315,6 +316,16 @@ class ToolExecutor:
 
         try:
             result = tool.invoke(effective_args)
+            recoverable_error = self._extract_recoverable_tool_error(result)
+            if recoverable_error is not None:
+                self._emit_tool_event(
+                    event_type="tool_failed",
+                    tool_name=tool_name,
+                    capability=capability,
+                    args_summary=args_summary,
+                    error=recoverable_error,
+                )
+                return recoverable_error
             self._emit_tool_event(
                 event_type="tool_completed",
                 tool_name=tool_name,
@@ -548,6 +559,13 @@ class ToolExecutor:
         if len(value) <= limit:
             return value
         return value[: limit - 3] + "..."
+
+    def _extract_recoverable_tool_error(self, result: object) -> str | None:
+        if not isinstance(result, str):
+            return None
+        if not result.startswith(RECOVERABLE_TOOL_ERROR_PREFIX):
+            return None
+        return result.removeprefix(RECOVERABLE_TOOL_ERROR_PREFIX).strip() or "Error"
 
     def _apply_execution_gate(
         self,

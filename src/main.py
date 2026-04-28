@@ -233,7 +233,6 @@ def parse_skill_shorthand(
         not stripped.startswith("/")
         or stripped.startswith("/skill")
         or stripped.startswith("/module")
-        or stripped.startswith("/task")
         or stripped.startswith("/operation")
         or stripped.startswith("/job")
         or stripped.startswith("/finding")
@@ -356,13 +355,17 @@ def handle_help_command(
         ui.show_help()
         return True
     if len(args) != 1:
-        ui.show_error("Usage: /help [query|skill|module]")
+        ui.show_error(
+            "Usage: /help <topic>\n"
+            f"Available topics: {CliPresenter.supported_help_topics_text()}"
+        )
         return True
 
     topic = args[0].lower()
-    if topic not in {"query", "skill", "module"}:
+    if not CliPresenter.is_supported_help_topic(topic):
         ui.show_error(
-            f"Unknown help topic: {args[0]}. Available topics: query, skill, module"
+            f"Unknown help topic: {args[0]}.\n"
+            f"Available topics: {CliPresenter.supported_help_topics_text()}"
         )
         return True
     ui.show_help(topic)

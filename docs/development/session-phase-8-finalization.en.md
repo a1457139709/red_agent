@@ -38,6 +38,19 @@ This means:
 - the stream and resource transport directions are settled
 - coding can begin without reopening the core adapter design
 
+## Current Implementation Note
+
+As of April 25, 2026, Phase 8 should be treated as **design-complete but only partially implemented**.
+
+Current repository state to assume:
+
+- Web-facing interfaces or adapter contracts may exist
+- the runtime may already expose part of the Phase 8 boundary
+- a fully working Web adapter and real Web interaction flow are **not** yet complete
+
+This document therefore freezes the target contract for the remaining implementation work. It does
+not mean that Phase 8 has already been fully delivered in product terms.
+
 ## Replacement Position of Phase 8
 
 Phase 8 is the point where the session-centric runtime becomes **adapter-ready for Web consumption** without changing the core product semantics.

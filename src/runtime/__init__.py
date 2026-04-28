@@ -1,1 +1,1 @@
-"""Runtime modules for legacy tasks and v2 workers."""
+"""Runtime modules for foreground execution and v2 workers."""

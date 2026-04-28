@@ -20,6 +20,19 @@ This checklist assumes Phase 1 through Phase 7 have already established:
 - session-owned records, artifacts, findings, and reports
 - command-first retrieval and report orchestration through shared services
 
+## Current Implementation Note
+
+As of April 25, 2026, the repository should be treated as only **partially implemented** for Phase 8.
+
+Current state to assume:
+
+- some Web-facing interface or adapter contract work may already exist
+- transport-neutral boundaries may be partially extracted
+- a complete Web adapter flow is **not** yet delivered end to end
+
+This means the Phase 8 checklist remains the implementation target until the shared interaction path,
+resource endpoints, progress transport, and confirmation behavior are all reachable without CLI-only assumptions.
+
 ## Phase Goal
 
 Make the current session-centric runtime consumable from a future Web UI **without changing the core business model**, by extracting a transport-neutral interaction layer and defining a Web adapter contract above the existing controller and application services.

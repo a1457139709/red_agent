@@ -345,6 +345,19 @@ def test_port_scan_refuses_ports_outside_policy_before_execution():
         )
 
 
+def test_port_scan_accepts_json_style_string_port_list():
+    tool = PortScanSecurityTool()
+    policy = make_policy(allowed_ports=[80, 443])
+
+    invocation = tool.validate_invocation(
+        target="example.com",
+        arguments={"ports": "[80, 443]"},
+        policy=policy,
+    )
+
+    assert invocation.execution_args["ports"] == [80, 443]
+
+
 def test_scope_validator_checks_metadata_port_lists():
     validator = ScopeValidator()
     policy = make_policy(

@@ -20,7 +20,6 @@ from models.checkpoint import (
 from storage.checkpoints import CheckpointRepository
 from storage.repositories.operations import OperationRepository
 from storage.sqlite import SQLiteStorage
-from storage.tasks import TaskRepository
 
 from .session_scope import resolve_session_identifier
 from .session_service import SessionService
@@ -32,13 +31,11 @@ class CheckpointService:
         repository: CheckpointRepository,
         session_service: SessionService,
         operation_repository: OperationRepository,
-        task_repository: TaskRepository,
         settings: Settings,
     ) -> None:
         self.repository = repository
         self.session_service = session_service
         self.operation_repository = operation_repository
-        self.task_repository = task_repository
         self.settings = settings
 
     @classmethod
@@ -49,22 +46,17 @@ class CheckpointService:
             CheckpointRepository(storage),
             SessionService.from_settings(settings),
             OperationRepository(storage),
-            TaskRepository(storage),
             settings,
         )
 
     def save_checkpoint(
         self,
         *,
-        session_identifier: str | None = None,
-        task_id: str | None = None,
+        session_identifier: str,
         session_state: SessionState,
         run_id: str | None = None,
     ) -> CheckpointRecord:
-        identifier = session_identifier or task_id
-        if identifier is None:
-            raise ValueError("session_identifier is required.")
-        session = self.session_service.require_session(self._resolve_session_id(identifier))
+        session = self.session_service.require_session(self._resolve_session_id(session_identifier))
         payload = session_state.to_checkpoint_payload()
         blob_payload = {
             "version": CHECKPOINT_SCHEMA_VERSION,
@@ -214,5 +206,4 @@ class CheckpointService:
             self.session_service,
             identifier,
             operation_repository=self.operation_repository,
-            task_repository=self.task_repository,
         )

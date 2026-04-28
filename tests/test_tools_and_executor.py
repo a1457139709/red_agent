@@ -5,6 +5,7 @@ import tools.bash as bash_module
 import tools.webFetch as web_fetch_module
 import tools.webSearch as web_search_module
 from tools import build_tool_registry, get_runtime_tools
+from tools.error_signals import RECOVERABLE_TOOL_ERROR_PREFIX
 from tools.executor import ToolExecutionError, ToolExecutor
 from tools.policy import CapabilityTier
 from tools.search import search
@@ -53,6 +54,27 @@ def test_tool_executor_unknown_tool_is_audited_and_classified():
     assert [event.event_type for event in audits] == ["operation_failed"]
     assert audits[0].reason == "unknown_tool"
     assert audits[0].tool_name == "missing_tool"
+
+
+def test_tool_executor_marks_recoverable_tool_errors_as_failed_without_raising():
+    tool_events = []
+
+    class RecoverableTool:
+        name = "port_scan"
+
+        def invoke(self, args):
+            return f"{RECOVERABLE_TOOL_ERROR_PREFIX}Error: ports must be an integer."
+
+    executor = ToolExecutor(
+        {"port_scan": RecoverableTool()},
+        on_tool_event=tool_events.append,
+    )
+
+    result = executor.execute("port_scan", {"target": "localhost", "ports": "[8080]"})
+
+    assert result == "Error: ports must be an integer."
+    assert [event.event_type for event in tool_events] == ["tool_invoked", "tool_failed"]
+    assert tool_events[1].error == "Error: ports must be an integer."
 
 
 def test_bash_decodes_utf8_stdout(monkeypatch):
@@ -345,5 +367,4 @@ def test_web_search_formats_duckduckgo_results(monkeypatch):
     assert "Snippet: Snippet A" in result
     assert "2. Result B" in result
     assert "URL: https://example.com/b" in result
-
 

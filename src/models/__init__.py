@@ -45,6 +45,8 @@ __all__ = [
     "ConversationContext",
     "Run",
     "RunStatus",
+    "SessionLogLevel",
+    "SessionLogEntry",
     "Report",
     "ReportArtifactLink",
     "ReportFindingLink",
@@ -59,10 +61,6 @@ __all__ = [
     "SessionTargetKind",
     "ScopePolicy",
     "StoredCheckpoint",
-    "Task",
-    "TaskLogEntry",
-    "TaskLogLevel",
-    "TaskStatus",
 ]
 
 _EXPORTS = {
@@ -109,6 +107,8 @@ _EXPORTS = {
     "ConversationContext": ".conversation_context",
     "Run": ".run",
     "RunStatus": ".run",
+    "SessionLogLevel": ".run",
+    "SessionLogEntry": ".run",
     "Report": ".report",
     "ReportArtifactLink": ".report_artifact_link",
     "ReportFindingLink": ".report_finding_link",
@@ -122,10 +122,6 @@ _EXPORTS = {
     "SessionTarget": ".session",
     "SessionTargetKind": ".session",
     "ScopePolicy": ".scope_policy",
-    "Task": ".task",
-    "TaskLogEntry": ".run",
-    "TaskLogLevel": ".run",
-    "TaskStatus": ".task",
 }
 
 

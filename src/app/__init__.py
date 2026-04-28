@@ -23,7 +23,6 @@ __all__ = [
     "SessionRecordLocator",
     "SessionService",
     "ScopePolicyService",
-    "TaskService",
     "ToolAccessPolicyService",
 ]
 
@@ -48,7 +47,6 @@ _EXPORTS = {
     "SessionRecordLocator": ".session_record_locator",
     "SessionService": ".session_service",
     "ScopePolicyService": ".scope_policy_service",
-    "TaskService": ".task_service",
     "ToolAccessPolicyService": ".tool_access_policy_service",
 }
 

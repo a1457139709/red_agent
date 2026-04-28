@@ -1,13 +1,7 @@
 import asyncio
 
-from langchain_core.messages import AIMessage
-
-import runtime.task_runner as task_runner_module
 from agent.settings import Settings
-from app.run_service import RunService
 from app.skill_service import SkillService
-from app.task_service import TaskService
-from runtime.task_runner import TaskRunner
 from skills.registry import SkillRegistry
 from tools import build_tool_registry
 from tools.executor import ToolExecutor
@@ -90,64 +84,3 @@ def test_sensitive_write_emits_confirmation_and_block_events(monkeypatch, tmp_pa
         "operation_blocked",
     ]
     assert not (tmp_path / ".env").exists()
-
-
-def test_task_runner_persists_safety_audit_logs(monkeypatch, tmp_path):
-    monkeypatch.chdir(tmp_path)
-    settings = build_settings(tmp_path)
-    task_service = TaskService.from_settings(settings)
-    run_service = RunService.from_settings(settings)
-    runner = TaskRunner(task_service, run_service, create_skill_service())
-    tool_executor = ToolExecutor(
-        build_tool_registry(),
-        confirm_command=lambda prompt: False,
-        on_info=lambda message: None,
-    )
-    task = task_service.create_task(title="Safety", goal="Exercise risky tools")
-    task, session_state = runner.resume_task(task.id)
-    (tmp_path / "deleteme.txt").write_text("x", encoding="utf-8")
-
-    async def fake_agent_loop(
-        question,
-        state,
-        runtime_executor,
-        current_settings,
-        *,
-        system_prompt=None,
-        tools=None,
-    ):
-        tool_result = runtime_executor.execute("delete_file", {"file_path": "deleteme.txt"})
-        return {
-            "status": "completed",
-            "response": tool_result,
-            "messages": [
-                AIMessage(
-                    content=tool_result,
-                    tool_calls=[],
-                    usage_metadata={"input_tokens": 4, "output_tokens": 4, "total_tokens": 8},
-                )
-            ],
-            "usage": {"input_tokens": 4, "output_tokens": 4, "total_tokens": 8},
-        }
-
-    monkeypatch.setattr(task_runner_module, "agent_loop", fake_agent_loop)
-
-    asyncio.run(
-        runner.run_prompt(
-            task_id=task.id,
-            question="delete it",
-            session_state=session_state,
-            tool_executor=tool_executor,
-            settings=settings,
-        )
-    )
-
-    logs = run_service.list_logs(task.id, limit=20)
-    log_messages = {entry.message for entry in logs}
-    blocked_log = next(entry for entry in logs if entry.message == "safety_operation_blocked")
-
-    assert "safety_confirmation_required" in log_messages
-    assert "safety_operation_blocked" in log_messages
-    assert blocked_log.payload["tool_name"] == "delete_file"
-    assert blocked_log.payload["capability"] == CapabilityTier.DESTRUCTIVE.value
-    assert (tmp_path / "deleteme.txt").exists()

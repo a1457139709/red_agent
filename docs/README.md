@@ -29,6 +29,9 @@ runtime shape for planned refactors.
 6. `architecture/session-target-architecture.md`
    Target architecture for the planned `session`-centric refactor, including mode split,
    layered boundaries, execution closure, memory/artifact separation, and migration direction.
+7. `architecture/control-center-target-architecture.zh.md`
+   Target architecture for evolving `red-code` into a control-center product with a desktop client,
+   Python App Server, realtime WebSocket interaction, dashboard views, and remote/local single-user deployment.
 
 ### `development/`
 
@@ -78,6 +81,28 @@ Development docs describe planning, review, and iteration guidance.
 16. `development/session-phase-5-finalization.en.md`
    Finalized Phase 5 baseline that freezes `capability.json` as the target manifest direction,
    the `skill`/`module` capability contract, execution styles, and operation-id workflow rejection.
+17. `development/session-phase-6-implementation-checklist.en.md`
+   Implementation-ready checklist for Phase 6, covering the session-owned storage split, record ownership
+   migration, session record locator, and the beginning of the physical `task` / `operation` merge.
+18. `development/session-phase-6-finalization.en.md`
+   Finalized Phase 6 baseline that freezes the four-layer session storage model, persistence ownership,
+   session-owned execution records, and the legacy naming boundary for the storage refactor.
+19. `development/session-phase-7-implementation-checklist.en.md`
+   Implementation-ready checklist for Phase 7, covering command-first record retrieval, query contracts,
+   finding explanation traces, and controller-facing report orchestration.
+20. `development/session-phase-7-finalization.en.md`
+   Finalized Phase 7 baseline that freezes the retrieval model, query and report-flow contracts,
+   explanation-trace requirements, and the demotion of legacy top-level retrieval paths.
+21. `development/session-phase-8-implementation-checklist.en.md`
+   Implementation-ready checklist for Phase 8, covering Web adapter readiness, shared interaction
+   orchestration, transport-neutral conversation state, Web DTOs, and stream/confirmation contracts.
+22. `development/session-phase-8-finalization.en.md`
+   Finalized Phase 8 design baseline for Web adapter readiness. As of April 25, 2026, this should be
+   read as an architecture contract; the repository may still have only partial Phase 8 implementation
+   such as Web-facing interface work rather than a complete Web adapter delivery.
+23. `development/control-center-migration-plan.zh.md`
+   Detailed migration plan for turning the current session-centric agent into a desktop control center
+   with an App Server, realtime interaction channel, detached/background execution, and GUI-oriented APIs.
 
 ## Read These First
 

@@ -35,7 +35,7 @@ class RunFailureKind(StrEnum):
     MAX_STEPS_EXCEEDED = "max_steps_exceeded"
 
 
-class TaskLogLevel(StrEnum):
+class SessionLogLevel(StrEnum):
     INFO = "info"
     ERROR = "error"
 
@@ -61,8 +61,7 @@ class Run:
         *,
         id: str,
         public_id: str,
-        session_id: str | None = None,
-        task_id: str | None = None,
+        session_id: str,
         status: RunStatus = RunStatus.RUNNING,
         started_at: str | None = None,
         finished_at: str | None = None,
@@ -74,12 +73,9 @@ class Run:
         effective_tools: list[str] | None = None,
         failure_kind: str | None = None,
     ) -> None:
-        resolved_session_id = session_id or task_id
-        if not resolved_session_id:
-            raise ValueError("session_id is required.")
         self.id = id
         self.public_id = public_id
-        self.session_id = resolved_session_id
+        self.session_id = session_id
         self.status = RunStatus(status)
         self.started_at = started_at or utc_now_iso()
         self.finished_at = finished_at
@@ -95,16 +91,12 @@ class Run:
     def create(
         cls,
         *,
-        session_id: str | None = None,
-        task_id: str | None = None,
+        session_id: str,
     ) -> "Run":
-        resolved_session_id = session_id or task_id
-        if not resolved_session_id:
-            raise ValueError("session_id is required.")
         return cls(
             id=str(uuid4()),
             public_id="",
-            session_id=resolved_session_id,
+            session_id=session_id,
         )
 
     @classmethod
@@ -144,21 +136,12 @@ class Run:
             "failure_kind": self.failure_kind,
         }
 
-    @property
-    def task_id(self) -> str:
-        return self.session_id
-
-    @task_id.setter
-    def task_id(self, value: str) -> None:
-        self.session_id = value
-
-
 @dataclass(slots=True)
 class SessionLogEntry:
     id: str
     session_id: str
     run_id: str | None
-    level: TaskLogLevel
+    level: SessionLogLevel
     message: str
     payload: dict[str, Any]
     created_at: str = field(default_factory=utc_now_iso)
@@ -168,7 +151,7 @@ class SessionLogEntry:
         cls,
         *,
         session_id: str,
-        level: TaskLogLevel,
+        level: SessionLogLevel,
         message: str,
         run_id: str | None = None,
         payload: dict[str, Any] | None = None,
@@ -189,7 +172,7 @@ class SessionLogEntry:
             id=row["id"],
             session_id=row["session_id"],
             run_id=row["run_id"],
-            level=TaskLogLevel(row["level"]),
+            level=SessionLogLevel(row["level"]),
             message=row["message"],
             payload=json.loads(raw_payload) if raw_payload else {},
             created_at=row["created_at"],
@@ -205,52 +188,3 @@ class SessionLogEntry:
             "payload": json.dumps(self.payload, ensure_ascii=False),
             "created_at": self.created_at,
         }
-
-class TaskLogEntry(SessionLogEntry):
-    def __init__(
-        self,
-        *,
-        id: str,
-        task_id: str | None = None,
-        session_id: str | None = None,
-        run_id: str | None,
-        level: TaskLogLevel,
-        message: str,
-        payload: dict[str, Any],
-        created_at: str | None = None,
-    ) -> None:
-        resolved_session_id = session_id or task_id
-        if not resolved_session_id:
-            raise ValueError("task_id is required.")
-        super().__init__(
-            id=id,
-            session_id=resolved_session_id,
-            run_id=run_id,
-            level=TaskLogLevel(level),
-            message=message,
-            payload=dict(payload),
-            created_at=created_at or utc_now_iso(),
-        )
-
-    @classmethod
-    def create(
-        cls,
-        *,
-        task_id: str,
-        level: TaskLogLevel,
-        message: str,
-        run_id: str | None = None,
-        payload: dict[str, Any] | None = None,
-    ) -> "TaskLogEntry":
-        return cls(
-            id=str(uuid4()),
-            session_id=task_id,
-            run_id=run_id,
-            level=level,
-            message=message,
-            payload=payload or {},
-        )
-
-    @property
-    def task_id(self) -> str:
-        return self.session_id

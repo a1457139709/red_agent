@@ -5,9 +5,8 @@ from capabilities.loader import load_capability_from_file
 from cli.ui import CliPresenter
 from rich.console import Console
 from models.checkpoint import CheckpointSummary
-from models.run import Run, RunStatus, TaskLogEntry, TaskLogLevel
+from models.run import Run, RunStatus, SessionLogEntry, SessionLogLevel
 from models.skill import LoadedSkill, SkillManifest
-from models.task import Task, TaskStatus
 from runtime.execution_events import ExecutionEventType, ExecutionProgressEvent
 
 
@@ -23,6 +22,7 @@ def test_presenter_help_and_observation_render_clean_text():
     presenter.show_help("query")
     presenter.show_help("skill")
     presenter.show_help("artifact")
+    presenter.show_help("report")
     presenter.show_help("module")
     presenter.show_observation(
         "line1\nline2\nline3\nline4\nline5",
@@ -38,9 +38,9 @@ def test_presenter_help_and_observation_render_clean_text():
     assert "query" in outputs[0]
     assert "operation" not in outputs[0]
     assert "job" not in outputs[0]
-    assert "/help query" in outputs[0]
-    assert "/help skill" in outputs[0]
-    assert "/help module" in outputs[0]
+    assert "/help <topic>" in outputs[0]
+    assert "The table above lists all supported topics." in outputs[0]
+    assert "task" not in outputs[0]
     assert "/clear" in outputs[0]
     assert "/redteam [on|off|toggle|current]" in outputs[0]
     assert "Query Commands" in outputs[1]
@@ -52,11 +52,13 @@ def test_presenter_help_and_observation_render_clean_text():
     assert "Artifact Commands" in outputs[3]
     assert "/artifact list <session_id> [limit]" in outputs[3]
     assert "/evidence" not in outputs[3]
-    assert "Module Commands" in outputs[4]
-    assert "/module run <name> <target> [json_overrides]" in outputs[4]
-    assert "line1" in outputs[5]
-    assert "line3" in outputs[5]
-    assert "[truncated for display]" in outputs[5]
+    assert "Report Commands" in outputs[4]
+    assert "/report show <report_id>" in outputs[4]
+    assert "Module Commands" in outputs[5]
+    assert "/module run <name> <target> [json_overrides]" in outputs[5]
+    assert "line1" in outputs[6]
+    assert "line3" in outputs[6]
+    assert "[truncated for display]" in outputs[6]
 
 
 def test_presenter_clear_screen_is_silent_for_callback_presenter():
@@ -111,20 +113,12 @@ def test_presenter_clear_screen_uses_cls_on_windows_tty(monkeypatch):
 def test_presenter_detail_views_include_key_fields_without_blob_internals():
     outputs: list[str] = []
     presenter = build_presenter(outputs)
-    task = Task(
-        id="task-uuid",
-        public_id="T0001",
-        title="Refactor loop",
-        goal="Improve CLI readability",
-        workspace="D:/workspace",
-        status=TaskStatus.PAUSED,
-        skill_profile="security-audit",
-        last_checkpoint="chk-123",
-    )
+    session_label = "S0001"
+    session_id = "session-uuid"
     run = Run(
         id="run-uuid",
         public_id="R0001",
-        task_id=task.id,
+        session_id=session_id,
         status=RunStatus.COMPLETED,
         step_count=2,
         last_usage={"total_tokens": 12},
@@ -132,17 +126,17 @@ def test_presenter_detail_views_include_key_fields_without_blob_internals():
         effective_skill_name="security-audit",
         effective_tools=["bash", "read_file"],
     )
-    entry = TaskLogEntry(
+    entry = SessionLogEntry(
         id="log-1",
-        task_id=task.id,
+        session_id=session_id,
         run_id=run.id,
-        level=TaskLogLevel.INFO,
+        level=SessionLogLevel.INFO,
         message="tool_completed",
         payload={"tool_name": "read_file", "result_summary": "sample"},
     )
     checkpoint = CheckpointSummary(
         id="chk-123",
-        task_id=task.id,
+        session_id=session_id,
         run_id=run.id,
         created_at="2026-03-31T12:00:00+00:00",
         storage_kind="file_blob",
@@ -171,9 +165,9 @@ def test_presenter_detail_views_include_key_fields_without_blob_internals():
         Path("src/capabilities/surface-recon/capability.json")
     )
 
-    presenter.show_task_detail(task)
-    presenter.show_run_detail(run, task, [entry])
-    presenter.show_checkpoint_detail(checkpoint, task, run.public_id)
+    presenter.show_run_detail(run, session_label, [entry])
+    presenter.show_checkpoint_detail(checkpoint, session_label, run.public_id)
+    presenter.show_session_logs([entry], {run.id: run.public_id})
     presenter.show_skill_detail(skill)
     presenter.show_capability_list([capability], title="Modules")
     presenter.show_capability_detail(capability)
@@ -206,7 +200,8 @@ def test_presenter_detail_views_include_key_fields_without_blob_internals():
     presenter.show_success("Saved.")
 
     merged = "\n\n".join(outputs)
-    assert "Task ID:" in merged and "T0001" in merged
+    assert "Session:" in merged and "S0001" in merged
+    assert "Session Logs" in merged
     assert "Failure Kind:" in merged
     assert "Payload Size:" in merged
     assert "blob_path" not in merged
@@ -220,6 +215,17 @@ def test_presenter_detail_views_include_key_fields_without_blob_internals():
     assert "Final Answer" in merged and "Completed successfully." in merged
     assert "Error" in merged and "Something failed." in merged
     assert "Success" in merged and "Saved." in merged
+
+
+def test_presenter_tool_call_preserves_argument_types_in_display():
+    outputs: list[str] = []
+    presenter = build_presenter(outputs)
+
+    presenter.show_tool_call("port_scan", {"target": "localhost", "ports": "[8080]"})
+    presenter.show_tool_call("port_scan", {"target": "localhost", "ports": [8080]})
+
+    assert '"[8080]"' in outputs[0]
+    assert "[8080]" in outputs[1]
 
 
 def test_presenter_renders_structured_execution_progress_events():

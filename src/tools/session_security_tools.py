@@ -7,6 +7,7 @@ from langchain.tools import tool
 
 from models.scope_policy import ScopePolicy
 from orchestration.scope_validator import AdmissionOutcome, ScopeValidator
+from tools.error_signals import RECOVERABLE_TOOL_ERROR_PREFIX
 from tools.executor import SecurityToolExecutionError, SecurityToolExecutor
 from utils.truncate import truncate_tool_output
 
@@ -43,6 +44,10 @@ def _format_result(tool_name: str, summary: str, payload: dict[str, Any]) -> str
     return truncate_tool_output(tool_name, f"{summary}\n{body}")
 
 
+def _recoverable_error(message: str) -> str:
+    return f"{RECOVERABLE_TOOL_ERROR_PREFIX}{message}"
+
+
 def _run_security_tool(
     *,
     tool_name: str,
@@ -51,7 +56,7 @@ def _run_security_tool(
 ) -> str:
     normalized_target = target.strip()
     if not normalized_target:
-        return "Error: target must not be empty."
+        return _recoverable_error("Error: target must not be empty.")
 
     try:
         tool = _SECURITY_TOOL_EXECUTOR.get_tool(tool_name)
@@ -73,16 +78,16 @@ def _run_security_tool(
         )
         admission_decision = _SCOPE_VALIDATOR.evaluate(policy, admission_request)
         if admission_decision.outcome != AdmissionOutcome.ALLOWED:
-            return f"Error: {admission_decision.message}"
+            return _recoverable_error(f"Error: {admission_decision.message}")
         result = _SECURITY_TOOL_EXECUTOR.execute(
             tool_name,
             invocation=invocation,
             target=admission_decision.target,
         )
     except SecurityToolExecutionError as exc:
-        return f"Error: {exc.error}"
+        return _recoverable_error(f"Error: {exc.error}")
     except Exception as exc:
-        return f"Error: {exc}"
+        return _recoverable_error(f"Error: {exc}")
 
     payload = {
         "tool_name": result.tool_name,

@@ -5,14 +5,13 @@ from models.run import (
     Run,
     RunFailureKind,
     RunStatus,
+    SessionLogLevel,
     SessionLogEntry,
-    TaskLogLevel,
     duration_ms_between,
     utc_now_iso,
 )
 from storage.repositories.operations import OperationRepository
 from storage.sqlite import SQLiteStorage
-from storage.tasks import TaskRepository
 from storage.runs import RunRepository
 
 from .session_scope import resolve_session_identifier
@@ -25,13 +24,11 @@ class RunService:
         repository: RunRepository,
         session_service: SessionService,
         operation_repository: OperationRepository,
-        task_repository: TaskRepository,
         settings: Settings,
     ) -> None:
         self.repository = repository
         self.session_service = session_service
         self.operation_repository = operation_repository
-        self.task_repository = task_repository
         self.settings = settings
 
     @classmethod
@@ -42,7 +39,6 @@ class RunService:
             RunRepository(storage),
             SessionService.from_settings(settings),
             OperationRepository(storage),
-            TaskRepository(storage),
             settings,
         )
 
@@ -127,18 +123,14 @@ class RunService:
     def write_log(
         self,
         *,
-        session_identifier: str | None = None,
-        task_id: str | None = None,
-        level: TaskLogLevel,
+        session_identifier: str,
+        level: SessionLogLevel,
         message: str,
         run_id: str | None = None,
         payload: dict | None = None,
     ) -> SessionLogEntry:
-        identifier = session_identifier or task_id
-        if identifier is None:
-            raise ValueError("session_identifier is required.")
         entry = SessionLogEntry.create(
-            session_id=self._resolve_session_id(identifier),
+            session_id=self._resolve_session_id(session_identifier),
             run_id=run_id,
             level=level,
             message=message,
@@ -161,5 +153,4 @@ class RunService:
             self.session_service,
             identifier,
             operation_repository=self.operation_repository,
-            task_repository=self.task_repository,
         )

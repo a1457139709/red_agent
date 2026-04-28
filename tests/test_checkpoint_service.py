@@ -9,7 +9,7 @@ from agent.settings import Settings
 from agent.state import SessionState
 from app.checkpoint_service import CheckpointService
 from app.session_service import SessionService
-from app.task_service import TaskService
+from models.session import SessionMode, SessionStatus
 
 
 def build_settings(tmp_path):
@@ -42,20 +42,30 @@ def create_session_checkpoint_table(connection: sqlite3.Connection) -> None:
     )
 
 
+def create_active_session(settings):
+    session_service = SessionService.from_settings(settings)
+    return session_service.create_session(
+        title="Session",
+        goal="Goal",
+        mode=SessionMode.NORMAL,
+        status=SessionStatus.ACTIVE,
+    )
+
+
 def test_checkpoint_service_saves_blob_loads_and_summarizes_checkpoint(tmp_path):
     settings = build_settings(tmp_path)
-    task_service = TaskService.from_settings(settings)
-    session_service = SessionService.from_settings(settings)
     checkpoint_service = CheckpointService.from_settings(settings)
-    task = task_service.create_task(title="Task", goal="Goal")
-    session = session_service.require_session(task.session_id)
+    session = create_active_session(settings)
 
     state = SessionState()
     state.append_user_message("hello")
     state.apply_compressed_summary("summary")
     state.set_usage({"total_tokens": 12})
 
-    checkpoint = checkpoint_service.save_checkpoint(task_id=task.id, session_state=state)
+    checkpoint = checkpoint_service.save_checkpoint(
+        session_identifier=session.id,
+        session_state=state,
+    )
     summary = checkpoint_service.get_checkpoint_summary(checkpoint.id)
     restored = checkpoint_service.load_checkpoint_state(checkpoint.id)
 
@@ -76,18 +86,23 @@ def test_checkpoint_service_saves_blob_loads_and_summarizes_checkpoint(tmp_path)
 
 def test_checkpoint_service_lists_recent_checkpoint_summaries(tmp_path):
     settings = build_settings(tmp_path)
-    task_service = TaskService.from_settings(settings)
     checkpoint_service = CheckpointService.from_settings(settings)
-    task = task_service.create_task(title="Task", goal="Goal")
+    session = create_active_session(settings)
 
     first = SessionState()
     first.append_user_message("first")
     second = SessionState()
     second.append_user_message("second")
 
-    first_record = checkpoint_service.save_checkpoint(task_id=task.id, session_state=first)
-    second_record = checkpoint_service.save_checkpoint(task_id=task.id, session_state=second)
-    summaries = checkpoint_service.list_checkpoints(task.id)
+    first_record = checkpoint_service.save_checkpoint(
+        session_identifier=session.id,
+        session_state=first,
+    )
+    second_record = checkpoint_service.save_checkpoint(
+        session_identifier=session.id,
+        session_state=second,
+    )
+    summaries = checkpoint_service.list_checkpoints(session.id)
 
     assert [summary.id for summary in summaries] == [second_record.id, first_record.id]
     assert all(summary.storage_kind == "file_blob" for summary in summaries)
@@ -95,13 +110,15 @@ def test_checkpoint_service_lists_recent_checkpoint_summaries(tmp_path):
 
 def test_checkpoint_service_rejects_digest_mismatch(tmp_path):
     settings = build_settings(tmp_path)
-    task_service = TaskService.from_settings(settings)
     checkpoint_service = CheckpointService.from_settings(settings)
-    task = task_service.create_task(title="Task", goal="Goal")
+    session = create_active_session(settings)
 
     state = SessionState()
     state.append_user_message("hello")
-    checkpoint = checkpoint_service.save_checkpoint(task_id=task.id, session_state=state)
+    checkpoint = checkpoint_service.save_checkpoint(
+        session_identifier=session.id,
+        session_state=state,
+    )
     blob_path = settings.app_data_dir / checkpoint.blob_path
     blob_path.write_bytes(b"tampered")
 
@@ -130,18 +147,17 @@ def test_checkpoint_service_rejects_legacy_inline_schema(tmp_path):
         CheckpointService.from_settings(settings)
 
 
-
 def test_checkpoint_service_deletes_checkpoint_metadata_and_blob(tmp_path):
     settings = build_settings(tmp_path)
-    task_service = TaskService.from_settings(settings)
-    session_service = SessionService.from_settings(settings)
     checkpoint_service = CheckpointService.from_settings(settings)
-    task = task_service.create_task(title="Task", goal="Goal")
-    session = session_service.require_session(task.session_id)
+    session = create_active_session(settings)
 
     state = SessionState()
     state.append_user_message("hello")
-    checkpoint = checkpoint_service.save_checkpoint(task_id=task.id, session_state=state)
+    checkpoint = checkpoint_service.save_checkpoint(
+        session_identifier=session.id,
+        session_state=state,
+    )
     blob_path = settings.app_data_dir / checkpoint.blob_path
 
     checkpoint_service.delete_checkpoint(checkpoint.id)
@@ -152,21 +168,24 @@ def test_checkpoint_service_deletes_checkpoint_metadata_and_blob(tmp_path):
     assert not (settings.sessions_dir / session.id / "memory" / "checkpoints").exists()
 
 
-
 def test_checkpoint_service_prunes_older_checkpoints(tmp_path):
     settings = build_settings(tmp_path)
-    task_service = TaskService.from_settings(settings)
     checkpoint_service = CheckpointService.from_settings(settings)
-    task = task_service.create_task(title="Task", goal="Goal")
+    session = create_active_session(settings)
 
     created = []
     for index in range(3):
         state = SessionState()
         state.append_user_message(f"hello-{index}")
-        created.append(checkpoint_service.save_checkpoint(task_id=task.id, session_state=state))
+        created.append(
+            checkpoint_service.save_checkpoint(
+                session_identifier=session.id,
+                session_state=state,
+            )
+        )
 
-    deleted_count = checkpoint_service.prune_checkpoints(task.id, keep_last=1)
-    remaining = checkpoint_service.list_checkpoints(task.id)
+    deleted_count = checkpoint_service.prune_checkpoints(session.id, keep_last=1)
+    remaining = checkpoint_service.list_checkpoints(session.id)
 
     assert deleted_count == 2
     assert len(remaining) == 1
@@ -176,21 +195,17 @@ def test_checkpoint_service_prunes_older_checkpoints(tmp_path):
     assert checkpoint_service.get_checkpoint_record(created[2].id) is not None
 
 
-
 def test_checkpoint_service_prune_validates_keep_last(tmp_path):
     settings = build_settings(tmp_path)
     checkpoint_service = CheckpointService.from_settings(settings)
 
     with pytest.raises(ValueError, match="keep_last"):
-        checkpoint_service.prune_checkpoints("task-id", keep_last=-1)
+        checkpoint_service.prune_checkpoints("session-id", keep_last=-1)
 
 
 def test_checkpoint_service_migrates_legacy_blob_paths_into_session_directory(tmp_path):
     settings = build_settings(tmp_path)
-    task_service = TaskService.from_settings(settings)
-    session_service = SessionService.from_settings(settings)
-    task = task_service.create_task(title="Task", goal="Goal")
-    session = session_service.require_session(task.session_id)
+    session = create_active_session(settings)
     legacy_relative_path = "memory/checkpoints/2026/04/chk_legacy.json.gz"
     legacy_blob_path = settings.app_data_dir / legacy_relative_path
     legacy_blob_path.parent.mkdir(parents=True, exist_ok=True)
@@ -241,10 +256,7 @@ def test_checkpoint_service_migrates_legacy_blob_paths_into_session_directory(tm
 
 def test_checkpoint_service_migration_fails_on_conflicting_blob_files(tmp_path):
     settings = build_settings(tmp_path)
-    task_service = TaskService.from_settings(settings)
-    session_service = SessionService.from_settings(settings)
-    task = task_service.create_task(title="Task", goal="Goal")
-    session = session_service.require_session(task.session_id)
+    session = create_active_session(settings)
     legacy_relative_path = "memory/checkpoints/2026/04/chk_conflict.json.gz"
     target_relative_path = f"sessions/{session.id}/{legacy_relative_path}"
     legacy_blob_path = settings.app_data_dir / legacy_relative_path
@@ -289,10 +301,7 @@ def test_checkpoint_service_migration_fails_on_conflicting_blob_files(tmp_path):
 
 def test_checkpoint_service_migrates_public_id_scoped_blob_paths_into_raw_session_id_directory(tmp_path):
     settings = build_settings(tmp_path)
-    task_service = TaskService.from_settings(settings)
-    session_service = SessionService.from_settings(settings)
-    task = task_service.create_task(title="Task", goal="Goal")
-    session = session_service.require_session(task.session_id)
+    session = create_active_session(settings)
     legacy_relative_path = f"sessions/{session.public_id}/memory/checkpoints/2026/04/chk_public.json.gz"
     legacy_blob_path = settings.app_data_dir / legacy_relative_path
     legacy_blob_path.parent.mkdir(parents=True, exist_ok=True)
@@ -338,16 +347,18 @@ def test_checkpoint_service_migrates_public_id_scoped_blob_paths_into_raw_sessio
 
 def test_checkpoint_service_round_trips_unicode_through_gzip_blob(tmp_path):
     settings = build_settings(tmp_path)
-    task_service = TaskService.from_settings(settings)
     checkpoint_service = CheckpointService.from_settings(settings)
-    task = task_service.create_task(title="Task", goal="Goal")
+    session = create_active_session(settings)
 
     state = SessionState()
     state.append_user_message("你好，世界")
     state.compressed_summary = "摘要：保留中文"
     state.set_usage({"total_tokens": 34})
 
-    checkpoint = checkpoint_service.save_checkpoint(task_id=task.id, session_state=state)
+    checkpoint = checkpoint_service.save_checkpoint(
+        session_identifier=session.id,
+        session_state=state,
+    )
     blob_path = settings.app_data_dir / checkpoint.blob_path
 
     raw_payload = gzip.decompress(blob_path.read_bytes()).decode("utf-8")

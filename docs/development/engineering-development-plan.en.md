@@ -180,6 +180,11 @@ Completed:
 
 ## Next Phase
 
+Historical note only.
+
+This section predates the session-centric refactor and must not be read as the current forward-looking
+phase plan. Use `session-refactor-development-plan.en.md` and the `session-phase-*` documents instead.
+
 The next architecture reset is the session-centric refactor, not additional long-term investment in `task` as the permanent top-level user concept.
 
 ### Phase 5: Better Task Ergonomics Beyond Identity

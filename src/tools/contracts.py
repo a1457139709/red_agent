@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+import json
 from typing import Any, Protocol
 
 from models.scope_policy import ScopePolicy
@@ -50,11 +51,29 @@ def normalize_port_list(ports: object | None, *, field_name: str = "ports") -> l
     if ports in (None, ""):
         return []
     if isinstance(ports, str):
-        raw_values = [item.strip() for item in ports.split(",") if item.strip()]
+        stripped = ports.strip()
+        if not stripped:
+            return []
+        if stripped.startswith("[") and stripped.endswith("]"):
+            try:
+                decoded = json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"{field_name} must be a valid JSON array, integer, or comma-separated string."
+                ) from exc
+            if not isinstance(decoded, list):
+                raise ValueError(
+                    f"{field_name} must be a valid JSON array, integer, or comma-separated string."
+                )
+            raw_values = decoded
+        else:
+            raw_values = [item.strip() for item in stripped.split(",") if item.strip()]
+    elif isinstance(ports, int) and not isinstance(ports, bool):
+        raw_values = [ports]
     elif isinstance(ports, (list, tuple, set)):
         raw_values = list(ports)
     else:
-        raise ValueError(f"{field_name} must be a list or comma-separated string.")
+        raise ValueError(f"{field_name} must be an integer, a list, or a comma-separated string.")
 
     values: list[int] = []
     for raw_value in raw_values:

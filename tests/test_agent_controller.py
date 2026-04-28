@@ -32,7 +32,7 @@ from main import (
     run_interactive_shell,
 )
 from models.job import JobStatus
-from models.run import TaskLogLevel
+from models.run import SessionLogLevel
 from models.session import SessionMode
 from models.session_event import SessionEventLevel, SessionEventType
 from tools import build_tool_registry
@@ -117,7 +117,7 @@ def seed_record_lookup_session(tmp_path):
     run_service.write_log(
         session_identifier=session.public_id,
         run_id=run.id,
-        level=TaskLogLevel.INFO,
+        level=SessionLogLevel.INFO,
         message="tool_completed",
         payload={"tool_name": "http_probe"},
     )

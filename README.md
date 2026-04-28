@@ -4,17 +4,17 @@
 
 - a controller-first natural-language entry flow
 - a LangChain tool-calling loop
-- a persisted task runtime
+- persisted session runtime state
 - an explicit `SKILL.md` skill system
 - a controlled local execution boundary
 - a session-first red-team runtime
 
 The project is intended for local single-user development work. It is not a SaaS agent platform or a multi-user service.
 
-The repository now contains two runtime families:
+The repository now centers on a session-first runtime:
 
-- v1 `Task` / `Run` for the existing coding-agent workflow
-- v2 `Session` / `Job` foundations plus scope-aware admission and a scheduler/worker runtime for the red-team-oriented runtime
+- `Session` / `Run` for the interactive coding-agent workflow
+- `Session` / `Job` foundations plus scope-aware admission and a scheduler/worker runtime for the red-team-oriented runtime
 
 ## Current Capabilities
 
@@ -30,8 +30,8 @@ The repository now contains two runtime families:
 - shell command execution with safety checks
 - capability-tier tool safety
 - session state and context compression
-- persisted tasks, runs, checkpoints, and task logs
-- task-scoped safety audit logging
+- persisted sessions, runs, checkpoints, and session logs
+- session-scoped safety audit logging
 - blob-backed checkpoint storage with metadata-only SQLite indexing
 - persisted redteam sessions, scope policies, session-owned jobs, artifacts, findings, reports, and memory entries
 - persisted session-level admission and execution events
@@ -77,7 +77,7 @@ Describe what you want in plain language first. Examples:
 Plain-language requests now default to the normal agent flow. Use `/redteam on` to switch subsequent plain-language requests into redteam mode, and `/redteam off` to return to normal mode.
 `/report session_summary`, `/report findings_summary`, and `/report operator_report` now reuse the most recent session report when possible and generate a new report only when needed.
 
-Use slash commands for skill, module, and shell-level control. Legacy `/task` and `/operation` command families are no longer part of the default user-facing flow.
+Use slash commands for skill, module, and shell-level control. Legacy `/operation` command families are no longer part of the default user-facing flow.
 
 - `/help`
 - `/help query`
@@ -126,6 +126,7 @@ Phase 2 through Phase 7 currently deliver:
 - a worker runtime with atomic job leasing, heartbeat refresh, retry backoff, timeout handling, and `drain()` support for sequential background-style execution
 - a dedicated typed-security tool registry for session/job execution, plus session-facing adapter tools in the runtime registry
 - pure-Python typed security tools: `dns_lookup`, `http_probe`, `tls_inspect`, `banner_grab`, and `port_scan`
+- session-facing typed security tools accept native port arrays, single-port values, comma-separated strings, and JSON-style list strings such as `"[80,443]"`; recoverable validation errors are rendered as failed steps instead of successful completions
 - `dns_lookup` validates both the resolver egress target and the queried logical name against scope
 - `http_probe` captures only the first HTTP response and does not auto-follow redirects
 - structured typed-tool outputs that expose normalized payloads plus artifact and finding candidates

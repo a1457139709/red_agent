@@ -12,7 +12,7 @@ from app.session_record_locator import SessionRecordLocator
 from conftest import create_redteam_operation
 from models.job import JobLogLevel
 from models.operation import OperationStatus
-from models.run import TaskLogLevel
+from models.run import SessionLogLevel
 from models.session_event import SessionEventLevel, SessionEventType
 
 
@@ -50,7 +50,7 @@ def test_session_record_locator_aggregates_session_layers(tmp_path):
     run_service.write_log(
         session_identifier=operation.public_id,
         run_id=run.id,
-        level=TaskLogLevel.INFO,
+        level=SessionLogLevel.INFO,
         message="run_started",
     )
     checkpoint_service.save_checkpoint(

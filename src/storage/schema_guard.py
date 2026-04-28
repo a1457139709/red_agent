@@ -7,7 +7,6 @@ import sqlite3
 LEGACY_RUNTIME_TABLES = (
     "runs",
     "task_logs",
-    "checkpoints",
     "jobs",
     "job_logs",
     "operation_events",
@@ -22,8 +21,8 @@ LEGACY_SCHEMA_TABLE_COLUMNS = {
     "planner_plans": "operation_id",
 }
 
-LEGACY_SCHEMA_SHAPES = {
-    "checkpoints": {"task_id", "payload"},
+LEGACY_INCOMPATIBLE_TABLES = {
+    "checkpoints": "older checkpoint schema",
 }
 
 
@@ -59,20 +58,14 @@ def ensure_phase6_clean_runtime_reset(connection: sqlite3.Connection, *, app_dat
         if has_rows is not None:
             blocking_sources.append(f"legacy-schema:{table_name}")
 
-    for table_name, legacy_columns in LEGACY_SCHEMA_SHAPES.items():
+    for table_name, reason in LEGACY_INCOMPATIBLE_TABLES.items():
         exists = connection.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
             (table_name,),
         ).fetchone()
         if exists is None:
             continue
-        columns = {
-            row["name"]
-            for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
-        }
-        if legacy_columns.issubset(columns):
-            singular_name = table_name[:-1] if table_name.endswith("s") else table_name
-            blocking_sources.append(f"older {singular_name} schema")
+        blocking_sources.append(reason)
 
     legacy_operations_dir = app_data_dir / "operations"
     if legacy_operations_dir.exists() and any(legacy_operations_dir.iterdir()):

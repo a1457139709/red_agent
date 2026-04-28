@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any
 from uuid import uuid4
 import json
@@ -56,8 +55,7 @@ class CheckpointRecord:
         self,
         *,
         id: str,
-        session_id: str | None = None,
-        task_id: str | None = None,
+        session_id: str,
         run_id: str | None,
         created_at: str,
         storage_kind: str = FILE_BLOB_STORAGE_KIND,
@@ -65,21 +63,14 @@ class CheckpointRecord:
         blob_encoding: str | None = FILE_BLOB_ENCODING,
         payload_digest: str | None = None,
     ) -> None:
-        resolved_session_id = session_id or task_id
-        if not resolved_session_id:
-            raise ValueError("session_id is required.")
         self.id = id
-        self.session_id = resolved_session_id
+        self.session_id = session_id
         self.run_id = run_id
         self.created_at = created_at
         self.storage_kind = storage_kind
         self.blob_path = blob_path
         self.blob_encoding = blob_encoding
         self.payload_digest = payload_digest
-
-    @property
-    def task_id(self) -> str:
-        return self.session_id
 
 
 @dataclass(slots=True, init=False)
@@ -98,8 +89,7 @@ class CheckpointSummary:
         self,
         *,
         id: str,
-        session_id: str | None = None,
-        task_id: str | None = None,
+        session_id: str,
         run_id: str | None,
         created_at: str,
         storage_kind: str,
@@ -108,11 +98,8 @@ class CheckpointSummary:
         history_text_bytes: int,
         has_compressed_summary: bool,
     ) -> None:
-        resolved_session_id = session_id or task_id
-        if not resolved_session_id:
-            raise ValueError("session_id is required.")
         self.id = id
-        self.session_id = resolved_session_id
+        self.session_id = session_id
         self.run_id = run_id
         self.created_at = created_at
         self.storage_kind = storage_kind
@@ -120,10 +107,6 @@ class CheckpointSummary:
         self.history_message_count = history_message_count
         self.history_text_bytes = history_text_bytes
         self.has_compressed_summary = has_compressed_summary
-
-    @property
-    def task_id(self) -> str:
-        return self.session_id
 
 
 @dataclass(slots=True)
@@ -145,8 +128,7 @@ class StoredCheckpoint:
     def create(
         cls,
         *,
-        session_id: str | None = None,
-        task_id: str | None = None,
+        session_id: str,
         run_id: str | None = None,
         payload_size_bytes: int,
         payload_digest: str,
@@ -156,16 +138,13 @@ class StoredCheckpoint:
     ) -> "StoredCheckpoint":
         checkpoint_id = str(uuid4())
         created_at = utc_now_iso()
-        resolved_session_id = session_id or task_id
-        if not resolved_session_id:
-            raise ValueError("session_id is required.")
         return cls(
             id=checkpoint_id,
-            session_id=resolved_session_id,
+            session_id=session_id,
             run_id=run_id,
             created_at=created_at,
             blob_path=build_blob_relative_path(
-                session_id=resolved_session_id,
+                session_id=session_id,
                 checkpoint_id=checkpoint_id,
                 created_at=created_at,
             ),
@@ -233,11 +212,3 @@ class StoredCheckpoint:
             history_text_bytes=self.history_text_bytes,
             has_compressed_summary=self.has_compressed_summary,
         )
-
-    @property
-    def task_id(self) -> str:
-        return self.session_id
-
-    @task_id.setter
-    def task_id(self, value: str) -> None:
-        self.session_id = value

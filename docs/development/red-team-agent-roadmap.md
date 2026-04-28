@@ -26,6 +26,12 @@ This roadmap is still useful for the historical red-team runtime plan, but it is
 
 Current phase status based on the repository implementation:
 
+Important note:
+
+- this snapshot refers to the **retired roadmap sequence in this document**
+- it does **not** describe the status of the newer session-refactor Phase 1-8 track
+- do not use the Phase numbers here to judge the completion state of `session-phase-8-*` documents
+
 - Phase 0: partially implemented
 - Phase 1: implemented
 - Phase 2: implemented

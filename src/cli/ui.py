@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from io import StringIO
+import json
 import os
 from typing import Callable
 
@@ -29,15 +30,24 @@ from models.planner import (
     PlannerProposalKind,
 )
 from models.report import Report
-from models.run import Run, TaskLogEntry
+from models.run import Run, SessionLogEntry
 from models.skill import LoadedSkill
-from models.task import Task
 from runtime.execution_events import ExecutionEventType, ExecutionProgressEvent
 
 
 SinkFn = Callable[[str], None]
 NONE_LABEL = "none"
 ASCII_BOX = box.ASCII
+HELP_TOPIC_PURPOSES: tuple[tuple[str, str], ...] = (
+    ("query", "Session-first record lookup and report commands"),
+    ("finding", "Session-owned findings and artifact links"),
+    ("artifact", "Inspect raw session artifacts"),
+    ("report", "Inspect persisted session reports"),
+    ("dashboard", "Session runtime summary"),
+    ("planner", "Planner plan creation and application"),
+    ("skill", "Skill activation, inspection, reload, and shorthand usage"),
+    ("module", "Redteam module listing, inspection, and one-shot or session-bound runs"),
+)
 
 
 @dataclass(slots=True)
@@ -79,6 +89,22 @@ class CliPresenter:
                 final_answer=final_answer_output,
             ),
         )
+
+    @classmethod
+    def supported_help_topics(cls) -> tuple[str, ...]:
+        return tuple(name for name, _purpose in HELP_TOPIC_PURPOSES)
+
+    @classmethod
+    def is_supported_help_topic(cls, topic: str) -> bool:
+        return topic in cls.supported_help_topics()
+
+    @classmethod
+    def supported_help_topics_text(cls) -> str:
+        return ", ".join(cls.supported_help_topics())
+
+    @classmethod
+    def help_usage(cls) -> str:
+        return f"/help [{ '|'.join(cls.supported_help_topics()) }]"
 
     def _render_text(self, renderable: RenderableType) -> str:
         buffer = StringIO()
@@ -175,6 +201,12 @@ class CliPresenter:
             return f"{size_bytes / 1024:.1f}KB"
         return f"{size_bytes / (1024 * 1024):.1f}MB"
 
+    def _format_tool_argument_value(self, value: object) -> str:
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except TypeError:
+            return str(value)
+
     def _render_skill_name(self, skill_name: str | None) -> str:
         return skill_name or NONE_LABEL
 
@@ -228,18 +260,8 @@ class CliPresenter:
         topics = Table(box=ASCII_BOX, expand=True, header_style="bold")
         topics.add_column("Topic", style="bold cyan", no_wrap=True)
         topics.add_column("Purpose", style="white")
-        topics.add_row("query", "Session-first record lookup and report commands")
-        topics.add_row("finding", "Session-owned findings and artifact links")
-        topics.add_row("artifact", "Inspect raw session artifacts")
-        topics.add_row("report", "Inspect persisted session reports")
-        topics.add_row("dashboard", "Session runtime summary")
-        topics.add_row("planner", "Planner plan creation and application")
-        topics.add_row("task", "Legacy task debugging and recovery")
-        topics.add_row("skill", "Skill activation, inspection, reload, and shorthand usage")
-        topics.add_row(
-            "module",
-            "Redteam module listing, inspection, and one-shot or session-bound runs",
-        )
+        for topic, purpose in HELP_TOPIC_PURPOSES:
+            topics.add_row(topic, purpose)
         return Group(
             Text(
                 "Describe what you want in plain language first. "
@@ -249,152 +271,185 @@ class CliPresenter:
             Rule(style="grey50", characters="-"),
             Panel(examples, title="Natural-Language First", border_style="green", box=ASCII_BOX),
             Panel(topics, title="Advanced Help Topics", border_style="bright_blue", box=ASCII_BOX),
-            Text("Drill down with /help query, /help skill, or /help module for command details.", style="dim"),
+            Text(
+                "Use /help <topic> for command details. The table above lists all supported topics.",
+                style="dim",
+            ),
             Text("Session shortcuts: /redteam [on|off|toggle|current], /clear, /reset, /exit, /quit", style="dim"),
         )
 
-    def _help_query(self) -> Group:
-        return Group(
-            Text("Query help", style="dim"),
+    def _help_topic_page(
+        self,
+        *,
+        heading: str,
+        summary: str,
+        panels: list[RenderableType],
+        footer: str | None = None,
+    ) -> Group:
+        renderables: list[RenderableType] = [
+            Text(f"{heading} help", style="dim"),
             Rule(style="grey50", characters="-"),
-            self._command_panel("Query Commands", [
-                ("/status [scope]", "Show the current session-focused history/status summary"),
-                ("/history [scope]", "Look up session history with current-session default scope"),
-                ("/steps [scope]", "Look up execution step history for a session"),
-                ("/artifacts [scope]", "Look up session artifacts"),
-                ("/findings [scope]", "Look up session findings"),
-                ("/reports [scope]", "Look up persisted session reports"),
-                ("/show <public_id> [scope]", "Resolve one session/artifact/finding/report public id in session scope"),
-                ("/why <finding_public_id> [scope]", "Explain a finding through the Phase 7 trace flow"),
-                (
-                    "/report <session_summary|findings_summary|operator_report> [scope]",
-                    "Request a session-scoped report flow",
-                ),
-            ], border_style="bright_blue"),
-            Text("Scope may be current, latest, or a session id like S0001. No scope means the active session.", style="dim"),
+            Text(summary, style="dim"),
+        ]
+        renderables.extend(panels)
+        if footer:
+            renderables.append(Text(footer, style="dim"))
+        return Group(*renderables)
+
+    def _help_query(self) -> Group:
+        return self._help_topic_page(
+            heading="Query",
+            summary=(
+                "Inspect session-scoped history, execution steps, findings, artifacts, and reports. "
+                "When scope is omitted, commands default to the active session."
+            ),
+            panels=[
+                self._command_panel("Query Commands", [
+                    ("/status [scope]", "Show the current session-focused history/status summary"),
+                    ("/history [scope]", "Look up session history with current-session default scope"),
+                    ("/steps [scope]", "Look up execution step history for a session"),
+                    ("/artifacts [scope]", "Look up session artifacts"),
+                    ("/findings [scope]", "Look up session findings"),
+                    ("/reports [scope]", "Look up persisted session reports"),
+                    ("/show <public_id> [scope]", "Resolve one session/artifact/finding/report public id in session scope"),
+                    ("/why <finding_public_id> [scope]", "Explain a finding through the Phase 7 trace flow"),
+                    (
+                        "/report <session_summary|findings_summary|operator_report> [scope]",
+                        "Request a session-scoped report flow",
+                    ),
+                ], border_style="bright_blue"),
+            ],
+            footer="Scope may be current, latest, or a session id like S0001. No scope means the active session.",
         )
 
     def _help_finding(self) -> Group:
-        return Group(
-            Text("Finding help", style="dim"),
-            Rule(style="grey50", characters="-"),
-            self._command_panel("Finding Commands", [
-                ("/finding list <session_id> [limit]", "List findings for a session"),
-                ("/finding show <finding_id>", "Show finding details and linked artifacts"),
-                ("/finding confirm <finding_id>", "Mark a finding as confirmed"),
-                ("/finding dismiss <finding_id>", "Dismiss a finding with an optional reason"),
-            ], border_style="yellow"),
+        return self._help_topic_page(
+            heading="Finding",
+            summary=(
+                "Inspect and update session findings, including linked artifact relationships and analyst review state."
+            ),
+            panels=[
+                self._command_panel("Finding Commands", [
+                    ("/finding list <session_id> [limit]", "List findings for a session"),
+                    ("/finding show <finding_id>", "Show finding details and linked artifacts"),
+                    ("/finding confirm <finding_id>", "Mark a finding as confirmed"),
+                    ("/finding dismiss <finding_id>", "Dismiss a finding with an optional reason"),
+                ], border_style="bright_blue"),
+            ],
         )
 
     def _help_artifact(self) -> Group:
-        return Group(
-            Text("Artifact help", style="dim"),
-            Rule(style="grey50", characters="-"),
-            self._command_panel("Artifact Commands", [
-                ("/artifact list <session_id> [limit]", "List artifacts for a session"),
-                ("/artifact show <artifact_id>", "Show artifact details and linked findings"),
-            ], border_style="green"),
+        return self._help_topic_page(
+            heading="Artifact",
+            summary="Inspect raw session artifacts and trace how they connect back to findings.",
+            panels=[
+                self._command_panel("Artifact Commands", [
+                    ("/artifact list <session_id> [limit]", "List artifacts for a session"),
+                    ("/artifact show <artifact_id>", "Show artifact details and linked findings"),
+                ], border_style="bright_blue"),
+            ],
         )
 
     def _help_report(self) -> Group:
-        return Group(
-            Text("Report help", style="dim"),
-            Rule(style="grey50", characters="-"),
-            self._command_panel("Report Commands", [
-                ("/report list <session_id> [limit]", "List reports for a session"),
-                ("/report show <report_id>", "Show report details and linked artifacts/findings"),
-            ], border_style="bright_blue"),
+        return self._help_topic_page(
+            heading="Report",
+            summary="Inspect persisted reports that summarize session outcomes, findings, and supporting evidence.",
+            panels=[
+                self._command_panel("Report Commands", [
+                    ("/report list <session_id> [limit]", "List reports for a session"),
+                    ("/report show <report_id>", "Show report details and linked artifacts/findings"),
+                ], border_style="bright_blue"),
+            ],
         )
 
     def _help_dashboard(self) -> Group:
-        return Group(
-            Text("Dashboard help", style="dim"),
-            Rule(style="grey50", characters="-"),
-            self._command_panel("Dashboard Commands", [
-                ("/dashboard", "Show the most recently active redteam session dashboard"),
-                ("/dashboard <session_id>", "Show the dashboard for one session"),
-            ], border_style="bright_blue"),
+        return self._help_topic_page(
+            heading="Dashboard",
+            summary="View a concise runtime summary for the most recent redteam session or one specific session.",
+            panels=[
+                self._command_panel("Dashboard Commands", [
+                    ("/dashboard", "Show the most recently active redteam session dashboard"),
+                    ("/dashboard <session_id>", "Show the dashboard for one session"),
+                ], border_style="bright_blue"),
+            ],
         )
 
     def _help_planner(self) -> Group:
-        return Group(
-            Text("Planner help", style="dim"),
-            Rule(style="grey50", characters="-"),
-            self._command_panel("Planner Commands", [
-                ("/planner plan <session_id>", "Create and preview a persisted planner plan"),
-                ("/planner apply <plan_id> [1,3,...]", "Create jobs from all or selected planner proposals"),
-            ], border_style="bright_blue"),
+        return self._help_topic_page(
+            heading="Planner",
+            summary="Create persisted planner plans and selectively apply generated proposals into executable jobs.",
+            panels=[
+                self._command_panel("Planner Commands", [
+                    ("/planner plan <session_id>", "Create and preview a persisted planner plan"),
+                    ("/planner apply <plan_id> [1,3,...]", "Create jobs from all or selected planner proposals"),
+                ], border_style="bright_blue"),
+            ],
         )
 
     def _help_skill(self) -> Group:
-        return Group(
-            Text("Skill help", style="dim"),
-            Rule(style="grey50", characters="-"),
-            self._command_panel("Skill Commands", [
-                ("/skill list", "List built-in and local skills"),
-                ("/skill show <name>", "Show skill details"),
-                ("/skill use <name>", "Activate a skill for this shell"),
-                ("/skill reload", "Reload skills from disk"),
-                ("/skill clear", "Clear the active shell skill"),
-                ("/skill current", "Show the active shell skill"),
-            ], border_style="green"),
-            self._command_panel("Shorthand Invocation", [
-                ("/skill-name <prompt>", "Run one prompt with a skill without activating it"),
-            ], border_style="bright_blue"),
+        return self._help_topic_page(
+            heading="Skill",
+            summary=(
+                "Inspect and manage shell-scoped skills, or run a one-off skill prompt without changing the active shell."
+            ),
+            panels=[
+                self._command_panel("Skill Commands", [
+                    ("/skill list", "List built-in and local skills"),
+                    ("/skill show <name>", "Show skill details"),
+                    ("/skill use <name>", "Activate a skill for this shell"),
+                    ("/skill reload", "Reload skills from disk"),
+                    ("/skill clear", "Clear the active shell skill"),
+                    ("/skill current", "Show the active shell skill"),
+                ], border_style="bright_blue"),
+                self._command_panel("Shorthand Invocation", [
+                    ("/skill-name <prompt>", "Run one prompt with a skill without activating it"),
+                ], border_style="bright_blue"),
+            ],
+            footer="Skills affect the current shell only. Use the shorthand form for one-shot execution.",
         )
 
     def _help_module(self) -> Group:
-        return Group(
-            Text("Module help", style="dim"),
-            Rule(style="grey50", characters="-"),
-            Text(
-                "Modules use the Phase 5 capability manifest and execute through the session risk/scope gate.",
-                style="dim",
+        return self._help_topic_page(
+            heading="Module",
+            summary=(
+                "Modules use the Phase 5 capability manifest and execute through the shared session risk and scope gate."
             ),
-            self._command_panel(
-                "Module Commands",
-                [
-                    ("/module list", "List redteam modules from capability.json manifests"),
-                    ("/module show <name>", "Show module manifest details"),
-                    (
-                        "/module run <name> <target> [json_overrides]",
-                        "Run a module one-shot, or inside the active redteam session",
-                    ),
-                ],
-                border_style="red",
-            ),
+            panels=[
+                self._command_panel(
+                    "Module Commands",
+                    [
+                        ("/module list", "List redteam modules from capability.json manifests"),
+                        ("/module show <name>", "Show module manifest details"),
+                        (
+                            "/module run <name> <target> [json_overrides]",
+                            "Run a module one-shot, or inside the active redteam session",
+                        ),
+                    ],
+                    border_style="bright_blue",
+                ),
+            ],
         )
 
     def show_help(self, topic: str | None = None) -> None:
         if topic is None:
             body = self._help_overview()
             title = "red-code"
-        elif topic == "query":
-            body = self._help_query()
-            title = "Help: query"
-        elif topic == "finding":
-            body = self._help_finding()
-            title = "Help: finding"
-        elif topic == "artifact":
-            body = self._help_artifact()
-            title = "Help: artifact"
-        elif topic == "report":
-            body = self._help_report()
-            title = "Help: report"
-        elif topic == "dashboard":
-            body = self._help_dashboard()
-            title = "Help: dashboard"
-        elif topic == "planner":
-            body = self._help_planner()
-            title = "Help: planner"
-        elif topic == "skill":
-            body = self._help_skill()
-            title = "Help: skill"
-        elif topic == "module":
-            body = self._help_module()
-            title = "Help: module"
         else:
-            raise ValueError(f"Unsupported help topic: {topic}")
+            topic_builders: dict[str, Callable[[], Group]] = {
+                "query": self._help_query,
+                "finding": self._help_finding,
+                "artifact": self._help_artifact,
+                "report": self._help_report,
+                "dashboard": self._help_dashboard,
+                "planner": self._help_planner,
+                "skill": self._help_skill,
+                "module": self._help_module,
+            }
+            builder = topic_builders.get(topic)
+            if builder is None:
+                raise ValueError(f"Unsupported help topic: {topic}")
+            body = builder()
+            title = f"Help: {topic}"
         self._emit(Panel(body, title=title, border_style="bright_blue", box=ASCII_BOX))
 
     def clear_screen(self) -> None:
@@ -907,57 +962,11 @@ class CliPresenter:
             )
         self._emit(Group(summary, proposed_table, blocked_table))
 
-    def show_task_detail(self, task: Task) -> None:
-        identity = Panel(
-            self._detail_table([
-                ("Task ID", task.public_id),
-                ("Internal ID", task.id),
-                ("Title", task.title),
-                ("Goal", task.goal),
-                ("Status", task.status.value),
-                ("Skill", self._render_skill_name(task.skill_profile)),
-                ("Workspace", task.workspace),
-            ]),
-            title="Task",
-            border_style="cyan",
-            box=ASCII_BOX,
-        )
-        execution = Panel(
-            self._detail_table([
-                ("Created At", task.created_at),
-                ("Updated At", task.updated_at),
-                ("Last Checkpoint", task.last_checkpoint or "-"),
-                ("Last Error", task.last_error or "-"),
-            ]),
-            title="Execution and Recovery",
-            border_style="magenta",
-            box=ASCII_BOX,
-        )
-        self._emit(Group(identity, execution))
-
-    def show_task_status(self, task: Task) -> None:
-        self._emit(
-            Panel(
-                self._detail_table([
-                    ("Task", task.public_id),
-                    ("Title", task.title),
-                    ("Status", task.status.value),
-                    ("Skill", self._render_skill_name(task.skill_profile)),
-                    ("Updated At", task.updated_at),
-                    ("Last Checkpoint", task.last_checkpoint or "-"),
-                    ("Last Error", task.last_error or "-"),
-                ]),
-                title="Task Status",
-                border_style="cyan",
-                box=ASCII_BOX,
-            )
-        )
-
-    def show_run_list(self, runs: list[Run], task: Task | None = None) -> None:
+    def show_run_list(self, runs: list[Run], session_label: str | None = None) -> None:
         if not runs:
             self._emit(Panel(Text("No runs found.", style="dim"), title="Runs", border_style="yellow", box=ASCII_BOX))
             return
-        title = f"Runs for {task.public_id}" if task is not None else "Runs"
+        title = f"Runs for {session_label}" if session_label is not None else "Runs"
         table = Table(title=title, box=ASCII_BOX, expand=True, header_style="bold")
         table.add_column("Run", style="cyan", no_wrap=True)
         table.add_column("Status", no_wrap=True)
@@ -976,13 +985,13 @@ class CliPresenter:
             )
         self._emit(table)
 
-    def show_run_detail(self, run: Run, task: Task, entries: list[TaskLogEntry]) -> None:
+    def show_run_detail(self, run: Run, session_label: str, entries: list[SessionLogEntry]) -> None:
         summary = Panel(
             self._detail_table([
                 ("Run ID", run.public_id),
                 ("Internal ID", run.id),
-                ("Task", task.public_id or task.id),
-                ("Task Internal ID", task.id),
+                ("Session", session_label),
+                ("Session Internal ID", run.session_id),
                 ("Status", run.status.value),
                 ("Started At", run.started_at),
                 ("Finished At", run.finished_at or "-"),
@@ -998,13 +1007,25 @@ class CliPresenter:
             border_style="magenta",
             box=ASCII_BOX,
         )
-        self._emit(Group(summary, self._task_log_table(entries, {run.id: run.public_id}, title="Recent Run Logs")))
+        self._emit(Group(summary, self._session_log_table(entries, {run.id: run.public_id}, title="Recent Run Logs")))
 
-    def show_checkpoint_list(self, summaries: list[CheckpointSummary], task: Task, run_labels: dict[str, str]) -> None:
+    def show_checkpoint_list(
+        self,
+        summaries: list[CheckpointSummary],
+        session_label: str,
+        run_labels: dict[str, str],
+    ) -> None:
         if not summaries:
-            self._emit(Panel(Text(f"No checkpoints found for task {task.public_id}.", style="dim"), title="Checkpoints", border_style="yellow", box=ASCII_BOX))
+            self._emit(
+                Panel(
+                    Text(f"No checkpoints found for session {session_label}.", style="dim"),
+                    title="Checkpoints",
+                    border_style="yellow",
+                    box=ASCII_BOX,
+                )
+            )
             return
-        table = Table(title=f"Checkpoints for {task.public_id}", box=ASCII_BOX, expand=True, header_style="bold")
+        table = Table(title=f"Checkpoints for {session_label}", box=ASCII_BOX, expand=True, header_style="bold")
         table.add_column("Checkpoint", style="cyan")
         table.add_column("Created", style="dim", no_wrap=True)
         table.add_column("Storage", no_wrap=True)
@@ -1024,13 +1045,18 @@ class CliPresenter:
             )
         self._emit(table)
 
-    def show_checkpoint_detail(self, summary: CheckpointSummary, task: Task, run_label: str | None = None) -> None:
+    def show_checkpoint_detail(
+        self,
+        summary: CheckpointSummary,
+        session_label: str,
+        run_label: str | None = None,
+    ) -> None:
         self._emit(
             Panel(
                 self._detail_table([
                     ("Checkpoint ID", summary.id),
-                    ("Task", task.public_id),
-                    ("Task Internal ID", task.id),
+                    ("Session", session_label),
+                    ("Session Internal ID", summary.session_id),
                     ("Run", run_label or "-"),
                     ("Run Internal ID", summary.run_id or "-"),
                     ("Created At", summary.created_at),
@@ -1046,12 +1072,12 @@ class CliPresenter:
             )
         )
 
-    def show_task_logs(self, entries: list[TaskLogEntry], run_labels: dict[str, str] | None = None) -> None:
-        self._emit(self._task_log_table(entries, run_labels or {}, title="Task Logs"))
+    def show_session_logs(self, entries: list[SessionLogEntry], run_labels: dict[str, str] | None = None) -> None:
+        self._emit(self._session_log_table(entries, run_labels or {}, title="Session Logs"))
 
-    def _task_log_table(self, entries: list[TaskLogEntry], run_labels: dict[str, str], *, title: str) -> RenderableType:
+    def _session_log_table(self, entries: list[SessionLogEntry], run_labels: dict[str, str], *, title: str) -> RenderableType:
         if not entries:
-            return Panel(Text("No task logs found.", style="dim"), title=title, border_style="yellow", box=ASCII_BOX)
+            return Panel(Text("No session logs found.", style="dim"), title=title, border_style="yellow", box=ASCII_BOX)
         table = Table(title=title, box=ASCII_BOX, expand=True, header_style="bold")
         table.add_column("Created", style="dim", no_wrap=True)
         table.add_column("Level", no_wrap=True)
@@ -1385,7 +1411,7 @@ class CliPresenter:
         table.add_column("Argument", style="cyan", no_wrap=True)
         table.add_column("Value", overflow="fold")
         for key, value in args.items():
-            table.add_row(str(key), str(value))
+            table.add_row(str(key), self._format_tool_argument_value(value))
         self._emit(Panel(table, title=f"Tool: {tool_name}", border_style="yellow", box=ASCII_BOX))
 
     def show_observation(self, text: str, *, truncate_lines: int = 12, truncate_chars: int = 600) -> None:
