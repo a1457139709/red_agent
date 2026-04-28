@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 from app.report_flow_service import ReportFlowService
 from app.session_record_query_service import SessionRecordQueryService
@@ -22,10 +23,12 @@ from .contracts import (
     RecordQueryRequest,
     SessionSummary,
 )
-from .intents import IntentClassification, classify_input
+from .intents import IntentClassification, classify_input, extract_targets
 
 
 SESSION_START_KEYWORDS = ("start", "create", "new session", "open session")
+DEFAULT_MODULE_NAMES = ("surface-recon", "web-enum")
+MODULE_INVOCATION_VERBS = ("run", "use", "invoke", "execute")
 
 
 @dataclass(slots=True)
@@ -33,13 +36,20 @@ class AgentController:
     session_service: SessionService
     session_record_query_service: SessionRecordQueryService
     report_flow_service: ReportFlowService
+    module_names: tuple[str, ...] = DEFAULT_MODULE_NAMES
 
     @classmethod
-    def from_session_service(cls, session_service: SessionService) -> "AgentController":
+    def from_session_service(
+        cls,
+        session_service: SessionService,
+        *,
+        module_names: tuple[str, ...] = DEFAULT_MODULE_NAMES,
+    ) -> "AgentController":
         return cls(
             session_service=session_service,
             session_record_query_service=SessionRecordQueryService.from_settings(session_service.settings),
             report_flow_service=ReportFlowService.from_settings(session_service.settings),
+            module_names=module_names,
         )
 
     def handle(self, request: ControllerRequest) -> ControllerResult:
@@ -55,6 +65,15 @@ class AgentController:
             return ControllerResult.unsupported(
                 message=classification.unsupported_reason
                 or "I couldn't route that request."
+            )
+        module_request = self._parse_explicit_module_request(request.raw_input)
+        if module_request is not None:
+            module_name, module_parameters, targets = module_request
+            return self._handle_module_request(
+                request=request,
+                module_name=module_name,
+                module_parameters=module_parameters,
+                targets=targets,
             )
         if classification.intent == ControllerIntent.RECORD_LOOKUP_REQUEST:
             return self._handle_record_lookup(request, classification)
@@ -315,6 +334,60 @@ class AgentController:
                 session_summary=session_summary,
                 query=record_query,
                 resolved_scope=resolved_scope,
+            ),
+            bind_session=False,
+        )
+
+    def _parse_explicit_module_request(
+        self,
+        raw_input: str,
+    ) -> tuple[str, dict[str, object], list[SessionTarget]] | None:
+        lowered = raw_input.lower()
+        if not any(verb in lowered for verb in MODULE_INVOCATION_VERBS):
+            return None
+        for module_name in self.module_names:
+            pattern = rf"(?<![\w-]){re.escape(module_name.lower())}(?![\w-])"
+            if not re.search(pattern, lowered):
+                continue
+            targets = extract_targets(raw_input)
+            if not targets:
+                return None
+            return module_name, {"target": targets[0].value}, targets
+        return None
+
+    def _handle_module_request(
+        self,
+        *,
+        request: ControllerRequest,
+        module_name: str,
+        module_parameters: dict[str, object],
+        targets: list[SessionTarget],
+    ) -> ControllerResult:
+        session = self._load_active_session(request)
+        use_persistent = (
+            session is not None
+            and session.mode == SessionMode.REDTEAM
+            and not session.is_terminal
+        )
+        summary = (
+            SessionSummary.from_session(session, reused=True)
+            if use_persistent and session
+            else None
+        )
+        return ControllerResult.handled(
+            intent=ControllerIntent.MODULE_INVOCATION_REQUEST,
+            message=(
+                f"Running module {module_name} in {summary.public_id}."
+                if summary is not None
+                else f"Running one-shot module {module_name}."
+            ),
+            session_summary=summary,
+            execution_bridge=ExecutionBridge(
+                kind=ExecutionBridgeKind.MODULE_RUNTIME,
+                prompt_text=self._build_execution_prompt(request.raw_input, targets),
+                module_name=module_name,
+                module_parameters=module_parameters,
+                module_one_shot=summary is None,
             ),
             bind_session=False,
         )

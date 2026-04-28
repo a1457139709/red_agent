@@ -9,10 +9,12 @@ from agent.loop import agent_loop
 from agent.settings import Settings, get_settings
 from agent.state import SessionState
 from app.artifact_service import ArtifactService
+from app.capability_service import CapabilityService
 from app.dashboard_service import DashboardService
 from app.execution_service import ExecutionService
 from app.finding_service import FindingService
 from app.interaction_port import InteractionPort
+from app.module_service import ModuleService
 from app.planner_service import PlannerService
 from app.report_service import ReportService
 from app.session_interaction_service import (
@@ -22,6 +24,7 @@ from app.session_interaction_service import (
 from app.session_service import SessionService
 from app.skill_service import SkillService
 from app.skill_workflow_service import SkillWorkflowPlan, SkillWorkflowService
+from capabilities.registry import CapabilityRegistry
 from controller import (
     AgentController,
     ClarificationRequest,
@@ -68,6 +71,28 @@ def create_skill_service(settings: Settings | None = None) -> SkillService:
     )
 
 
+def create_capability_service(
+    settings: Settings | None = None,
+    *,
+    skill_service: SkillService | None = None,
+) -> CapabilityService:
+    settings = settings or get_settings()
+    tool_names = set(build_tool_registry().keys())
+    registry = CapabilityRegistry.built_in_and_local(
+        known_tool_names=tool_names,
+        local_root=settings.app_data_dir / "capabilities",
+    )
+    return CapabilityService(registry, skill_service=skill_service)
+
+
+def create_module_service(
+    settings: Settings | None = None,
+    *,
+    skill_service: SkillService | None = None,
+) -> ModuleService:
+    return ModuleService(create_capability_service(settings, skill_service=skill_service))
+
+
 def build_prompt(shell_state: ShellState) -> str:
     mode_label = shell_state.requested_session_mode.value
     if shell_state.active_skill_name:
@@ -84,6 +109,39 @@ def build_prompt(shell_state: ShellState) -> str:
 def parse_skill_command(command: str) -> tuple[str, list[str]] | None:
     stripped = command.strip()
     if not stripped.startswith("/skill"):
+        return None
+
+    parts = stripped.split()
+    if len(parts) == 1:
+        return "", []
+    return parts[1], parts[2:]
+
+
+def parse_module_command(command: str) -> tuple[str, list[str]] | None:
+    stripped = command.strip()
+    if stripped != "/module" and not stripped.startswith("/module "):
+        return None
+
+    parts = stripped.split(maxsplit=4)
+    if len(parts) == 1:
+        return "", []
+    return parts[1], parts[2:]
+
+
+def parse_operation_command(command: str) -> tuple[str, list[str]] | None:
+    stripped = command.strip()
+    if not stripped.startswith("/operation"):
+        return None
+
+    parts = stripped.split()
+    if len(parts) == 1:
+        return "", []
+    return parts[1], parts[2:]
+
+
+def parse_job_command(command: str) -> tuple[str, list[str]] | None:
+    stripped = command.strip()
+    if not stripped.startswith("/job"):
         return None
 
     parts = stripped.split()
@@ -174,6 +232,10 @@ def parse_skill_shorthand(
     if (
         not stripped.startswith("/")
         or stripped.startswith("/skill")
+        or stripped.startswith("/module")
+        or stripped.startswith("/task")
+        or stripped.startswith("/operation")
+        or stripped.startswith("/job")
         or stripped.startswith("/finding")
         or stripped.startswith("/artifact")
         or stripped.startswith("/report")
@@ -294,13 +356,13 @@ def handle_help_command(
         ui.show_help()
         return True
     if len(args) != 1:
-        ui.show_error("Usage: /help [skill]")
+        ui.show_error("Usage: /help [query|skill|module]")
         return True
 
     topic = args[0].lower()
-    if topic not in {"query", "skill"}:
+    if topic not in {"query", "skill", "module"}:
         ui.show_error(
-            f"Unknown help topic: {args[0]}. Available topics: query, skill"
+            f"Unknown help topic: {args[0]}. Available topics: query, skill, module"
         )
         return True
     ui.show_help(topic)
@@ -462,6 +524,93 @@ def handle_skill_command(
             return True
 
         ui.show_error(f"Unknown skill command: {action}")
+        return True
+    except Exception as exc:
+        ui.show_error(str(exc))
+        return True
+
+
+async def handle_module_command(
+    command: str,
+    *,
+    shell_state: ShellState,
+    session_service: SessionService,
+    module_service: ModuleService,
+    execution_service: ExecutionService,
+    tool_executor: ToolExecutor,
+    presenter: CliPresenter | None = None,
+    text_output: OutputFn | None = None,
+    info_output: OutputFn | None = None,
+    error_output: OutputFn | None = None,
+    success_output: OutputFn | None = None,
+    input_func: InputFn = input,
+) -> bool:
+    parsed = parse_module_command(command)
+    if parsed is None:
+        return False
+
+    ui = _resolve_presenter(
+        presenter,
+        text_output=text_output,
+        info_output=info_output,
+        error_output=error_output,
+        success_output=success_output,
+    )
+    action, args = parsed
+
+    try:
+        if action in {"", "help"}:
+            ui.show_help("module")
+            return True
+
+        if action == "list":
+            ui.show_capability_list(module_service.list_modules(), title="Modules")
+            return True
+
+        if action == "show":
+            if len(args) != 1:
+                ui.show_error("Usage: /module show <name>")
+                return True
+            ui.show_capability_detail(module_service.require_module(args[0]))
+            return True
+
+        if action == "run":
+            if len(args) < 2 or len(args) > 3:
+                ui.show_error("Usage: /module run <name> <target> [json_overrides]")
+                return True
+            module_name = args[0]
+            parameters = _parse_json_dict(args[2]) if len(args) == 3 else {}
+            parameters["target"] = args[1]
+            session = None
+            one_shot = True
+            if shell_state.active_session_public_id and shell_state.active_session_mode == SessionMode.REDTEAM:
+                session = session_service.get_session(shell_state.active_session_public_id)
+                if session is not None and not session.is_terminal:
+                    one_shot = False
+            invocation = module_service.prepare_invocation(
+                module_name=module_name,
+                parameters=parameters,
+                mode=SessionMode.REDTEAM,
+                one_shot=one_shot,
+                session=session,
+            )
+            reset_steps()
+            outcome = await execution_service.execute_module(
+                invocation=invocation,
+                tool_executor=tool_executor,
+                conversation_context=shell_state,
+                interaction_port=CliInteractionPort(
+                    ui=ui,
+                    input_func=input_func,
+                ),
+            )
+            if outcome.is_completed:
+                ColoredOutput.print_final_answer(outcome.response)
+            else:
+                ColoredOutput.print_error(outcome.error or outcome.response)
+            return True
+
+        ui.show_error(f"Unknown module command: {action}")
         return True
     except Exception as exc:
         ui.show_error(str(exc))
@@ -733,6 +882,7 @@ async def execute_controller_bridge(
     shell_state: ShellState,
     session_state: SessionState,
     skill_service: SkillService,
+    module_service: ModuleService,
     tool_executor: ToolExecutor,
     settings: Settings,
     execution_service: ExecutionService,
@@ -740,6 +890,48 @@ async def execute_controller_bridge(
     input_func: InputFn = input,
 ) -> None:
     if result.execution_bridge is None:
+        return
+
+    if result.execution_bridge.kind == ExecutionBridgeKind.MODULE_RUNTIME:
+        if not result.execution_bridge.module_name:
+            ui.show_error("Module execution bridge is missing a module name.")
+            return
+        session = None
+        if not result.execution_bridge.module_one_shot:
+            session_identifier = (
+                result.session_summary.public_id
+                if result.session_summary is not None
+                else shell_state.active_session_public_id
+            )
+            if session_identifier is not None:
+                session = execution_service.session_service.get_session(
+                    session_identifier
+                )
+        try:
+            invocation = module_service.prepare_invocation(
+                module_name=result.execution_bridge.module_name,
+                parameters=result.execution_bridge.module_parameters,
+                mode=SessionMode.REDTEAM,
+                one_shot=result.execution_bridge.module_one_shot,
+                session=session,
+            )
+            reset_steps()
+            outcome = await execution_service.execute_module(
+                invocation=invocation,
+                tool_executor=tool_executor,
+                conversation_context=shell_state,
+                interaction_port=CliInteractionPort(
+                    ui=ui,
+                    input_func=input_func,
+                ),
+            )
+        except Exception as exc:
+            ui.show_error(str(exc))
+            return
+        if outcome.is_completed:
+            ColoredOutput.print_final_answer(outcome.response)
+        else:
+            ColoredOutput.print_error(outcome.error or outcome.response)
         return
 
     session_identifier = (
@@ -1241,10 +1433,18 @@ async def run_interactive_shell(
     controller: AgentController | None = None,
     execution_service: ExecutionService | None = None,
     skill_service: SkillService,
+    module_service: ModuleService | None = None,
     input_func: InputFn = input,
 ) -> None:
     session_service = session_service or SessionService.from_settings(settings)
-    controller = controller or AgentController.from_session_service(session_service)
+    module_service = module_service or create_module_service(
+        settings,
+        skill_service=skill_service,
+    )
+    controller = controller or AgentController.from_session_service(
+        session_service,
+        module_names=tuple(capability.manifest.name for capability in module_service.list_modules()),
+    )
     execution_service = execution_service or ExecutionService.from_settings(
         settings,
         session_service=session_service,
@@ -1252,6 +1452,7 @@ async def run_interactive_shell(
     interaction_service = SessionInteractionService.from_services(
         controller=controller,
         execution_service=execution_service,
+        module_service=module_service,
     )
     planner_service = PlannerService.from_settings(settings)
     finding_service = FindingService.from_settings(settings)
@@ -1285,7 +1486,7 @@ async def run_interactive_shell(
         if handle_clear_command(
             question,
             shell_state=shell_state,
-                session_state=session_state,
+            session_state=session_state,
         ):
             continue
 
@@ -1317,6 +1518,17 @@ async def run_interactive_shell(
                     question,
                     shell_state=shell_state,
                     skill_service=skill_service,
+                    input_func=input_func,
+                ):
+                    continue
+
+                if await handle_module_command(
+                    question,
+                    shell_state=shell_state,
+                    session_service=session_service,
+                    module_service=module_service,
+                    execution_service=execution_service,
+                    tool_executor=tool_executor,
                     input_func=input_func,
                 ):
                     continue
@@ -1401,7 +1613,11 @@ async def main() -> None:
         session_service=session_service,
     )
     skill_service = create_skill_service(settings)
-    controller = AgentController.from_session_service(session_service)
+    module_service = create_module_service(settings, skill_service=skill_service)
+    controller = AgentController.from_session_service(
+        session_service,
+        module_names=tuple(capability.manifest.name for capability in module_service.list_modules()),
+    )
     tool_executor = ToolExecutor(
         build_tool_registry(),
         on_info=ColoredOutput.print_info,
@@ -1416,6 +1632,7 @@ async def main() -> None:
         controller=controller,
         execution_service=execution_service,
         skill_service=skill_service,
+        module_service=module_service,
     )
 
 

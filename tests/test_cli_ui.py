@@ -1,6 +1,7 @@
 from io import StringIO
 from pathlib import Path
 
+from capabilities.loader import load_capability_from_file
 from cli.ui import CliPresenter
 from rich.console import Console
 from models.checkpoint import CheckpointSummary
@@ -22,6 +23,7 @@ def test_presenter_help_and_observation_render_clean_text():
     presenter.show_help("query")
     presenter.show_help("skill")
     presenter.show_help("artifact")
+    presenter.show_help("module")
     presenter.show_observation(
         "line1\nline2\nline3\nline4\nline5",
         truncate_lines=3,
@@ -38,6 +40,7 @@ def test_presenter_help_and_observation_render_clean_text():
     assert "job" not in outputs[0]
     assert "/help query" in outputs[0]
     assert "/help skill" in outputs[0]
+    assert "/help module" in outputs[0]
     assert "/clear" in outputs[0]
     assert "/redteam [on|off|toggle|current]" in outputs[0]
     assert "Query Commands" in outputs[1]
@@ -49,9 +52,11 @@ def test_presenter_help_and_observation_render_clean_text():
     assert "Artifact Commands" in outputs[3]
     assert "/artifact list <session_id> [limit]" in outputs[3]
     assert "/evidence" not in outputs[3]
-    assert "line1" in outputs[4]
-    assert "line3" in outputs[4]
-    assert "[truncated for display]" in outputs[4]
+    assert "Module Commands" in outputs[4]
+    assert "/module run <name> <target> [json_overrides]" in outputs[4]
+    assert "line1" in outputs[5]
+    assert "line3" in outputs[5]
+    assert "[truncated for display]" in outputs[5]
 
 
 def test_presenter_clear_screen_is_silent_for_callback_presenter():
@@ -162,11 +167,16 @@ def test_presenter_detail_views_include_key_fields_without_blob_internals():
         skill_file=Path("D:/skills/security-audit/SKILL.md"),
         source="built-in",
     )
+    capability = load_capability_from_file(
+        Path("src/capabilities/surface-recon/capability.json")
+    )
 
     presenter.show_task_detail(task)
     presenter.show_run_detail(run, task, [entry])
     presenter.show_checkpoint_detail(checkpoint, task, run.public_id)
     presenter.show_skill_detail(skill)
+    presenter.show_capability_list([capability], title="Modules")
+    presenter.show_capability_detail(capability)
     presenter.show_skill_workflow_plan(
         skill_name="surface-recon",
         workflow_profile="surface-recon",
@@ -203,6 +213,8 @@ def test_presenter_detail_views_include_key_fields_without_blob_internals():
     assert "payload_digest" not in merged
     assert "Source:" in merged and "built-in" in merged
     assert "Invocation Mode:" in merged
+    assert "Capability Detail" in merged and "surface-recon" in merged
+    assert "Result Layers:" in merged
     assert "Skill Workflow Plan" in merged
     assert "Metadata" in merged and "category: security" in merged
     assert "Final Answer" in merged and "Completed successfully." in merged

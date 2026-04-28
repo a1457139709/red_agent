@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "name": "surface-recon",
+  "kind": "module",
+  "display_name": "Surface Recon",
+  "description": "Run bounded DNS, HTTP, and TLS reconnaissance for an in-scope target.",
+  "modes": ["redteam"],
+  "parameters": [
+    {
+      "name": "target",
+      "type": "string",
+      "required": true,
+      "description": "Domain, host, IP, or URL to inspect."
+    },
+    {
+      "name": "include_dns",
+      "type": "boolean",
+      "required": false,
+      "description": "Whether to resolve DNS records for hostname targets.",
+      "default": true
+    },
+    {
+      "name": "include_http",
+      "type": "boolean",
+      "required": false,
+      "description": "Whether to probe derived HTTP and HTTPS URLs.",
+      "default": true
+    },
+    {
+      "name": "include_tls",
+      "type": "boolean",
+      "required": false,
+      "description": "Whether to inspect the derived TLS endpoint.",
+      "default": true
+    }
+  ],
+  "tools": {
+    "allowed": ["dns_lookup", "http_probe", "tls_inspect"]
+  },
+  "risk": {
+    "default": "safe",
+    "actions": ["dns_lookup", "http_probe", "tls_inspect"]
+  },
+  "execution": {
+    "style": "workflow",
+    "profile": "surface-recon"
+  },
+  "session": {
+    "supports_one_shot": true,
+    "supports_persistent": true,
+    "result_layers": ["artifacts"]
+  }
+}

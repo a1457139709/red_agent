@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "name": "security-audit",
+  "kind": "skill",
+  "display_name": "Security Audit",
+  "description": "Review a local project for security issues, risky configurations, unsafe command usage, and exposed secrets.",
+  "modes": ["normal", "redteam"],
+  "parameters": [],
+  "tools": {
+    "allowed": ["bash", "list_dir", "read_file", "search"]
+  },
+  "risk": {
+    "default": "elevated",
+    "actions": []
+  },
+  "execution": {
+    "style": "prompt_assist",
+    "profile": "security-audit"
+  },
+  "session": {
+    "supports_one_shot": true,
+    "supports_persistent": true,
+    "result_layers": []
+  }
+}

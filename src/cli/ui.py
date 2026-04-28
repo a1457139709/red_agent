@@ -16,6 +16,7 @@ from rich.text import Text
 from app.dashboard_service import SessionDashboard
 from models.artifact import Artifact
 from models.checkpoint import CheckpointSummary
+from models.capability import LoadedCapability
 from models.evidence import Evidence
 from models.finding import Finding
 from models.job import Job
@@ -235,12 +236,20 @@ class CliPresenter:
         topics.add_row("planner", "Planner plan creation and application")
         topics.add_row("task", "Legacy task debugging and recovery")
         topics.add_row("skill", "Skill activation, inspection, reload, and shorthand usage")
+        topics.add_row(
+            "module",
+            "Redteam module listing, inspection, and one-shot or session-bound runs",
+        )
         return Group(
-            Text("Describe what you want in plain language first. Slash commands are available for advanced and debug workflows.", style="dim"),
+            Text(
+                "Describe what you want in plain language first. "
+                "Slash commands are available for advanced and debug workflows.",
+                style="dim",
+            ),
             Rule(style="grey50", characters="-"),
             Panel(examples, title="Natural-Language First", border_style="green", box=ASCII_BOX),
             Panel(topics, title="Advanced Help Topics", border_style="bright_blue", box=ASCII_BOX),
-            Text("Drill down with /help query or /help skill for command details.", style="dim"),
+            Text("Drill down with /help query, /help skill, or /help module for command details.", style="dim"),
             Text("Session shortcuts: /redteam [on|off|toggle|current], /clear, /reset, /exit, /quit", style="dim"),
         )
 
@@ -334,6 +343,28 @@ class CliPresenter:
             ], border_style="bright_blue"),
         )
 
+    def _help_module(self) -> Group:
+        return Group(
+            Text("Module help", style="dim"),
+            Rule(style="grey50", characters="-"),
+            Text(
+                "Modules use the Phase 5 capability manifest and execute through the session risk/scope gate.",
+                style="dim",
+            ),
+            self._command_panel(
+                "Module Commands",
+                [
+                    ("/module list", "List redteam modules from capability.json manifests"),
+                    ("/module show <name>", "Show module manifest details"),
+                    (
+                        "/module run <name> <target> [json_overrides]",
+                        "Run a module one-shot, or inside the active redteam session",
+                    ),
+                ],
+                border_style="red",
+            ),
+        )
+
     def show_help(self, topic: str | None = None) -> None:
         if topic is None:
             body = self._help_overview()
@@ -359,6 +390,9 @@ class CliPresenter:
         elif topic == "skill":
             body = self._help_skill()
             title = "Help: skill"
+        elif topic == "module":
+            body = self._help_module()
+            title = "Help: module"
         else:
             raise ValueError(f"Unsupported help topic: {topic}")
         self._emit(Panel(body, title=title, border_style="bright_blue", box=ASCII_BOX))
@@ -1079,6 +1113,82 @@ class CliPresenter:
         )
         metadata_panel = Panel(Text(metadata_text), title="Metadata", border_style="blue", box=ASCII_BOX)
         self._emit(Group(summary, metadata_panel))
+
+    def show_capability_list(
+        self,
+        capabilities: list[LoadedCapability],
+        *,
+        title: str = "Capabilities",
+    ) -> None:
+        if not capabilities:
+            self._emit(
+                Panel(
+                    Text("No capabilities found.", style="dim"),
+                    title=title,
+                    border_style="yellow",
+                    box=ASCII_BOX,
+                )
+            )
+            return
+        table = Table(title=title, box=ASCII_BOX, expand=True, header_style="bold")
+        table.add_column("Name", style="cyan", no_wrap=True)
+        table.add_column("Kind", no_wrap=True)
+        table.add_column("Source", no_wrap=True)
+        table.add_column("Execution", no_wrap=True)
+        table.add_column("Description", overflow="fold")
+        for capability in capabilities:
+            table.add_row(
+                capability.manifest.name,
+                capability.manifest.kind.value,
+                capability.source,
+                capability.manifest.execution.style.value,
+                capability.manifest.description,
+            )
+        self._emit(table)
+
+    def show_capability_detail(self, capability: LoadedCapability) -> None:
+        manifest = capability.manifest
+        parameters = "\n".join(
+            (
+                f"{parameter.name} "
+                f"({parameter.type.value}, {'required' if parameter.required else 'optional'}): "
+                f"{parameter.description}"
+            )
+            for parameter in manifest.parameters
+        ) or "-"
+        summary = Panel(
+            self._detail_table([
+                ("Name", manifest.name),
+                ("Display Name", manifest.display_name),
+                ("Kind", manifest.kind.value),
+                ("Description", manifest.description),
+                ("Source", capability.source),
+                ("Modes", ", ".join(mode.value for mode in manifest.modes)),
+                ("Execution Style", manifest.execution.style.value),
+                ("Execution Profile", manifest.execution.profile),
+                ("Allowed Tools", ", ".join(manifest.tools.allowed)),
+                ("Risk Default", manifest.risk.default.value),
+                ("Risk Actions", ", ".join(manifest.risk.actions) or "-"),
+                ("One Shot", "yes" if manifest.session.supports_one_shot else "no"),
+                ("Persistent", "yes" if manifest.session.supports_persistent else "no"),
+                ("Result Layers", ", ".join(manifest.session.result_layers) or "-"),
+                ("Path", str(capability.manifest_file)),
+            ]),
+            title="Capability Detail",
+            border_style="green",
+            box=ASCII_BOX,
+        )
+        self._emit(
+            Group(
+                summary,
+                Panel(
+                    Text(parameters),
+                    title="Parameters",
+                    border_style="blue",
+                    box=ASCII_BOX,
+                ),
+            )
+        )
 
     def show_skill_workflow_plan(
         self,

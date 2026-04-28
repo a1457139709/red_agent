@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "name": "web-enum",
+  "kind": "module",
+  "display_name": "Web Enum",
+  "description": "Run bounded HTTP path enumeration and optional TLS inspection for an in-scope web target.",
+  "modes": ["redteam"],
+  "parameters": [
+    {
+      "name": "target",
+      "type": "string",
+      "required": true,
+      "description": "Domain, host, IP, or URL to inspect."
+    },
+    {
+      "name": "paths",
+      "type": "array",
+      "required": false,
+      "description": "HTTP paths to probe.",
+      "default": ["/", "/robots.txt", "/.well-known/security.txt"]
+    },
+    {
+      "name": "include_tls",
+      "type": "boolean",
+      "required": false,
+      "description": "Whether to inspect TLS for HTTPS targets.",
+      "default": true
+    }
+  ],
+  "tools": {
+    "allowed": ["http_probe", "tls_inspect"]
+  },
+  "risk": {
+    "default": "safe",
+    "actions": ["http_probe", "tls_inspect"]
+  },
+  "execution": {
+    "style": "workflow",
+    "profile": "web-enum"
+  },
+  "session": {
+    "supports_one_shot": true,
+    "supports_persistent": true,
+    "result_layers": ["artifacts"]
+  }
+}

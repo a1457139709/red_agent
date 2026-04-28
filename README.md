@@ -21,9 +21,10 @@ The repository now contains two runtime families:
 - interactive local CLI
 - Rich-based CLI presentation layer
 - hierarchical help output with topic drill-down
-- built-in and user-local `SKILL.md` skills
+- built-in and user-local `SKILL.md` prompt-assist skills
+- Phase 5 `capability.json` contracts for skills and modules
 - explicit skill activation and one-shot skill invocation
-- bounded skill-driven workflow planning for v2 security jobs
+- bounded module execution for `surface-recon` and `web-enum` through the session risk/scope gate
 - file tools: read, write, edit, list, search, delete
 - web tools: `web_fetch` and `web_search`
 - shell command execution with safety checks
@@ -76,11 +77,16 @@ Describe what you want in plain language first. Examples:
 Plain-language requests now default to the normal agent flow. Use `/redteam on` to switch subsequent plain-language requests into redteam mode, and `/redteam off` to return to normal mode.
 `/report session_summary`, `/report findings_summary`, and `/report operator_report` now reuse the most recent session report when possible and generate a new report only when needed.
 
-Use slash commands for skill and shell-level control.
+Use slash commands for skill, module, and shell-level control. Legacy `/task` and `/operation` command families are no longer part of the default user-facing flow.
 
 - `/help`
 - `/help query`
 - `/help skill`
+- `/redteam [on|off|toggle|current]`
+- `/help module`
+- `/module list`
+- `/module show <name>`
+- `/module run <name> <target> [json_overrides]`
 - `/redteam [on|off|toggle|current]`
 - `/clear`
 - `/status [current|latest|S0001]`
@@ -102,7 +108,7 @@ Use slash commands for skill and shell-level control.
 - `/skill-name <prompt>`
 
 `/help` now leads with natural-language examples and keeps command groups in advanced help topics.
-Use `/help query` for session-aware retrieval/report commands and `/help skill` for skill command help.
+Use `/help query` for session-aware retrieval/report commands, `/help skill` for skill command help, and `/help module` for module workflows.
 `/clear` resets only the in-memory context and clears the screen while preserving active session binding and active shell skill.
 
 ## Red-Team Runtime Status
@@ -146,12 +152,13 @@ The current runtime still intentionally does not yet deliver:
 - natural-language retrieval over persisted artifacts/findings/reports
 - planner-driven use of the structured artifact and finding store
 
-Phase 6 now also delivers:
+Phase 5 now also delivers:
 
-- per-skill runtime activation of `model`, `effort`, `shell`, `user-invocable`, and `disable-model-invocation`
-- explicit shell selection for the `bash` tool when a skill declares `shell`; otherwise the runtime uses the host default shell
-- workflow-only skills that generate bounded v2 job plans instead of freeform prompt execution
-- built-in `surface-recon` and `web-enum` workflow skills
+- a unified `capability.json` contract for prompt-assist skills and executable modules
+- manifest discovery from `src/capabilities/` with local `.red-code/capabilities/` overrides
+- `CapabilityService` and `ModuleService` validation for kind, mode, parameters, risk hints, and session support
+- explicit `/module` advanced/debug commands for listing, inspecting, and running modules
+- built-in `surface-recon` and `web-enum` modules that execute typed-tool workflows without requiring `operation_id`
 
 ## Session Storage Layout
 
@@ -202,6 +209,27 @@ Example:
 
 If a local skill has the same name as a built-in skill, the local skill overrides it after `/skill reload`.
 
+## Capability Locations
+
+Built-in Phase 5 capability manifests live under:
+
+- `src/capabilities/`
+
+User-local capability manifests live under:
+
+- `.red-code/capabilities/`
+
+Example:
+
+```text
+.red-code/
+  capabilities/
+    my-module/
+      capability.json
+```
+
+If a local capability has the same name as a built-in capability, the local capability overrides it after the capability registry is reloaded.
+
 ## Current Architecture
 
 Core source areas:
@@ -242,6 +270,8 @@ The current built-in skills are:
 - `surface-recon`
 - `weather-query-example`
 - `web-enum`
+
+`surface-recon` and `web-enum` are Phase 5 modules. Their legacy `SKILL.md` files remain only as migration/debug prompt bridges; the target execution path is `/module run <name> <target> [json_overrides]`.
 
 ## Tests
 

@@ -6,6 +6,7 @@ from agent.settings import Settings
 from agent.state import SessionState
 from app.execution_service import ExecutionService
 from app.interaction_port import InteractionOutcome, InteractionPort
+from app.module_service import ModuleService
 from app.skill_service import SkillService
 from controller import (
     AgentController,
@@ -15,6 +16,7 @@ from controller import (
     parse_record_query_command,
 )
 from models.conversation_context import ConversationContext
+from models.session import SessionMode
 from tools.executor import ToolExecutor
 
 
@@ -42,6 +44,7 @@ def build_controller_request_from_context(
 class SessionInteractionService:
     controller: AgentController
     execution_service: ExecutionService
+    module_service: ModuleService | None = None
 
     @classmethod
     def from_services(
@@ -49,10 +52,12 @@ class SessionInteractionService:
         *,
         controller: AgentController,
         execution_service: ExecutionService,
+        module_service: ModuleService | None = None,
     ) -> "SessionInteractionService":
         return cls(
             controller=controller,
             execution_service=execution_service,
+            module_service=module_service,
         )
 
     def build_controller_request(
@@ -104,36 +109,83 @@ class SessionInteractionService:
 
         final_text: str | None = None
         if controller_result.execution_bridge is not None:
-            session_identifier = (
-                controller_result.session_summary.id
-                if controller_result.session_summary is not None
-                else conversation_context.active_session_id
-            )
-            if session_identifier is None:
-                message = "Execution bridge is missing an active session binding."
-                await interaction_port.emit_interaction_error(message, conversation_context)
-                return InteractionOutcome(
-                    conversation_context=conversation_context,
-                    controller_result=controller_result,
-                    error_message=message,
+            if controller_result.execution_bridge.kind == ExecutionBridgeKind.MODULE_RUNTIME:
+                if self.module_service is None:
+                    message = "Module runtime is not configured for this interaction service."
+                    await interaction_port.emit_interaction_error(message, conversation_context)
+                    return InteractionOutcome(
+                        conversation_context=conversation_context,
+                        controller_result=controller_result,
+                        error_message=message,
+                    )
+                if not controller_result.execution_bridge.module_name:
+                    message = "Module execution bridge is missing a module name."
+                    await interaction_port.emit_interaction_error(message, conversation_context)
+                    return InteractionOutcome(
+                        conversation_context=conversation_context,
+                        controller_result=controller_result,
+                        error_message=message,
+                    )
+                session = None
+                if not controller_result.execution_bridge.module_one_shot:
+                    session_identifier = (
+                        controller_result.session_summary.id
+                        if controller_result.session_summary is not None
+                        else conversation_context.active_session_id
+                    )
+                    if session_identifier is None:
+                        message = "Module execution bridge is missing an active session binding."
+                        await interaction_port.emit_interaction_error(message, conversation_context)
+                        return InteractionOutcome(
+                            conversation_context=conversation_context,
+                            controller_result=controller_result,
+                            error_message=message,
+                        )
+                    session = self.execution_service.session_service.require_session(session_identifier)
+                invocation = self.module_service.prepare_invocation(
+                    module_name=controller_result.execution_bridge.module_name,
+                    parameters=controller_result.execution_bridge.module_parameters,
+                    mode=SessionMode.REDTEAM,
+                    one_shot=controller_result.execution_bridge.module_one_shot,
+                    session=session,
                 )
+                execution_outcome = await self.execution_service.execute_module(
+                    invocation=invocation,
+                    tool_executor=tool_executor,
+                    conversation_context=conversation_context,
+                    interaction_port=interaction_port,
+                )
+            else:
+                session_identifier = (
+                    controller_result.session_summary.id
+                    if controller_result.session_summary is not None
+                    else conversation_context.active_session_id
+                )
+                if session_identifier is None:
+                    message = "Execution bridge is missing an active session binding."
+                    await interaction_port.emit_interaction_error(message, conversation_context)
+                    return InteractionOutcome(
+                        conversation_context=conversation_context,
+                        controller_result=controller_result,
+                        error_message=message,
+                    )
 
-            skill_name = (
-                conversation_context.active_skill_name
-                if controller_result.execution_bridge.kind == ExecutionBridgeKind.ACTIVE_SKILL_RUNTIME
-                else None
-            )
-            execution_outcome = await self.execution_service.execute_session(
-                session_identifier=session_identifier,
-                prompt_text=controller_result.execution_bridge.prompt_text,
-                session_state=session_state,
-                skill_service=skill_service,
-                tool_executor=tool_executor,
-                settings=settings,
-                conversation_context=conversation_context,
-                interaction_port=interaction_port,
-                skill_name=skill_name,
-            )
+                skill_name = (
+                    conversation_context.active_skill_name
+                    if controller_result.execution_bridge.kind == ExecutionBridgeKind.ACTIVE_SKILL_RUNTIME
+                    else None
+                )
+                execution_outcome = await self.execution_service.execute_session(
+                    session_identifier=session_identifier,
+                    prompt_text=controller_result.execution_bridge.prompt_text,
+                    session_state=session_state,
+                    skill_service=skill_service,
+                    tool_executor=tool_executor,
+                    settings=settings,
+                    conversation_context=conversation_context,
+                    interaction_port=interaction_port,
+                    skill_name=skill_name,
+                )
             final_text = execution_outcome.response
             if execution_outcome.is_completed:
                 await interaction_port.emit_final_answer(final_text, conversation_context)

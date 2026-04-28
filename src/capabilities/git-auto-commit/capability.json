@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "name": "git-auto-commit",
+  "kind": "skill",
+  "display_name": "Git Auto Commit",
+  "description": "Summarize current local git repository changes and create a focused commit.",
+  "modes": ["normal"],
+  "parameters": [],
+  "tools": {
+    "allowed": ["bash", "list_dir", "read_file", "search"]
+  },
+  "risk": {
+    "default": "elevated",
+    "actions": []
+  },
+  "execution": {
+    "style": "prompt_assist",
+    "profile": "git-auto-commit"
+  },
+  "session": {
+    "supports_one_shot": true,
+    "supports_persistent": true,
+    "result_layers": []
+  }
+}

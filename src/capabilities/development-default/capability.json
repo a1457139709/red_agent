@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "name": "development-default",
+  "kind": "skill",
+  "display_name": "Development Default",
+  "description": "Help with local development tasks such as reading code, refactoring, testing, and updating documentation.",
+  "modes": ["normal"],
+  "parameters": [],
+  "tools": {
+    "allowed": [
+      "bash",
+      "delete_file",
+      "edit_file",
+      "list_dir",
+      "read_file",
+      "search",
+      "web_fetch",
+      "web_search",
+      "write_file"
+    ]
+  },
+  "risk": {
+    "default": "elevated",
+    "actions": []
+  },
+  "execution": {
+    "style": "prompt_assist",
+    "profile": "development-default"
+  },
+  "session": {
+    "supports_one_shot": true,
+    "supports_persistent": true,
+    "result_layers": []
+  }
+}

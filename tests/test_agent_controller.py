@@ -42,6 +42,7 @@ from tools.executor import ToolExecutor
 class FakeExecutionService:
     def __init__(self, *, outcome: ExecutionOutcome | None = None) -> None:
         self.calls: list[dict[str, str | None]] = []
+        self.module_calls: list[dict[str, object]] = []
         self.outcome = outcome or ExecutionOutcome(status="completed", response="done")
 
     async def execute_session(
@@ -64,6 +65,23 @@ class FakeExecutionService:
                 "session_identifier": session_identifier,
                 "prompt_text": prompt_text,
                 "skill_name": skill_name,
+            }
+        )
+        return self.outcome
+
+    async def execute_module(
+        self,
+        *,
+        invocation,
+        tool_executor,
+        conversation_context=None,
+        interaction_port=None,
+    ) -> ExecutionOutcome:
+        self.module_calls.append(
+            {
+                "module_name": invocation.module.manifest.name,
+                "parameters": dict(invocation.parameters),
+                "one_shot": invocation.one_shot,
             }
         )
         return self.outcome
@@ -211,6 +229,25 @@ def test_agent_controller_keeps_ambiguous_target_requests_in_normal_flow(tmp_pat
     assert result.clarification_request is None
     assert result.execution_bridge is not None
     assert result.execution_bridge.kind == ExecutionBridgeKind.BASE_RUNTIME
+
+
+def test_agent_controller_routes_explicit_module_request_as_one_shot(tmp_path):
+    settings = build_settings(tmp_path)
+    session_service = SessionService.from_settings(settings)
+    controller = AgentController.from_session_service(session_service)
+
+    result = controller.handle(
+        ControllerRequest(raw_input="Run surface-recon for example.com")
+    )
+
+    assert result.status == ControllerResultStatus.HANDLED
+    assert result.intent == ControllerIntent.MODULE_INVOCATION_REQUEST
+    assert result.execution_bridge is not None
+    assert result.execution_bridge.kind == ExecutionBridgeKind.MODULE_RUNTIME
+    assert result.execution_bridge.module_name == "surface-recon"
+    assert result.execution_bridge.module_parameters == {"target": "example.com"}
+    assert result.execution_bridge.module_one_shot
+    assert result.session_summary is None
 
 
 def test_agent_controller_record_lookup_prefers_active_session(tmp_path):
@@ -592,6 +629,63 @@ def test_run_interactive_shell_redteam_startup_executes_in_foreground(
     assert build_prompt(shell_state).startswith("\nredteam:")
     assert len(execution_service.calls) == 1
     assert execution_service.calls[0]["prompt_text"] == "Scan example.com for open services"
+
+
+def test_run_interactive_shell_routes_explicit_module_request_to_module_runtime(
+    monkeypatch,
+    tmp_path,
+):
+    settings = build_settings(tmp_path)
+    session_state = SessionState()
+    shell_state = ShellState()
+    session_service = SessionService.from_settings(settings)
+    skill_service = main_module.create_skill_service(settings)
+    module_service = main_module.create_module_service(settings, skill_service=skill_service)
+    controller = AgentController.from_session_service(
+        session_service,
+        module_names=tuple(capability.manifest.name for capability in module_service.list_modules()),
+    )
+    execution_service = FakeExecutionService()
+    tool_executor = ToolExecutor(build_tool_registry())
+    captured = {"answers": []}
+    responses = iter(["Run surface-recon for example.com", "/quit"])
+
+    def fake_input(_prompt):
+        return next(responses)
+
+    monkeypatch.setattr(main_module.ColoredOutput, "print_final_answer", captured["answers"].append)
+    monkeypatch.setattr(main_module.ColoredOutput, "print_error", captured["answers"].append)
+    monkeypatch.setattr(main_module.ColoredOutput, "print_info", captured["answers"].append)
+
+    asyncio.run(
+        run_interactive_shell(
+            settings=settings,
+            session_state=session_state,
+            shell_state=shell_state,
+            tool_executor=tool_executor,
+            session_service=session_service,
+            controller=controller,
+            execution_service=execution_service,
+            skill_service=skill_service,
+            module_service=module_service,
+            input_func=fake_input,
+        )
+    )
+
+    assert execution_service.calls == []
+    assert execution_service.module_calls == [
+        {
+            "module_name": "surface-recon",
+            "parameters": {
+                "target": "example.com",
+                "include_dns": True,
+                "include_http": True,
+                "include_tls": True,
+            },
+            "one_shot": True,
+        }
+    ]
+    assert "done" in captured["answers"]
 
 
 def test_build_controller_request_and_clear_command_preserve_session_binding(tmp_path):

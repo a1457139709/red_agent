@@ -18,6 +18,7 @@ from models.session import Session, SessionMode, SessionStatus
 class ControllerIntent(StrEnum):
     NORMAL_REQUEST = "normal_request"
     REDTEAM_REQUEST = "redteam_request"
+    MODULE_INVOCATION_REQUEST = "module_invocation_request"
     RECORD_LOOKUP_REQUEST = "record_lookup_request"
     ADVANCED_COMMAND_REQUEST = "advanced_command_request"
     CLARIFICATION_REQUIRED = "clarification_required"
@@ -41,6 +42,7 @@ class ClarificationKind(StrEnum):
 class ExecutionBridgeKind(StrEnum):
     BASE_RUNTIME = "base_runtime"
     ACTIVE_SKILL_RUNTIME = "active_skill_runtime"
+    MODULE_RUNTIME = "module_runtime"
 
 
 class RecordLookupKind(StrEnum):
@@ -102,6 +104,9 @@ class ClarificationAnswer:
 class ExecutionBridge:
     kind: ExecutionBridgeKind
     prompt_text: str
+    module_name: str | None = None
+    module_parameters: dict[str, object] = field(default_factory=dict)
+    module_one_shot: bool = True
 
 
 @dataclass(slots=True)
