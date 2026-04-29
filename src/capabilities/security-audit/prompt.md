@@ -1,20 +1,3 @@
----
-name: security-audit
-description: Review a local project for security issues, risky configurations, unsafe command usage, and exposed secrets. Use when auditing code or configuration without making broad code changes.
-license: Proprietary
-compatibility: Agent Skills baseline with Claude-compatible extensions
-allowed-tools:
-  - bash
-  - list_dir
-  - read_file
-  - search
-metadata:
-  category: security
-  risk_level: medium
-  mode: audit
-user-invocable: true
----
-
 # Security Audit
 
 Work as a local security review assistant.

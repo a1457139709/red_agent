@@ -76,9 +76,24 @@ class CapabilityManifest:
     risk: CapabilityRiskMetadata
     execution: CapabilityExecutionMetadata
     session: CapabilitySessionSupport
+    metadata: dict[str, Any] = field(default_factory=dict)
+    argument_hint: str | None = None
+    user_invocable: bool | None = None
+    disable_model_invocation: bool | None = None
+    model: str | None = None
+    effort: str | None = None
+    shell: str | None = None
 
     def parameter_map(self) -> dict[str, CapabilityParameter]:
         return {parameter.name: parameter for parameter in self.parameters}
+
+    @property
+    def is_user_invocable(self) -> bool:
+        return self.user_invocable is not False
+
+    @property
+    def allows_model_invocation(self) -> bool:
+        return not bool(self.disable_model_invocation)
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +104,8 @@ class LoadedCapability:
     source: str = "unknown"
     references: tuple[Path, ...] = field(default_factory=tuple)
     scripts: tuple[Path, ...] = field(default_factory=tuple)
+    prompt_file: Path | None = None
+    prompt_body: str = ""
 
 
 @dataclass(frozen=True, slots=True)

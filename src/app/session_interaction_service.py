@@ -4,10 +4,10 @@ from dataclasses import dataclass
 
 from agent.settings import Settings
 from agent.state import SessionState
+from app.capability_service import CapabilityService
 from app.execution_service import ExecutionService
 from app.interaction_port import InteractionOutcome, InteractionPort
 from app.module_service import ModuleService
-from app.skill_service import SkillService
 from controller import (
     AgentController,
     ControllerRequest,
@@ -77,10 +77,10 @@ class SessionInteractionService:
         question: str,
         conversation_context: ConversationContext,
         session_state: SessionState,
-        skill_service: SkillService,
         tool_executor: ToolExecutor,
         settings: Settings,
         interaction_port: InteractionPort,
+        capability_service: CapabilityService,
     ) -> InteractionOutcome:
         controller_result = self.controller.handle(
             self.build_controller_request(
@@ -179,7 +179,7 @@ class SessionInteractionService:
                     session_identifier=session_identifier,
                     prompt_text=controller_result.execution_bridge.prompt_text,
                     session_state=session_state,
-                    skill_service=skill_service,
+                    capability_service=capability_service,
                     tool_executor=tool_executor,
                     settings=settings,
                     conversation_context=conversation_context,

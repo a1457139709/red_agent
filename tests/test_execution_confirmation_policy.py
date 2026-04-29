@@ -33,7 +33,7 @@ class FakeRuntimeConfig:
         return settings
 
 
-class FakeSkillService:
+class FakeCapabilityService:
     def __init__(self, allowed_tools: list[str]) -> None:
         self.allowed_tools = allowed_tools
 
@@ -130,7 +130,7 @@ def test_execution_service_blocks_denied_confirmation_and_records_events(tmp_pat
             session_identifier=session.id,
             prompt_text="run poc",
             session_state=SessionState(),
-            skill_service=FakeSkillService(["poc_execute"]),
+            capability_service=FakeCapabilityService(["poc_execute"]),
             tool_executor=ToolExecutor({"poc_execute": FakeTool("poc_execute")}),
             settings=settings,
             conversation_context=ConversationContext(),
@@ -187,7 +187,7 @@ def test_execution_service_resumes_when_confirmation_is_approved(tmp_path):
             session_identifier=session.id,
             prompt_text="run poc",
             session_state=SessionState(),
-            skill_service=FakeSkillService(["poc_execute"]),
+            capability_service=FakeCapabilityService(["poc_execute"]),
             tool_executor=ToolExecutor({"poc_execute": FakeTool("poc_execute")}),
             settings=settings,
             conversation_context=ConversationContext(),
@@ -236,7 +236,7 @@ def test_execution_service_requires_confirmation_for_unknown_redteam_action(tmp_
             session_identifier=session.id,
             prompt_text="run unknown action",
             session_state=SessionState(),
-            skill_service=FakeSkillService(["unknown_new_action"]),
+            capability_service=FakeCapabilityService(["unknown_new_action"]),
             tool_executor=ToolExecutor({"unknown_new_action": FakeTool("unknown_new_action")}),
             settings=settings,
             conversation_context=ConversationContext(),

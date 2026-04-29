@@ -1,21 +1,3 @@
----
-name: git-auto-commit
-description: Summarize the current local git repository changes and create a focused commit. Use when a user asks to inspect the latest modified, staged, or untracked files in the current repository, explain the change set, and commit it.
-license: Proprietary
-compatibility: Agent Skills baseline with Claude-compatible extensions
-allowed-tools:
-  - bash
-  - list_dir
-  - read_file
-  - search
-metadata:
-  category: development
-  risk_level: medium
-  mode: commit
-argument-hint: summarize the current git changes and create a commit
-user-invocable: true
----
-
 # Git Auto Commit
 
 Work as a careful local git commit assistant.

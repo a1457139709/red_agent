@@ -1,8 +1,7 @@
 import asyncio
 
 from agent.settings import Settings
-from app.skill_service import SkillService
-from skills.registry import SkillRegistry
+from app.capability_service import CapabilityService
 from tools import build_tool_registry
 from tools.executor import ToolExecutor
 from tools.policy import CapabilityTier, RuntimeSafetyPolicy
@@ -17,17 +16,12 @@ def build_settings(tmp_path):
     )
 
 
-def create_skill_service() -> SkillService:
-    tool_names = list(build_tool_registry().keys())
-    return SkillService(
-        SkillRegistry.built_in(known_tool_names=set(tool_names)),
-        base_tool_names=tool_names,
-        default_task_skill_name=None,
-    )
+def create_capability_service() -> CapabilityService:
+    return CapabilityService.from_settings()
 
 
 def test_skill_runtime_policies_match_base_and_security_skill():
-    service = create_skill_service()
+    service = create_capability_service()
 
     base_runtime = asyncio.run(service.build_base_runtime_config(context_summary="summary"))
     security_runtime = asyncio.run(

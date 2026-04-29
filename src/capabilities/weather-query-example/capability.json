@@ -13,6 +13,11 @@
       "description": "Supported demo city to look up."
     }
   ],
+  "metadata": {
+    "category": "example",
+    "risk_level": "low",
+    "mode": "local-demo"
+  },
   "tools": {
     "allowed": ["bash", "list_dir", "read_file"]
   },
@@ -24,6 +29,7 @@
     "style": "prompt_assist",
     "profile": "weather-query-example"
   },
+  "user_invocable": true,
   "session": {
     "supports_one_shot": true,
     "supports_persistent": true,

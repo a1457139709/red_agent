@@ -7,7 +7,6 @@ from app.report_flow_service import ReportFlowService
 from app.session_interaction_service import SessionInteractionService
 from app.session_record_query_service import SessionRecordQueryService
 from app.session_service import SessionService
-from app.skill_service import SkillService
 from controller.agent_controller import AgentController
 from controller.contracts import ConfirmationDecisionValue, ConfirmationRequest
 from models.run import utc_now_iso
@@ -54,7 +53,7 @@ class ConfirmationExecutionService:
         )
 
 
-class FakeSkillService:
+class FakeCapabilityService:
     pass
 
 
@@ -88,7 +87,7 @@ def test_web_interaction_adapter_emits_ordered_events(tmp_path):
             conversation_id=conversation.conversation_id,
             raw_input="Summarize this repository",
             session_state=SessionState(),
-            skill_service=FakeSkillService(),
+            capability_service=FakeCapabilityService(),
             tool_executor=ToolExecutor({}),
             settings=settings,
         )
@@ -121,7 +120,7 @@ def test_web_interaction_adapter_streams_confirmation_before_completion(tmp_path
             conversation_id=conversation.conversation_id,
             raw_input="Summarize this repository",
             session_state=SessionState(),
-            skill_service=FakeSkillService(),
+            capability_service=FakeCapabilityService(),
             tool_executor=ToolExecutor({}),
             settings=settings,
         )

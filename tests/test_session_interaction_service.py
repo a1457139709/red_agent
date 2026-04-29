@@ -12,7 +12,7 @@ from runtime.execution_events import ExecutionOutcome
 from tools.executor import ToolExecutor
 
 
-class FakeSkillService:
+class FakeCapabilityService:
     pass
 
 
@@ -81,7 +81,7 @@ def test_session_interaction_service_binds_session_and_executes(tmp_path):
             question="Summarize this repository",
             conversation_context=context,
             session_state=SessionState(),
-            skill_service=FakeSkillService(),
+            capability_service=FakeCapabilityService(),
             tool_executor=ToolExecutor({}),
             settings=settings,
             interaction_port=interaction_port,
@@ -115,7 +115,7 @@ def test_session_interaction_service_preserves_clarification_between_turns(tmp_p
             question="what did you already do?",
             conversation_context=context,
             session_state=SessionState(),
-            skill_service=FakeSkillService(),
+            capability_service=FakeCapabilityService(),
             tool_executor=ToolExecutor({}),
             settings=settings,
             interaction_port=interaction_port,
@@ -130,7 +130,7 @@ def test_session_interaction_service_preserves_clarification_between_turns(tmp_p
             question="latest",
             conversation_context=context,
             session_state=SessionState(),
-            skill_service=FakeSkillService(),
+            capability_service=FakeCapabilityService(),
             tool_executor=ToolExecutor({}),
             settings=settings,
             interaction_port=interaction_port,

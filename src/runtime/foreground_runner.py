@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from agent.loop import agent_loop
 from agent.settings import Settings
 from agent.state import SessionState
-from app.skill_service import SkillService
+from app.capability_service import CapabilityService
 from models.session import Session
 from runtime.task_runner import apply_result_to_session
 from tools.executor import (
@@ -38,7 +38,6 @@ class ForegroundRunner:
         session: Session,
         prompt_text: str,
         session_state: SessionState,
-        skill_service: SkillService,
         tool_executor: ToolExecutor,
         settings: Settings,
         skill_name: str | None = None,
@@ -46,6 +45,7 @@ class ForegroundRunner:
         on_progress: ProgressCallback = None,
         on_info: InfoCallback = None,
         on_error: InfoCallback = None,
+        capability_service: CapabilityService,
     ) -> ExecutionOutcome:
         self._emit_event(
             on_progress=on_progress,
@@ -56,11 +56,11 @@ class ForegroundRunner:
 
         try:
             if skill_name is None:
-                runtime_config = await skill_service.build_base_runtime_config(
+                runtime_config = await capability_service.build_base_runtime_config(
                     context_summary=session_state.context_summary,
                 )
             else:
-                runtime_config = await skill_service.build_skill_runtime_config(
+                runtime_config = await capability_service.build_skill_runtime_config(
                     skill_name=skill_name,
                     context_summary=session_state.context_summary,
                 )

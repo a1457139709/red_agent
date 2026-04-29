@@ -22,8 +22,8 @@ runtime shape for planned refactors.
 3. `architecture/prompt-runtime-contract.md`
    Contract for the base prompt, skill prompt, and context-summary layers.
 4. `architecture/skill-system-standard.md`
-   Current `SKILL.md` parsing, discovery, activation, and safety integration rules. This is a
-   current-runtime reference, not the target Phase 5 skill/module architecture.
+   Retired `SKILL.md` runtime reference retained only for migration history. The current runtime
+   uses capability directories plus `capability.json` and `prompt.md`.
 5. `architecture/checkpoint-storage-evolution.md`
    Checkpoint storage design: SQLite metadata plus filesystem blobs.
 6. `architecture/session-target-architecture.md`
@@ -117,7 +117,7 @@ For the currently implemented runtime shape, then read:
 1. `architecture/architecture.md`
 2. `architecture/task-runtime.md`
 
-For historical context on the pre-session planning track, only read documents that are explicitly marked `RETIRED DOCUMENT`.
+For historical context on pre-capability or pre-session planning, only read documents that are explicitly marked `RETIRED DOCUMENT`.
 
 ## Maintenance Rules
 

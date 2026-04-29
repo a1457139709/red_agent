@@ -8,13 +8,13 @@ from urllib.parse import urlsplit
 
 from agent.settings import Settings, get_settings
 from agent.state import SessionState
+from app.capability_service import CapabilityService
 from app.interaction_port import InteractionPort
 from app.confirmation_policy_service import (
     ConfirmationPolicyService,
     RiskPolicyConfigurationError,
 )
 from app.session_service import SessionService
-from app.skill_service import SkillService
 from app.tool_access_policy_service import ToolAccessDecisionStatus, ToolAccessPolicyService
 from controller.contracts import (
     ConfirmationDecision,
@@ -153,7 +153,6 @@ class ExecutionService:
         session_identifier: str,
         prompt_text: str,
         session_state: SessionState,
-        skill_service: SkillService,
         tool_executor: ToolExecutor,
         settings: Settings,
         conversation_context: ConversationContext,
@@ -161,6 +160,7 @@ class ExecutionService:
         skill_name: str | None = None,
         on_info: InfoCallback = None,
         on_error: InfoCallback = None,
+        capability_service: CapabilityService,
     ) -> ExecutionOutcome:
         try:
             session = self.session_service.require_session(session_identifier)
@@ -182,7 +182,7 @@ class ExecutionService:
             session=session,
             prompt_text=prompt_text,
             session_state=session_state,
-            skill_service=skill_service,
+            capability_service=capability_service,
             tool_executor=tool_executor,
             settings=settings,
             interaction_bridge=interaction_bridge,
@@ -216,7 +216,7 @@ class ExecutionService:
         session: Session,
         prompt_text: str,
         session_state: SessionState,
-        skill_service: SkillService,
+        capability_service: CapabilityService,
         tool_executor: ToolExecutor,
         settings: Settings,
         interaction_bridge: _ThreadsafeInteractionBridge,
@@ -229,7 +229,7 @@ class ExecutionService:
                 session=session,
                 prompt_text=prompt_text,
                 session_state=session_state,
-                skill_service=skill_service,
+                capability_service=capability_service,
                 tool_executor=tool_executor,
                 settings=settings,
                 skill_name=skill_name,

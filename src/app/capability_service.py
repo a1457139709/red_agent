@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
 from typing import Any
 
+from agent.prompt import assemble_system_prompt
 from agent.settings import Settings, get_settings
 from capabilities.registry import CapabilityRegistry
 from models.capability import (
@@ -14,12 +16,43 @@ from models.capability import (
 )
 from models.session import SessionMode
 from tools import build_tool_registry
+from tools.policy import RuntimeSafetyPolicy
+from tools.shells import ShellResolutionError, ensure_shell_available, normalize_shell_name
 
-from .skill_service import SkillRuntimeConfig, SkillService
+
+DEFAULT_SKILL_NAME = "development-default"
 
 
 class CapabilityValidationError(ValueError):
     pass
+
+
+@dataclass(slots=True)
+class CapabilityRuntimeConfig:
+    capability: LoadedCapability | None
+    system_prompt: str
+    allowed_tools: list[str]
+    safety_policy: RuntimeSafetyPolicy
+    model_name: str | None = None
+    reasoning_effort: str | None = None
+    preferred_shell: str | None = None
+    user_invocable: bool = True
+    disable_model_invocation: bool = False
+    workflow_profile: str | None = None
+
+    def with_settings(self, settings: Settings) -> Settings:
+        updates: dict[str, object] = {}
+        if self.model_name:
+            updates["openai_model"] = self.model_name
+        if self.reasoning_effort != settings.openai_reasoning_effort:
+            updates["openai_reasoning_effort"] = self.reasoning_effort
+        if not updates:
+            return settings
+        return replace(settings, **updates)
+
+    @property
+    def skill(self) -> LoadedCapability | None:
+        return self.capability
 
 
 class CapabilityService:
@@ -27,24 +60,31 @@ class CapabilityService:
         self,
         registry: CapabilityRegistry,
         *,
-        skill_service: SkillService | None = None,
+        base_tool_names: list[str] | None = None,
+        default_skill_name: str = DEFAULT_SKILL_NAME,
+        default_task_skill_name: str | None = DEFAULT_SKILL_NAME,
     ) -> None:
         self.registry = registry
-        self.skill_service = skill_service
+        self.base_tool_names = list(base_tool_names or sorted(registry.known_tool_names or ()))
+        self.default_skill_name = default_skill_name
+        self.default_task_skill_name = default_task_skill_name
+        self.base_safety_policy = RuntimeSafetyPolicy.for_tool_names(self.base_tool_names)
 
     @classmethod
     def from_settings(
         cls,
         settings: Settings | None = None,
-        *,
-        skill_service: SkillService | None = None,
     ) -> "CapabilityService":
         settings = settings or get_settings()
+        tool_names = list(build_tool_registry().keys())
         registry = CapabilityRegistry.built_in_and_local(
-            local_root=settings.app_data_dir / "capabilities",
-            known_tool_names=set(build_tool_registry().keys()),
+            local_root=settings.capabilities_dir,
+            known_tool_names=set(tool_names),
         )
-        return cls(registry, skill_service=skill_service)
+        return cls(
+            registry,
+            base_tool_names=tool_names,
+        )
 
     def reload(self) -> None:
         self.registry.reload()
@@ -68,6 +108,113 @@ class CapabilityService:
 
     def require_capability(self, name: str) -> LoadedCapability:
         return self.registry.require_capability(name)
+
+    def get_skill(self, name: str) -> LoadedCapability | None:
+        capability = self.get_capability(name)
+        if capability is None or capability.manifest.kind != CapabilityKind.SKILL:
+            return None
+        return capability
+
+    def require_skill(self, name: str) -> LoadedCapability:
+        capability = self.require_capability(name)
+        if capability.manifest.kind != CapabilityKind.SKILL:
+            raise CapabilityValidationError(
+                f"Capability '{capability.manifest.name}' is not a skill."
+            )
+        return capability
+
+    def resolve_skill(self, skill_name: str | None) -> LoadedCapability:
+        resolved_name = skill_name or self.default_skill_name
+        if not resolved_name:
+            raise CapabilityValidationError("Skill name is required.")
+        return self.require_skill(resolved_name)
+
+    def require_user_invocable_skill(self, name: str) -> LoadedCapability:
+        capability = self.resolve_skill(name)
+        if not capability.manifest.is_user_invocable:
+            raise CapabilityValidationError(
+                f"Skill '{capability.manifest.name}' is not user-invocable."
+            )
+        return capability
+
+    def require_direct_prompt_skill(self, name: str) -> LoadedCapability:
+        capability = self.require_user_invocable_skill(name)
+        self.ensure_direct_prompt_allowed(capability)
+        return capability
+
+    def ensure_direct_prompt_allowed(self, capability: LoadedCapability) -> None:
+        if not capability.manifest.allows_model_invocation:
+            raise CapabilityValidationError(
+                f"Skill '{capability.manifest.name}' disables direct model invocation."
+            )
+        normalized_shell = self._normalize_shell(capability.manifest.shell)
+        if normalized_shell is None:
+            return
+        try:
+            ensure_shell_available(normalized_shell)
+        except ShellResolutionError as exc:
+            raise CapabilityValidationError(
+                f"Skill '{capability.manifest.name}' requires shell '{normalized_shell}', but {exc}"
+            ) from exc
+
+    async def build_base_runtime_config(
+        self,
+        *,
+        context_summary: str,
+    ) -> CapabilityRuntimeConfig:
+        system_prompt = await assemble_system_prompt(context_prompt=context_summary)
+        return CapabilityRuntimeConfig(
+            capability=None,
+            system_prompt=system_prompt,
+            allowed_tools=list(self.base_tool_names),
+            safety_policy=self.base_safety_policy,
+        )
+
+    async def build_skill_runtime_config(
+        self,
+        *,
+        skill_name: str,
+        context_summary: str,
+        allow_model_invocation: bool = True,
+    ) -> CapabilityRuntimeConfig:
+        return await self.build_prompt_assist_runtime_config(
+            capability_name=skill_name,
+            context_summary=context_summary,
+            allow_model_invocation=allow_model_invocation,
+        )
+
+    async def build_prompt_assist_runtime_config(
+        self,
+        *,
+        capability_name: str,
+        context_summary: str,
+        allow_model_invocation: bool = True,
+    ) -> CapabilityRuntimeConfig:
+        capability = self.require_skill(capability_name)
+        if capability.manifest.execution.style != CapabilityExecutionStyle.PROMPT_ASSIST:
+            raise CapabilityValidationError(
+                f"Capability '{capability.manifest.name}' is not prompt-assist."
+            )
+        if allow_model_invocation:
+            capability = self.require_direct_prompt_skill(capability.manifest.name)
+        system_prompt = await assemble_system_prompt(
+            skill_prompt=capability.prompt_body,
+            context_prompt=context_summary,
+        )
+        return CapabilityRuntimeConfig(
+            capability=capability,
+            system_prompt=system_prompt,
+            allowed_tools=list(capability.manifest.tools.allowed),
+            safety_policy=RuntimeSafetyPolicy.for_tool_names(
+                capability.manifest.tools.allowed,
+                base_policy=self.base_safety_policy,
+            ),
+            model_name=capability.manifest.model,
+            reasoning_effort=capability.manifest.effort,
+            preferred_shell=self._normalize_shell(capability.manifest.shell),
+            user_invocable=capability.manifest.is_user_invocable,
+            disable_model_invocation=bool(capability.manifest.disable_model_invocation),
+        )
 
     def validate_parameters(
         self,
@@ -103,36 +250,6 @@ class CapabilityService:
                 capability_name=loaded.manifest.name,
             )
         return normalized
-
-    async def build_prompt_assist_runtime_config(
-        self,
-        *,
-        capability_name: str,
-        context_summary: str,
-        allow_model_invocation: bool = True,
-    ) -> SkillRuntimeConfig:
-        capability = self.require_capability(capability_name)
-        if capability.manifest.kind != CapabilityKind.SKILL:
-            raise CapabilityValidationError(
-                f"Capability '{capability.manifest.name}' is not a skill."
-            )
-        if capability.manifest.execution.style != CapabilityExecutionStyle.PROMPT_ASSIST:
-            raise CapabilityValidationError(
-                f"Capability '{capability.manifest.name}' is not prompt-assist."
-            )
-        if self.skill_service is None:
-            raise CapabilityValidationError(
-                "Prompt-assist capabilities require a legacy SkillService bridge in Phase 5."
-            )
-        if self.skill_service.get_skill(capability.manifest.name) is None:
-            raise CapabilityValidationError(
-                f"Prompt-assist capability '{capability.manifest.name}' has no legacy SKILL.md bridge."
-            )
-        return await self.skill_service.build_skill_runtime_config(
-            skill_name=capability.manifest.name,
-            context_summary=context_summary,
-            allow_model_invocation=allow_model_invocation,
-        )
 
     def prepare_module_invocation(
         self,
@@ -199,3 +316,6 @@ class CapabilityService:
         if expected_type == CapabilityParameterType.OBJECT:
             return isinstance(value, dict)
         return False
+
+    def _normalize_shell(self, value: str | None) -> str | None:
+        return normalize_shell_name(value)

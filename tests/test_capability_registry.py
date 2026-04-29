@@ -32,6 +32,8 @@ def write_capability(root: Path, name: str, **overrides) -> Path:
     payload.update(overrides)
     path = directory / "capability.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
+    if payload["kind"] == "skill":
+        (directory / "prompt.md").write_text(f"# {name}\n\nPrompt body.", encoding="utf-8")
     return path
 
 

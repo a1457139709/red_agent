@@ -6,7 +6,6 @@ from cli.ui import CliPresenter
 from rich.console import Console
 from models.checkpoint import CheckpointSummary
 from models.run import Run, RunStatus, SessionLogEntry, SessionLogLevel
-from models.skill import LoadedSkill, SkillManifest
 from runtime.execution_events import ExecutionEventType, ExecutionProgressEvent
 
 
@@ -145,21 +144,8 @@ def test_presenter_detail_views_include_key_fields_without_blob_internals():
         history_text_bytes=128,
         has_compressed_summary=True,
     )
-    skill = LoadedSkill(
-        manifest=SkillManifest(
-            name="security-audit",
-            description="Audit local code safely.",
-            license="Proprietary",
-            compatibility="Agent Skills baseline",
-            allowed_tools=["read_file", "search"],
-            metadata={"category": "security"},
-            body="# Security Audit",
-            user_invocable=True,
-            shell="powershell",
-        ),
-        root_dir=Path("D:/skills/security-audit"),
-        skill_file=Path("D:/skills/security-audit/SKILL.md"),
-        source="built-in",
+    skill = load_capability_from_file(
+        Path("src/capabilities/security-audit/capability.json")
     )
     capability = load_capability_from_file(
         Path("src/capabilities/surface-recon/capability.json")
@@ -206,8 +192,9 @@ def test_presenter_detail_views_include_key_fields_without_blob_internals():
     assert "Payload Size:" in merged
     assert "blob_path" not in merged
     assert "payload_digest" not in merged
-    assert "Source:" in merged and "built-in" in merged
+    assert "Source:" in merged
     assert "Invocation Mode:" in merged
+    assert "Prompt Path:" in merged
     assert "Capability Detail" in merged and "surface-recon" in merged
     assert "Result Layers:" in merged
     assert "Skill Workflow Plan" in merged

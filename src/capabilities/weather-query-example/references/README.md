@@ -7,7 +7,7 @@ The bundled script reads `example-weather-data.json` and returns a formatted wea
 Example command:
 
 ```bash
-python src/skills/weather-query-example/scripts/weather_lookup.py --city "Shanghai"
+python src/capabilities/weather-query-example/scripts/weather_lookup.py --city "Shanghai"
 ```
 
 Expected example output:

@@ -12,6 +12,8 @@ def write_manifest(tmp_path, payload, *, dirname="sample"):
     root.mkdir()
     path = root / "capability.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
+    if payload.get("kind") == "skill":
+        (root / "prompt.md").write_text("# Prompt\n\nPrompt body.", encoding="utf-8")
     return path
 
 
@@ -62,6 +64,8 @@ def test_load_capability_from_file_loads_valid_manifest_and_paths(tmp_path):
     assert loaded.manifest.modes == (SessionMode.NORMAL,)
     assert loaded.references == (reference,)
     assert loaded.scripts == (script,)
+    assert loaded.prompt_file == manifest_path.parent / "prompt.md"
+    assert loaded.prompt_body == "# Prompt\n\nPrompt body."
 
 
 def test_load_capability_from_file_rejects_invalid_enum(tmp_path):
@@ -98,4 +102,12 @@ def test_load_capability_from_file_rejects_unknown_result_layer(tmp_path):
     manifest_path = write_manifest(tmp_path, payload)
 
     with pytest.raises(CapabilityLoadError, match="unsupported layers"):
+        load_capability_from_file(manifest_path)
+
+
+def test_load_capability_from_file_requires_prompt_body_for_skills(tmp_path):
+    manifest_path = write_manifest(tmp_path, valid_payload())
+    (manifest_path.parent / "prompt.md").unlink()
+
+    with pytest.raises(CapabilityLoadError, match="require prompt.md"):
         load_capability_from_file(manifest_path)
