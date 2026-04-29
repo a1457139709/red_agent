@@ -25,7 +25,7 @@ from tools.security.tls_inspect import TlsInspectSecurityTool
 
 
 def make_policy(**kwargs) -> ScopePolicy:
-    return ScopePolicy.create(operation_id="op-1", **kwargs)
+    return ScopePolicy.create(session_id="session-1", **kwargs)
 
 
 def make_target_descriptor(
@@ -79,7 +79,10 @@ class _TestHandler(BaseHTTPRequestHandler):
 
 
 def run_http_server():
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _TestHandler)
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _TestHandler)
+    except PermissionError as exc:
+        pytest.skip(f"local test server bind is not permitted in this environment: {exc}")
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, thread
@@ -87,7 +90,11 @@ def run_http_server():
 
 def run_banner_server(banner: bytes):
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    listener.bind(("127.0.0.1", 0))
+    try:
+        listener.bind(("127.0.0.1", 0))
+    except PermissionError as exc:
+        listener.close()
+        pytest.skip(f"local test server bind is not permitted in this environment: {exc}")
     listener.listen(1)
     port = listener.getsockname()[1]
 
@@ -214,7 +221,7 @@ def test_dns_lookup_parses_structured_answers(monkeypatch):
     tool = DnsLookupSecurityTool()
     invocation = tool.validate_invocation(target="example.com", arguments={"record_type": "A"}, policy=make_policy())
     admission_request = invocation.to_admission_request(
-        operation_id="op-1",
+        session_id="session-1",
         job_id="job-1",
         tool_name=tool.name,
         tool_category=tool.category,
@@ -304,12 +311,18 @@ def test_banner_grab_reads_banner_and_emits_findings():
 
 def test_port_scan_scans_requested_ports_and_returns_open_ports():
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as listener:
-        listener.bind(("127.0.0.1", 0))
+        try:
+            listener.bind(("127.0.0.1", 0))
+        except PermissionError as exc:
+            pytest.skip(f"local test server bind is not permitted in this environment: {exc}")
         listener.listen(1)
         open_port = listener.getsockname()[1]
 
         with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as closed_socket:
-            closed_socket.bind(("127.0.0.1", 0))
+            try:
+                closed_socket.bind(("127.0.0.1", 0))
+            except PermissionError as exc:
+                pytest.skip(f"local test server bind is not permitted in this environment: {exc}")
             closed_port = closed_socket.getsockname()[1]
         tool = PortScanSecurityTool()
         policy = make_policy(allowed_ports=[open_port, closed_port])
@@ -366,7 +379,7 @@ def test_scope_validator_checks_metadata_port_lists():
         allowed_ports=[80, 443],
     )
     request = AdmissionRequest(
-        operation_id="op-1",
+        session_id="session-1",
         job_id="job-1",
         tool_name="port_scan",
         tool_category="recon",

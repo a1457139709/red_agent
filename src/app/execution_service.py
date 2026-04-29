@@ -916,7 +916,7 @@ class ExecutionService:
 
         if request.tool_name == "dns_lookup":
             admission_request = AdmissionRequest(
-                operation_id=session.id,
+                session_id=session.id,
                 job_id=None,
                 tool_name=tool.name,
                 tool_category=tool.category,
@@ -927,7 +927,7 @@ class ExecutionService:
             )
         else:
             admission_request = invocation.to_admission_request(
-                operation_id=session.id,
+                session_id=session.id,
                 job_id=None,
                 tool_name=tool.name,
                 tool_category=tool.category,
@@ -969,7 +969,7 @@ class ExecutionService:
             )
 
         return ScopePolicy.create(
-            operation_id=session.id,
+            session_id=session.id,
             allowed_hosts=self._dedupe_ordered(allowed_hosts),
             allowed_domains=self._dedupe_ordered(allowed_domains),
             allowed_cidrs=self._dedupe_ordered(allowed_cidrs),

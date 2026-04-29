@@ -18,7 +18,6 @@ from models.checkpoint import (
     history_text_bytes,
 )
 from storage.checkpoints import CheckpointRepository
-from storage.repositories.operations import OperationRepository
 from storage.sqlite import SQLiteStorage
 
 from .session_scope import resolve_session_identifier
@@ -30,12 +29,10 @@ class CheckpointService:
         self,
         repository: CheckpointRepository,
         session_service: SessionService,
-        operation_repository: OperationRepository,
         settings: Settings,
     ) -> None:
         self.repository = repository
         self.session_service = session_service
-        self.operation_repository = operation_repository
         self.settings = settings
 
     @classmethod
@@ -45,7 +42,6 @@ class CheckpointService:
         return cls(
             CheckpointRepository(storage),
             SessionService.from_settings(settings),
-            OperationRepository(storage),
             settings,
         )
 
@@ -202,8 +198,4 @@ class CheckpointService:
             current = current.parent
 
     def _resolve_session_id(self, identifier: str) -> str:
-        return resolve_session_identifier(
-            self.session_service,
-            identifier,
-            operation_repository=self.operation_repository,
-        )
+        return resolve_session_identifier(self.session_service, identifier)

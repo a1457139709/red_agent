@@ -5,13 +5,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 import time
 
+import pytest
+
 from agent.settings import Settings
 from app.job_service import JobService
 from app.scoped_execution_service import ScopedExecutionResult
 from conftest import create_redteam_operation
 from models.job import JobStatus
-from models.operation import OperationStatus
 from models.run import utc_now_iso
+from models.session import SessionStatus
 from orchestration.job_service import JobOrchestrationService
 from orchestration.scheduler import Scheduler
 from runtime.worker import WorkerRuntime
@@ -42,7 +44,10 @@ class _ProbeHandler(BaseHTTPRequestHandler):
 
 
 def run_http_server():
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _ProbeHandler)
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _ProbeHandler)
+    except PermissionError as exc:
+        pytest.skip(f"local test server bind is not permitted in this environment: {exc}")
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, thread
@@ -57,10 +62,10 @@ def test_job_runtime_fields_round_trip_and_atomic_claim(tmp_path):
         settings,
         title="Recon",
         objective="Lease jobs safely",
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     job = job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="http_probe",
         target_ref="https://example.com",
     )
@@ -119,15 +124,15 @@ def test_scheduler_queues_ready_jobs_and_blocks_failed_dependencies(tmp_path):
         settings,
         title="Recon",
         objective="Queue dependency graph",
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     root = job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="dns_lookup",
         target_ref="example.com",
     )
     dependent = job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="http_probe",
         target_ref="https://example.com",
         dependency_job_ids=[root.public_id],
@@ -164,16 +169,16 @@ def test_scheduler_recovers_stale_leases_with_retry_and_exhaustion(tmp_path):
         settings,
         title="Recon",
         objective="Recover stale leases",
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     retryable = job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="http_probe",
         target_ref="https://example.com",
         retry_limit=1,
     )
     exhausted = job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="http_probe",
         target_ref="https://example.org",
         retry_limit=1,
@@ -215,22 +220,22 @@ def test_scheduler_scoped_pass_only_recovers_stale_leases_for_target_operation(t
         settings,
         title="Recon A",
         objective="Recover only this operation",
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     second_operation = create_redteam_operation(
         settings,
         title="Recon B",
         objective="Leave this operation alone",
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     first_job = job_service.create_job(
-        operation_identifier=first_operation.public_id,
+        session_identifier=first_operation.public_id,
         job_type="http_probe",
         target_ref="https://example.com",
         retry_limit=1,
     )
     second_job = job_service.create_job(
-        operation_identifier=second_operation.public_id,
+        session_identifier=second_operation.public_id,
         job_type="http_probe",
         target_ref="https://example.org",
         retry_limit=1,
@@ -245,7 +250,7 @@ def test_scheduler_scoped_pass_only_recovers_stale_leases_for_target_operation(t
         job_service.save_job(job)
 
     result = scheduler.run_once(
-        operation_identifier=first_operation.public_id,
+        session_identifier=first_operation.public_id,
         now="2026-04-07T02:00:00+00:00",
     )
     recovered_first = job_service.require_job(first_job.public_id)
@@ -266,10 +271,10 @@ def test_scheduler_cancels_queued_jobs_immediately(tmp_path):
         settings,
         title="Recon",
         objective="Cancel queued work",
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     job = job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="http_probe",
         target_ref="https://example.com",
     )
@@ -295,10 +300,10 @@ def test_worker_cancellation_wins_over_late_success(tmp_path):
         settings,
         title="Recon",
         objective="Prefer cancellation",
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     job = job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="http_probe",
         target_ref="https://example.com",
     )
@@ -336,10 +341,10 @@ def test_worker_retries_then_times_out_when_budget_is_exhausted(tmp_path):
         settings,
         title="Recon",
         objective="Retry timeouts",
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     job = job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="http_probe",
         target_ref="https://example.com",
         retry_limit=1,
@@ -389,15 +394,15 @@ def test_worker_drain_runs_multiple_independent_typed_jobs(tmp_path):
             allowed_protocols=["http"],
             allowed_ports=[port],
             allowed_tool_categories=["recon"],
-            status=OperationStatus.READY,
+            status=SessionStatus.ACTIVE,
         )
         first = job_service.create_job(
-            operation_identifier=operation.public_id,
+            session_identifier=operation.public_id,
             job_type="http_probe",
             target_ref=f"http://127.0.0.1:{port}/first",
         )
         second = job_service.create_job(
-            operation_identifier=operation.public_id,
+            session_identifier=operation.public_id,
             job_type="http_probe",
             target_ref=f"http://127.0.0.1:{port}/second",
         )
@@ -425,10 +430,10 @@ def test_worker_keeps_lease_alive_during_long_running_execution(tmp_path, monkey
         settings,
         title="Recon",
         objective="Keep heartbeating",
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     job = job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="http_probe",
         target_ref="https://example.com",
     )
@@ -483,10 +488,10 @@ def test_worker_cancels_real_subprocess_backed_job(tmp_path):
             allowed_protocols=["http"],
             allowed_ports=[port],
             allowed_tool_categories=["recon"],
-            status=OperationStatus.READY,
+            status=SessionStatus.ACTIVE,
         )
         job = job_service.create_job(
-            operation_identifier=operation.public_id,
+            session_identifier=operation.public_id,
             job_type="http_probe",
             target_ref=f"http://127.0.0.1:{port}/slow",
             timeout_seconds=5,

@@ -153,13 +153,13 @@ class SecurityToolInvocation:
     def to_admission_request(
         self,
         *,
-        operation_id: str,
+        session_id: str,
         job_id: str | None,
         tool_name: str,
         tool_category: str,
     ) -> AdmissionRequest:
         return AdmissionRequest(
-            operation_id=operation_id,
+            session_id=session_id,
             job_id=job_id,
             tool_name=tool_name,
             tool_category=tool_category,

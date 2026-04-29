@@ -5,11 +5,10 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from agent.settings import Settings, get_settings
-from orchestration.admission import AdmissionContext, OperationAdmissionService
+from orchestration.admission import AdmissionContext, SessionAdmissionService
 from orchestration.scope_validator import AdmissionDecision, AdmissionOutcome, AdmissionRequest, TargetDescriptor
 from runtime.timeouts import ExecutionTimedOutError
 from storage.repositories.jobs import JobRepository
-from storage.repositories.operations import OperationRepository
 from storage.sqlite import SQLiteStorage
 from models.session_event import SessionEventLevel, SessionEventType
 
@@ -33,7 +32,7 @@ class ScopedExecutionResult:
 class ScopedExecutionService:
     def __init__(
         self,
-        admission_service: OperationAdmissionService,
+        admission_service: SessionAdmissionService,
         session_event_service: SessionEventService,
         settings: Settings,
     ) -> None:
@@ -48,12 +47,11 @@ class ScopedExecutionService:
         session_event_service = SessionEventService.from_settings(settings)
         job_repository = JobRepository(storage)
         return cls(
-            admission_service=OperationAdmissionService(
+            admission_service=SessionAdmissionService(
                 session_service=SessionService.from_settings(settings),
                 scope_policy_service=ScopePolicyService.from_settings(settings),
                 job_repository=job_repository,
                 session_event_service=session_event_service,
-                operation_repository=OperationRepository(storage),
             ),
             session_event_service=session_event_service,
             settings=settings,
@@ -95,7 +93,7 @@ class ScopedExecutionService:
         # Emit a matched start/end event pair around the executor so session
         # history stays readable whether execution succeeds, fails, or times out.
         self.session_event_service.create_event(
-            operation_identifier=context.session.id,
+            session_identifier=context.session.id,
             job_identifier=context.job.id if context.job is not None else None,
             event_type=SessionEventType.EXECUTION_STARTED,
             level=SessionEventLevel.INFO,
@@ -111,7 +109,7 @@ class ScopedExecutionService:
         except ExecutionTimedOutError as exc:
             error = str(exc)
             self.session_event_service.create_event(
-                operation_identifier=context.session.id,
+                session_identifier=context.session.id,
                 job_identifier=context.job.id if context.job is not None else None,
                 event_type=SessionEventType.EXECUTION_FAILED,
                 level=SessionEventLevel.ERROR,
@@ -129,7 +127,7 @@ class ScopedExecutionService:
         except Exception as exc:
             error = str(exc)
             self.session_event_service.create_event(
-                operation_identifier=context.session.id,
+                session_identifier=context.session.id,
                 job_identifier=context.job.id if context.job is not None else None,
                 event_type=SessionEventType.EXECUTION_FAILED,
                 level=SessionEventLevel.ERROR,
@@ -146,7 +144,7 @@ class ScopedExecutionService:
             )
 
         self.session_event_service.create_event(
-            operation_identifier=context.session.id,
+            session_identifier=context.session.id,
             job_identifier=context.job.id if context.job is not None else None,
             event_type=SessionEventType.EXECUTION_SUCCEEDED,
             level=SessionEventLevel.INFO,
@@ -173,7 +171,7 @@ class ScopedExecutionService:
         confirm: ConfirmCallback,
     ) -> ScopedExecutionResult | None:
         self.session_event_service.create_event(
-            operation_identifier=context.session.id,
+            session_identifier=context.session.id,
             job_identifier=context.job.id if context.job is not None else None,
             event_type=SessionEventType.CONFIRMATION_REQUIRED,
             level=SessionEventLevel.INFO,
@@ -192,7 +190,7 @@ class ScopedExecutionService:
                 target=context.target,
             )
             self.session_event_service.create_event(
-                operation_identifier=context.session.id,
+                session_identifier=context.session.id,
                 job_identifier=context.job.id if context.job is not None else None,
                 event_type=SessionEventType.CONFIRMATION_DENIED,
                 level=SessionEventLevel.ERROR,
@@ -218,7 +216,7 @@ class ScopedExecutionService:
                 target=context.target,
             )
             self.session_event_service.create_event(
-                operation_identifier=context.session.id,
+                session_identifier=context.session.id,
                 job_identifier=context.job.id if context.job is not None else None,
                 event_type=SessionEventType.CONFIRMATION_DENIED,
                 level=SessionEventLevel.ERROR,
@@ -232,7 +230,7 @@ class ScopedExecutionService:
             return ScopedExecutionResult(status="blocked", message=decision.message, decision=decision)
 
         self.session_event_service.create_event(
-            operation_identifier=context.session.id,
+            session_identifier=context.session.id,
             job_identifier=context.job.id if context.job is not None else None,
             event_type=SessionEventType.CONFIRMATION_APPROVED,
             level=SessionEventLevel.INFO,

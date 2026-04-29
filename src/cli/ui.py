@@ -18,16 +18,15 @@ from app.dashboard_service import SessionDashboard
 from models.artifact import Artifact
 from models.checkpoint import CheckpointSummary
 from models.capability import LoadedCapability
-from models.evidence import Evidence
 from models.finding import Finding
 from models.job import Job
 from models.planner import (
-    OperationContextSummary,
     PlannerMemoryWritebackStatus,
     PlannerMemoryWritebackSummary,
     PlannerPlan,
     PlannerProposal,
     PlannerProposalKind,
+    SessionContextSummary,
 )
 from models.report import Report
 from models.run import Run, SessionLogEntry
@@ -352,7 +351,7 @@ class CliPresenter:
     def _help_report(self) -> Group:
         return self._help_topic_page(
             heading="Report",
-            summary="Inspect persisted reports that summarize session outcomes, findings, and supporting evidence.",
+            summary="Inspect persisted reports that summarize session outcomes, findings, and linked artifacts.",
             panels=[
                 self._command_panel("Report Commands", [
                     ("/report list <session_id> [limit]", "List reports for a session"),
@@ -474,15 +473,15 @@ class CliPresenter:
                 return
         self.console.clear(home=True)
 
-    def show_operation_context_summary(self, summary: OperationContextSummary) -> None:
+    def show_session_context_summary(self, summary: SessionContextSummary) -> None:
         self._emit(
             Panel(
                 self._detail_table([
-                    ("Session", summary.operation_id),
+                    ("Session", summary.session_id),
                     ("Summary", summary.summary),
                     ("Scope", summary.scope_summary),
                     ("Findings", summary.findings_summary),
-                    ("Artifacts", summary.evidence_summary),
+                    ("Artifacts", summary.artifact_summary),
                     ("Memory", summary.memory_summary),
                     ("Suggested Next Step", summary.next_step_hint),
                 ]),
@@ -519,7 +518,7 @@ class CliPresenter:
                 self._detail_table([
                     ("Job ID", job.public_id),
                     ("Internal ID", job.id),
-                    ("Session ID", job.operation_id),
+                    ("Session ID", job.session_id),
                     ("Type", job.job_type),
                     ("Target", job.target_ref),
                     ("Status", job.status.value),
@@ -571,13 +570,13 @@ class CliPresenter:
             )
         self._emit(table)
 
-    def show_finding_detail(self, finding: Finding, *, linked_evidence_ids: list[str]) -> None:
+    def show_finding_detail(self, finding: Finding, *, linked_artifact_ids: list[str]) -> None:
         self._emit(
             Panel(
                 self._detail_table([
                     ("Finding ID", finding.public_id),
                     ("Internal ID", finding.id),
-                    ("Session ID", finding.operation_id),
+                    ("Session ID", finding.session_id),
                     ("Source Job ID", finding.source_job_id or "-"),
                     ("Type", finding.finding_type),
                     ("Title", finding.title),
@@ -589,7 +588,7 @@ class CliPresenter:
                     ("Impact", finding.impact or "-"),
                     ("Reproduction Notes", finding.reproduction_notes or "-"),
                     ("Next Action", finding.next_action or "-"),
-                    ("Linked Artifact IDs", ", ".join(linked_evidence_ids) or "-"),
+                    ("Linked Artifact IDs", ", ".join(linked_artifact_ids) or "-"),
                     ("Created At", finding.created_at),
                     ("Updated At", finding.updated_at),
                 ]),
@@ -598,45 +597,6 @@ class CliPresenter:
                 box=ASCII_BOX,
             )
         )
-
-    def show_evidence_list(self, evidence_items: list[Evidence], *, operation_label: str | None = None) -> None:
-        artifacts = [
-            Artifact(
-                id=evidence.id,
-                public_id=evidence.public_id,
-                session_id=evidence.operation_id,
-                source_job_id=evidence.job_id,
-                artifact_type=evidence.evidence_type,
-                target_ref=evidence.target_ref,
-                title=evidence.title,
-                summary=evidence.summary,
-                artifact_path=evidence.artifact_path,
-                content_type=evidence.content_type,
-                hash_digest=evidence.hash_digest,
-                captured_at=evidence.captured_at,
-                metadata={},
-            )
-            for evidence in evidence_items
-        ]
-        self.show_artifact_list(artifacts, session_label=operation_label)
-
-    def show_evidence_detail(self, evidence: Evidence, *, linked_finding_ids: list[str]) -> None:
-        artifact = Artifact(
-            id=evidence.id,
-            public_id=evidence.public_id,
-            session_id=evidence.operation_id,
-            source_job_id=evidence.job_id,
-            artifact_type=evidence.evidence_type,
-            target_ref=evidence.target_ref,
-            title=evidence.title,
-            summary=evidence.summary,
-            artifact_path=evidence.artifact_path,
-            content_type=evidence.content_type,
-            hash_digest=evidence.hash_digest,
-            captured_at=evidence.captured_at,
-            metadata={},
-        )
-        self.show_artifact_detail(artifact, linked_finding_ids=linked_finding_ids)
 
     def show_artifact_list(self, artifacts: list[Artifact], *, session_label: str | None = None) -> None:
         if not artifacts:
@@ -667,7 +627,7 @@ class CliPresenter:
                 self._detail_table([
                     ("Artifact ID", artifact.public_id),
                     ("Internal ID", artifact.id),
-                    ("Session ID", artifact.operation_id),
+                    ("Session ID", artifact.session_id),
                     ("Job ID", artifact.job_id or "-"),
                     ("Type", artifact.artifact_type),
                     ("Target", artifact.target_ref),

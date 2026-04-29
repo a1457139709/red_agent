@@ -8,7 +8,7 @@ from app.job_service import JobService
 from app.report_flow_service import ReportFlowService
 from app.session_service import SessionService
 from conftest import create_redteam_operation
-from models.operation import OperationStatus
+from models.session import SessionStatus
 
 
 def build_settings(tmp_path):
@@ -34,7 +34,7 @@ def seed_reporting_session(settings):
         allowed_hosts=["example.com"],
         allowed_protocols=["https"],
         allowed_ports=[443],
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     session = session_service.require_session(operation.id)
     job = job_service.create_job(
@@ -93,6 +93,7 @@ def test_report_flow_service_reuses_existing_session_summary_report(tmp_path):
     assert second.report.public_id == first.report.public_id
     assert output_path.exists()
     assert payload["session"]["public_id"] == session.public_id
+    assert "operation" not in payload
     assert payload["counts"]["artifacts"] == 1
     assert first.linked_artifact_ids == [seeded["artifact"].public_id]
     assert first.linked_finding_ids == [seeded["finding"].public_id]

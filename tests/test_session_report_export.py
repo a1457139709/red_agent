@@ -8,7 +8,7 @@ from app.job_service import JobService
 from app.security_tool_execution_service import SecurityToolExecutionService
 from app.session_service import SessionService
 from conftest import create_redteam_operation
-from models.operation import OperationStatus
+from models.session import SessionStatus
 from reporting import SessionExportResult, SessionReportExportService
 from tools.contracts import EvidenceCandidate, FindingCandidate, SecurityToolResult
 
@@ -37,7 +37,7 @@ def test_generate_session_export_writes_json_summaries_with_traceability(tmp_pat
         allowed_protocols=["tls"],
         allowed_ports=[443],
         allowed_tool_categories=["recon"],
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     session = session_service.require_session(operation.id)
     job = job_service.create_job(

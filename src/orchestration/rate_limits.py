@@ -8,7 +8,7 @@ from .scope_validator import AdmissionDecision, AdmissionOutcome, TargetDescript
 
 
 @dataclass(frozen=True, slots=True)
-class OperationRateLimiter:
+class SessionRateLimiter:
     def check_concurrency(
         self,
         *,
@@ -24,7 +24,7 @@ class OperationRateLimiter:
             outcome=AdmissionOutcome.DENIED,
             reason_code="max_concurrency_exceeded",
             message=(
-                f"Operation has reached its concurrency limit "
+                f"Session has reached its concurrency limit "
                 f"({running_jobs}/{policy.max_concurrency})."
             ),
             target=target,
@@ -45,7 +45,7 @@ class OperationRateLimiter:
             outcome=AdmissionOutcome.DENIED,
             reason_code="rate_limit_exceeded",
             message=(
-                f"Operation has reached its rate limit "
+                f"Session has reached its rate limit "
                 f"({recent_executions}/{policy.rate_limit_per_minute} executions per minute)."
             ),
             target=target,

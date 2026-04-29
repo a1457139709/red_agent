@@ -3,7 +3,6 @@ from __future__ import annotations
 from agent.settings import Settings, get_settings
 from models.session_event import SessionEvent, SessionEventLevel, SessionEventType
 from storage.repositories.jobs import JobRepository
-from storage.repositories.operations import OperationRepository
 from storage.repositories.session_events import SessionEventRepository
 from storage.sqlite import SQLiteStorage
 
@@ -16,13 +15,11 @@ class SessionEventService:
         self,
         repository: SessionEventRepository,
         session_service: SessionService,
-        operation_repository: OperationRepository,
         job_repository: JobRepository,
         settings: Settings,
     ) -> None:
         self.repository = repository
         self.session_service = session_service
-        self.operation_repository = operation_repository
         self.job_repository = job_repository
         self.settings = settings
 
@@ -33,7 +30,6 @@ class SessionEventService:
         return cls(
             SessionEventRepository(storage),
             SessionService.from_settings(settings),
-            OperationRepository(storage),
             JobRepository(storage),
             settings,
         )
@@ -41,8 +37,7 @@ class SessionEventService:
     def create_event(
         self,
         *,
-        session_identifier: str | None = None,
-        operation_identifier: str | None = None,
+        session_identifier: str,
         event_type: SessionEventType,
         level: SessionEventLevel,
         tool_name: str,
@@ -54,7 +49,7 @@ class SessionEventService:
         payload: dict | None = None,
         created_at: str | None = None,
     ) -> SessionEvent:
-        session_id = self._resolve_session_id(session_identifier or operation_identifier)
+        session_id = self._resolve_session_id(session_identifier)
         job_id: str | None = None
         if job_identifier is not None:
             job = self.job_repository.get(job_identifier)
@@ -101,8 +96,4 @@ class SessionEventService:
     def _resolve_session_id(self, identifier: str | None) -> str:
         if not identifier:
             raise ValueError("session_identifier is required.")
-        return resolve_session_identifier(
-            self.session_service,
-            identifier,
-            operation_repository=self.operation_repository,
-        )
+        return resolve_session_identifier(self.session_service, identifier)

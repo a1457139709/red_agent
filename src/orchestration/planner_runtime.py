@@ -13,7 +13,6 @@ from app.artifact_service import ArtifactService
 from app.finding_service import FindingService
 from app.job_service import JobService
 from app.memory_service import MemoryService
-from app.operation_service import project_session_to_operation
 from app.scope_policy_service import ScopePolicyService
 from app.session_scope import resolve_session_identifier
 from app.session_service import SessionService
@@ -22,18 +21,16 @@ from models.artifact import Artifact
 from models.finding import Finding, FindingStatus
 from models.job import Job, JobStatus
 from models.memory import MemoryEntry
-from models.operation import Operation
 from models.session import Session
 from models.planner import (
-    OperationContextSummary,
     PlannerProposal,
     PlannerProposalApplyStatus,
     PlannerProposalKind,
     PlannerSource,
+    SessionContextSummary,
 )
 from models.scope_policy import ScopePolicy
 from orchestration.scope_validator import AdmissionOutcome, ScopeValidator
-from storage.repositories.operations import OperationRepository
 from tools import build_security_tool_registry
 from tools.executor import SecurityToolExecutionError, SecurityToolExecutor
 
@@ -55,17 +52,12 @@ MAX_CONTEXT_ITEMS = 5
 @dataclass(frozen=True, slots=True)
 class PlannerContext:
     session: Session
-    operation: Operation
     policy: ScopePolicy
     successful_jobs: list[Job]
-    evidence_items: list[Artifact]
+    artifact_items: list[Artifact]
     open_findings: list[Finding]
     memory_entries: list[MemoryEntry]
     context_hash: str
-
-    @property
-    def artifact_items(self) -> list[Artifact]:
-        return self.evidence_items
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,33 +203,23 @@ class PlannerRuntime:
         self,
         *,
         session_service: SessionService,
-        operation_repository: OperationRepository,
         scope_policy_service: ScopePolicyService,
         job_service: JobService,
         finding_service: FindingService,
         memory_service: MemoryService,
         settings: Settings,
         artifact_service: ArtifactService | None = None,
-        evidence_service: Any | None = None,
         security_tool_executor: SecurityToolExecutor | None = None,
         scope_validator: ScopeValidator | None = None,
         model_factory: Callable[[Settings], Any] | None = None,
     ) -> None:
         self.session_service = session_service
-        self.operation_repository = operation_repository
         self.scope_policy_service = scope_policy_service
         self.job_service = job_service
         resolved_artifact_service = artifact_service
-        if resolved_artifact_service is None and evidence_service is not None:
-            resolved_artifact_service = getattr(evidence_service, "artifact_service", None)
         if resolved_artifact_service is None:
             resolved_artifact_service = ArtifactService.from_settings(settings)
         self.artifact_service = resolved_artifact_service
-        if evidence_service is None:
-            from app.evidence_service import EvidenceService
-
-            evidence_service = EvidenceService(resolved_artifact_service, settings)
-        self.evidence_service = evidence_service
         self.finding_service = finding_service
         self.memory_service = memory_service
         self.settings = settings
@@ -253,7 +235,6 @@ class PlannerRuntime:
         storage = SQLiteStorage(settings.sqlite_path)
         return cls(
             session_service=SessionService.from_settings(settings),
-            operation_repository=OperationRepository(storage),
             scope_policy_service=ScopePolicyService.from_settings(settings),
             job_service=JobService.from_settings(settings),
             artifact_service=ArtifactService.from_settings(settings),
@@ -266,11 +247,9 @@ class PlannerRuntime:
         session_id = resolve_session_identifier(
             self.session_service,
             session_identifier,
-            operation_repository=self.operation_repository,
         )
         session = self.session_service.require_session(session_id)
         policy = self.scope_policy_service.require_scope_policy_for_session(session.id)
-        operation = project_session_to_operation(session, policy)
         jobs = self.job_service.list_jobs(session.id, limit=50)
         artifact_items = self.artifact_service.list_artifacts(session.id, limit=20)
         findings = self.finding_service.list_findings(session.id, limit=20)
@@ -279,11 +258,11 @@ class PlannerRuntime:
         open_findings = [finding for finding in findings if finding.status == FindingStatus.OPEN][:10]
 
         context_payload = {
-            "operation": {
-                "id": operation.id,
-                "public_id": operation.public_id,
-                "objective": operation.objective,
-                "status": operation.status.value,
+            "session": {
+                "id": session.id,
+                "public_id": session.public_id,
+                "goal": session.goal,
+                "status": session.status.value,
             },
             "policy": {
                 "allowed_hosts": policy.allowed_hosts,
@@ -340,10 +319,9 @@ class PlannerRuntime:
         ).hexdigest()
         return PlannerContext(
             session=session,
-            operation=operation,
             policy=policy,
             successful_jobs=successful_jobs,
-            evidence_items=artifact_items,
+            artifact_items=artifact_items,
             open_findings=open_findings,
             memory_entries=memory_entries,
             context_hash=context_hash,
@@ -386,12 +364,12 @@ class PlannerRuntime:
         for job in context.successful_jobs:
             append_candidate(self._candidate_from_job(job))
         for artifact in context.artifact_items:
-            append_candidate(self._candidate_from_evidence(artifact))
+            append_candidate(self._candidate_from_artifact(artifact))
         for finding in context.open_findings:
             append_candidate(self._candidate_from_finding(finding))
         return PlannerDerivedMemoryResult(candidates=candidates, skipped_count=skipped_count)
 
-    def build_operation_context_summary(self, session_identifier: str) -> OperationContextSummary:
+    def build_session_context_summary(self, session_identifier: str) -> SessionContextSummary:
         context = self.build_context(session_identifier)
         fallback = self._build_fallback_plan(context)
         next_steps = [
@@ -399,12 +377,12 @@ class PlannerRuntime:
             for proposal in fallback.proposals
             if proposal.proposal_kind == PlannerProposalKind.PROPOSED
         ][:2]
-        return OperationContextSummary(
+        return SessionContextSummary(
             session_id=context.session.public_id or context.session.id,
             summary=fallback.summary,
             scope_summary=self._build_scope_summary(context.policy),
             findings_summary=self._build_findings_summary(context.open_findings),
-            evidence_summary=self._build_evidence_summary(context.artifact_items),
+            artifact_summary=self._build_artifact_summary(context.artifact_items),
             memory_summary=self._build_memory_summary(context.memory_entries),
             next_step_hint=(
                 "; ".join(next_steps)
@@ -416,7 +394,7 @@ class PlannerRuntime:
     def revalidate_proposal(
         self,
         *,
-        operation: Operation,
+        session: Session,
         policy: ScopePolicy,
         proposal: PlannerProposal,
     ) -> tuple[bool, str | None]:
@@ -430,7 +408,7 @@ class PlannerRuntime:
             rationale=proposal.rationale,
         )
         validated = self._precheck_candidate(
-            operation=operation,
+            session=session,
             policy=policy,
             candidate=candidate,
         )
@@ -498,7 +476,7 @@ class PlannerRuntime:
         proposed_count = 0
         for candidate in candidates:
             proposal = self._precheck_candidate(
-                operation=context.operation,
+                session=context.session,
                 policy=context.policy,
                 candidate=candidate,
             )
@@ -524,7 +502,7 @@ class PlannerRuntime:
     def _precheck_candidate(
         self,
         *,
-        operation: Operation,
+        session: Session,
         policy: ScopePolicy,
         candidate: PlannerRuntimeCandidate,
     ) -> PlannerProposal:
@@ -553,7 +531,7 @@ class PlannerRuntime:
             decision = self.scope_validator.evaluate(
                 policy,
                 invocation.to_admission_request(
-                    operation_id=operation.id,
+                    session_id=session.id,
                     job_id=None,
                     tool_name=tool.name,
                     tool_category=tool.category,
@@ -895,7 +873,7 @@ class PlannerRuntime:
                 f"Session goal: {context.session.goal}.",
                 self._build_scope_summary(context.policy),
                 self._build_findings_summary(context.open_findings),
-            self._build_evidence_summary(context.artifact_items),
+                self._build_artifact_summary(context.artifact_items),
                 self._build_memory_summary(context.memory_entries),
             ]
             if part
@@ -937,14 +915,14 @@ class PlannerRuntime:
         )
         return f"{len(findings)} open finding(s): {highlights}."
 
-    def _build_evidence_summary(self, evidence_items: Sequence[Artifact]) -> str:
-        if not evidence_items:
+    def _build_artifact_summary(self, artifact_items: Sequence[Artifact]) -> str:
+        if not artifact_items:
             return "No recent artifacts are stored yet."
         highlights = ", ".join(
             _truncate_text(f"{item.title} on {item.target_ref}", limit=80)
-            for item in evidence_items[:3]
+            for item in artifact_items[:3]
         )
-        return f"{len(evidence_items)} recent artifact item(s): {highlights}."
+        return f"{len(artifact_items)} recent artifact item(s): {highlights}."
 
     def _build_memory_summary(self, memory_entries: Sequence[MemoryEntry]) -> str:
         if not memory_entries:
@@ -1003,7 +981,7 @@ class PlannerRuntime:
             source_job_identifier=job.id,
         )
 
-    def _candidate_from_evidence(self, evidence: Artifact) -> PlannerDerivedMemoryCandidate | None:
+    def _candidate_from_artifact(self, artifact: Artifact) -> PlannerDerivedMemoryCandidate | None:
         source_type_map = {
             "dns_response": "host",
             "http_response": "web",
@@ -1011,15 +989,15 @@ class PlannerRuntime:
             "port_scan": "host",
             "banner": "host",
         }
-        source_type = source_type_map.get(evidence.evidence_type)
+        source_type = source_type_map.get(artifact.evidence_type)
         if source_type is None:
             return None
         return self._build_memory_candidate(
             source_type=source_type,
             origin_kind="artifact",
-            origin_ref=evidence.public_id or evidence.id,
-            target_ref=evidence.target_ref,
-            source_job_identifier=evidence.job_id,
+            origin_ref=artifact.public_id or artifact.id,
+            target_ref=artifact.target_ref,
+            source_job_identifier=artifact.job_id,
         )
 
     def _candidate_from_finding(self, finding: Finding) -> PlannerDerivedMemoryCandidate | None:

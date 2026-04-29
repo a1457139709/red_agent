@@ -70,7 +70,7 @@ class SecurityToolExecutionService:
             return self._validation_failed(job_identifier=job.id, tool_name=job.job_type, error=exc.error)
 
         request = invocation.to_admission_request(
-            operation_id=job.session_id,
+            session_id=job.session_id,
             job_id=job.id,
             tool_name=tool.name,
             tool_category=tool.category,

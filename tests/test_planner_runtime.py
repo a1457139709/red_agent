@@ -44,22 +44,22 @@ def seed_operation_state(runtime: PlannerRuntime):
         allowed_protocols=["http", "https"],
     )
     job = runtime.job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="http_probe",
         target_ref="https://example.com",
     )
     job.status = JobStatus.SUCCEEDED
     runtime.job_service.save_job(job)
-    runtime.evidence_service.create_evidence(
-        operation_identifier=operation.public_id,
-        job_identifier=job.public_id,
-        evidence_type="http_response",
+    runtime.artifact_service.create_artifact(
+        session_identifier=operation.public_id,
+        source_job_identifier=job.public_id,
+        artifact_type="http_response",
         target_ref="https://example.com",
         title="Homepage probe",
         summary="Captured homepage response.",
     )
     finding = runtime.finding_service.create_finding(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         source_job_identifier=job.public_id,
         finding_type="tls_hostname_mismatch",
         title="TLS mismatch",
@@ -70,7 +70,7 @@ def seed_operation_state(runtime: PlannerRuntime):
     )
     assert finding.status == FindingStatus.OPEN
     runtime.memory_service.create_memory_entry(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         entry_type="web",
         key="target",
         value={"host": "example.com"},
@@ -90,7 +90,7 @@ def test_planner_runtime_uses_model_and_marks_invalid_items(tmp_path):
                 "target_ref": "https://example.com",
                 "arguments": {"method": "GET"},
                 "summary": "Probe in-scope target.",
-                "rationale": "Recent evidence points here.",
+                "rationale": "Recent artifacts point here.",
             },
             {
                 "job_type": "http_probe",
@@ -136,16 +136,16 @@ def test_planner_runtime_falls_back_when_model_fails(tmp_path):
     assert any(proposal.proposal_kind == PlannerProposalKind.PROPOSED for proposal in result.proposals)
 
 
-def test_planner_runtime_builds_operation_context_summary(tmp_path):
+def test_planner_runtime_builds_session_context_summary(tmp_path):
     _settings, runtime = build_runtime(
         tmp_path,
         model_factory=lambda _settings: FakeModel({"summary": "", "rationale": "", "proposals": []}),
     )
     operation = seed_operation_state(runtime)
 
-    summary = runtime.build_operation_context_summary(operation.public_id)
+    summary = runtime.build_session_context_summary(operation.public_id)
 
-    assert operation.public_id in summary.operation_id
+    assert operation.public_id in summary.session_id
     assert "Scope allows" in summary.scope_summary
     assert "open finding" in summary.findings_summary
     assert "memory fact" in summary.memory_summary
@@ -167,52 +167,52 @@ def test_planner_runtime_derives_memory_candidates_from_structured_state(tmp_pat
         allowed_protocols=["http", "https"],
     )
     http_job = runtime.job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="http_probe",
         target_ref="https://example.com",
     )
     http_job.status = JobStatus.SUCCEEDED
     runtime.job_service.save_job(http_job)
     tls_job = runtime.job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="tls_inspect",
         target_ref="example.com:443",
     )
     tls_job.status = JobStatus.SUCCEEDED
     runtime.job_service.save_job(tls_job)
     port_job = runtime.job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="port_scan",
         target_ref="example.com",
     )
     port_job.status = JobStatus.SUCCEEDED
     runtime.job_service.save_job(port_job)
-    runtime.evidence_service.create_evidence(
-        operation_identifier=operation.public_id,
-        job_identifier=http_job.public_id,
-        evidence_type="http_response",
+    runtime.artifact_service.create_artifact(
+        session_identifier=operation.public_id,
+        source_job_identifier=http_job.public_id,
+        artifact_type="http_response",
         target_ref="https://example.com",
         title="Homepage probe",
         summary="Homepage.",
     )
-    runtime.evidence_service.create_evidence(
-        operation_identifier=operation.public_id,
-        job_identifier=port_job.public_id,
-        evidence_type="dns_response",
+    runtime.artifact_service.create_artifact(
+        session_identifier=operation.public_id,
+        source_job_identifier=port_job.public_id,
+        artifact_type="dns_response",
         target_ref="example.com",
         title="DNS response",
         summary="DNS.",
     )
-    runtime.evidence_service.create_evidence(
-        operation_identifier=operation.public_id,
-        job_identifier=tls_job.public_id,
-        evidence_type="tls_certificate",
+    runtime.artifact_service.create_artifact(
+        session_identifier=operation.public_id,
+        source_job_identifier=tls_job.public_id,
+        artifact_type="tls_certificate",
         target_ref="example.com:443",
         title="TLS certificate",
         summary="TLS.",
     )
     runtime.finding_service.create_finding(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         source_job_identifier=tls_job.public_id,
         finding_type="tls_hostname_mismatch",
         title="TLS mismatch",
@@ -247,10 +247,9 @@ def test_planner_runtime_memory_derivation_deduplicates_identical_candidates(tmp
     context = runtime.build_context(operation.public_id)
     duplicated_context = context.__class__(
         session=context.session,
-        operation=context.operation,
         policy=context.policy,
         successful_jobs=[context.successful_jobs[0], context.successful_jobs[0]],
-        evidence_items=[context.evidence_items[0], context.evidence_items[0]],
+        artifact_items=[context.artifact_items[0], context.artifact_items[0]],
         open_findings=[context.open_findings[0], context.open_findings[0]],
         memory_entries=context.memory_entries,
         context_hash=context.context_hash,

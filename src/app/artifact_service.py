@@ -4,7 +4,6 @@ from agent.settings import Settings, get_settings
 from models.artifact import Artifact
 from storage.repositories.artifacts import ArtifactRepository
 from storage.repositories.jobs import JobRepository
-from storage.repositories.operations import OperationRepository
 from storage.sqlite import SQLiteStorage
 
 from .session_scope import resolve_session_identifier
@@ -16,13 +15,11 @@ class ArtifactService:
         self,
         repository: ArtifactRepository,
         session_service: SessionService,
-        operation_repository: OperationRepository,
         job_repository: JobRepository,
         settings: Settings,
     ) -> None:
         self.repository = repository
         self.session_service = session_service
-        self.operation_repository = operation_repository
         self.job_repository = job_repository
         self.settings = settings
 
@@ -33,7 +30,6 @@ class ArtifactService:
         return cls(
             ArtifactRepository(storage),
             SessionService.from_settings(settings),
-            OperationRepository(storage),
             JobRepository(storage),
             settings,
         )
@@ -41,8 +37,7 @@ class ArtifactService:
     def create_artifact(
         self,
         *,
-        session_identifier: str | None = None,
-        operation_identifier: str | None = None,
+        session_identifier: str,
         artifact_type: str,
         target_ref: str,
         title: str,
@@ -54,7 +49,7 @@ class ArtifactService:
         captured_at: str | None = None,
         metadata: dict | None = None,
     ) -> Artifact:
-        session_id = self._resolve_session_id(session_identifier or operation_identifier)
+        session_id = self._resolve_session_id(session_identifier)
         source_job_id: str | None = None
         if source_job_identifier is not None:
             job = self.job_repository.get(source_job_identifier)
@@ -100,8 +95,4 @@ class ArtifactService:
     def _resolve_session_id(self, identifier: str | None) -> str:
         if not identifier:
             raise ValueError("session_identifier is required.")
-        return resolve_session_identifier(
-            self.session_service,
-            identifier,
-            operation_repository=self.operation_repository,
-        )
+        return resolve_session_identifier(self.session_service, identifier)

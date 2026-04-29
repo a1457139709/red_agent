@@ -41,14 +41,14 @@ class Scheduler:
     def run_once(
         self,
         *,
-        operation_identifier: str | None = None,
+        session_identifier: str | None = None,
         now: str | None = None,
     ) -> SchedulerPassResult:
         timestamp = now or utc_now_iso()
-        recovered = self.job_service.recover_stale_leases(operation_identifier, now=timestamp)
-        cancelled = self.job_service.cancel_requested_jobs(operation_identifier, now=timestamp)
-        blocked = self.job_service.block_jobs_with_failed_dependencies(operation_identifier, now=timestamp)
-        queued = self.job_service.enqueue_ready_jobs(operation_identifier, now=timestamp)
+        recovered = self.job_service.recover_stale_leases(session_identifier, now=timestamp)
+        cancelled = self.job_service.cancel_requested_jobs(session_identifier, now=timestamp)
+        blocked = self.job_service.block_jobs_with_failed_dependencies(session_identifier, now=timestamp)
+        queued = self.job_service.enqueue_ready_jobs(session_identifier, now=timestamp)
         return SchedulerPassResult(
             recovered_count=len(recovered),
             cancelled_count=len(cancelled),

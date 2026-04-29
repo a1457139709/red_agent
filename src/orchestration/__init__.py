@@ -1,6 +1,6 @@
-from .admission import AdmissionContext, OperationAdmissionService
+from .admission import AdmissionContext, SessionAdmissionService
 from .job_service import AttemptResolution, JobOrchestrationService
-from .rate_limits import OperationRateLimiter
+from .rate_limits import SessionRateLimiter
 from .scheduler import Scheduler, SchedulerPassResult
 from .scope_validator import (
     AdmissionDecision,
@@ -17,8 +17,8 @@ __all__ = [
     "AdmissionRequest",
     "AttemptResolution",
     "JobOrchestrationService",
-    "OperationAdmissionService",
-    "OperationRateLimiter",
+    "SessionAdmissionService",
+    "SessionRateLimiter",
     "Scheduler",
     "SchedulerPassResult",
     "ScopeValidator",

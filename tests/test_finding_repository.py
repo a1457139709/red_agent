@@ -23,7 +23,7 @@ def test_finding_repository_persists_status_and_confidence_fields(tmp_path):
 
     operation = create_redteam_operation(settings, title="Assess", objective="Review results")
     finding = Finding.create(
-        operation_id=operation.id,
+        session_id=operation.id,
         finding_type="weak_tls",
         title="Weak TLS configuration",
         target_ref="example.com:443",

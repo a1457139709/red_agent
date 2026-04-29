@@ -78,7 +78,7 @@ Describe what you want in plain language first. Examples:
 Plain-language requests now default to the normal agent flow. Use `/redteam on` to switch subsequent plain-language requests into redteam mode, and `/redteam off` to return to normal mode.
 `/report session_summary`, `/report findings_summary`, and `/report operator_report` now reuse the most recent session report when possible and generate a new report only when needed.
 
-Use slash commands for skill, module, and shell-level control. Legacy `/operation` command families are no longer part of the default user-facing flow.
+Use slash commands for skill, module, and shell-level control. Record inspection and reporting are session-first and artifact-first.
 
 - `/help`
 - `/help query`

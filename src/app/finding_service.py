@@ -3,13 +3,11 @@ from __future__ import annotations
 from agent.settings import Settings, get_settings
 from models.finding import Finding
 from models.finding_artifact_link import FindingArtifactLink
-from models.finding_evidence_link import FindingEvidenceLink
 from models.run import utc_now_iso
 from storage.repositories.artifacts import ArtifactRepository
 from storage.repositories.finding_artifact_links import FindingArtifactLinkRepository
 from storage.repositories.findings import FindingRepository
 from storage.repositories.jobs import JobRepository
-from storage.repositories.operations import OperationRepository
 from storage.sqlite import SQLiteStorage
 
 from .session_scope import resolve_session_identifier
@@ -23,7 +21,6 @@ class FindingService:
         artifact_repository: ArtifactRepository,
         link_repository: FindingArtifactLinkRepository,
         session_service: SessionService,
-        operation_repository: OperationRepository,
         job_repository: JobRepository,
         settings: Settings,
     ) -> None:
@@ -31,7 +28,6 @@ class FindingService:
         self.artifact_repository = artifact_repository
         self.link_repository = link_repository
         self.session_service = session_service
-        self.operation_repository = operation_repository
         self.job_repository = job_repository
         self.settings = settings
 
@@ -44,7 +40,6 @@ class FindingService:
             ArtifactRepository(storage),
             FindingArtifactLinkRepository(storage),
             SessionService.from_settings(settings),
-            OperationRepository(storage),
             JobRepository(storage),
             settings,
         )
@@ -52,8 +47,7 @@ class FindingService:
     def create_finding(
         self,
         *,
-        session_identifier: str | None = None,
-        operation_identifier: str | None = None,
+        session_identifier: str,
         finding_type: str,
         title: str,
         target_ref: str,
@@ -65,7 +59,7 @@ class FindingService:
         reproduction_notes: str = "",
         next_action: str = "",
     ) -> Finding:
-        session_id = self._resolve_session_id(session_identifier or operation_identifier)
+        session_id = self._resolve_session_id(session_identifier)
         source_job_id: str | None = None
         if source_job_identifier is not None:
             job = self.job_repository.get(source_job_identifier)
@@ -156,28 +150,6 @@ class FindingService:
             raise ValueError(f"Artifact not found: {artifact_identifier}")
         return self.link_repository.list_for_artifact(artifact.id)
 
-    def link_evidence(
-        self,
-        finding_identifier: str,
-        evidence_identifiers: list[str],
-    ) -> list[FindingEvidenceLink]:
-        return [
-            _artifact_link_to_evidence_link(link)
-            for link in self.link_artifacts(finding_identifier, evidence_identifiers)
-        ]
-
-    def list_evidence_links_for_finding(self, finding_identifier: str) -> list[FindingEvidenceLink]:
-        return [
-            _artifact_link_to_evidence_link(link)
-            for link in self.list_artifact_links_for_finding(finding_identifier)
-        ]
-
-    def list_finding_links_for_evidence(self, evidence_identifier: str) -> list[FindingEvidenceLink]:
-        return [
-            _artifact_link_to_evidence_link(link)
-            for link in self.list_finding_links_for_artifact(evidence_identifier)
-        ]
-
     def _update_status(self, identifier: str, *, status: str) -> Finding:
         finding = self.require_finding(identifier)
         finding.status = type(finding.status)(status)
@@ -187,11 +159,7 @@ class FindingService:
     def _resolve_session_id(self, identifier: str | None) -> str:
         if not identifier:
             raise ValueError("session_identifier is required.")
-        return resolve_session_identifier(
-            self.session_service,
-            identifier,
-            operation_repository=self.operation_repository,
-        )
+        return resolve_session_identifier(self.session_service, identifier)
 
 
 def _merge_dismissal_reason(existing: str, reason: str) -> str:
@@ -201,15 +169,3 @@ def _merge_dismissal_reason(existing: str, reason: str) -> str:
     if prefix + reason in existing:
         return existing
     return f"{existing}\n{prefix}{reason}"
-
-
-def _artifact_link_to_evidence_link(link: FindingArtifactLink) -> FindingEvidenceLink:
-    return FindingEvidenceLink.from_row(
-        {
-            "id": link.id,
-            "operation_id": link.session_id,
-            "finding_id": link.finding_id,
-            "evidence_id": link.artifact_id,
-            "created_at": link.created_at,
-        }
-    )

@@ -8,7 +8,7 @@ from app.job_service import JobService
 from app.report_service import ReportCreationError, ReportService
 from app.session_service import SessionService
 from conftest import create_redteam_operation
-from models.operation import OperationStatus
+from models.session import SessionStatus
 
 
 def build_settings(tmp_path):
@@ -35,7 +35,7 @@ def test_report_service_writes_session_owned_report_files_and_links(tmp_path):
         allowed_hosts=["example.com"],
         allowed_protocols=["https"],
         allowed_ports=[443],
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     session = session_service.require_session(operation.id)
     job = job_service.create_job(
@@ -98,7 +98,7 @@ def test_report_service_rolls_back_failed_creation_and_exposes_ai_prompt(tmp_pat
         allowed_hosts=["one.example.com"],
         allowed_protocols=["https"],
         allowed_ports=[443],
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     second_operation = create_redteam_operation(
         settings,
@@ -107,7 +107,7 @@ def test_report_service_rolls_back_failed_creation_and_exposes_ai_prompt(tmp_pat
         allowed_hosts=["two.example.com"],
         allowed_protocols=["https"],
         allowed_ports=[443],
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     first_session = session_service.require_session(first_operation.id)
     second_session = session_service.require_session(second_operation.id)

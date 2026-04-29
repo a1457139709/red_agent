@@ -4,7 +4,7 @@ from agent.settings import Settings
 from app.artifact_service import ArtifactService
 from app.job_service import JobService
 from conftest import create_redteam_operation
-from models.operation import OperationStatus
+from models.session import SessionStatus
 from storage.repositories.artifacts import ARTIFACTS_SCHEMA
 
 
@@ -29,7 +29,7 @@ def test_artifact_service_persists_session_owned_artifacts(tmp_path):
         allowed_hosts=["example.com"],
         allowed_protocols=["https"],
         allowed_ports=[443],
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     job = job_service.create_job(
         session_identifier=operation.public_id,
@@ -38,7 +38,7 @@ def test_artifact_service_persists_session_owned_artifacts(tmp_path):
     )
 
     artifact = artifact_service.create_artifact(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         source_job_identifier=job.public_id,
         artifact_type="http_response",
         target_ref="https://example.com",
@@ -54,7 +54,6 @@ def test_artifact_service_persists_session_owned_artifacts(tmp_path):
 
     assert artifact.public_id == "A0001"
     assert stored.session_id == operation.id
-    assert stored.operation_id == operation.id
     assert stored.source_job_id == job.id
     assert stored.job_id == job.id
     assert listed[0].id == artifact.id
@@ -69,7 +68,7 @@ def test_artifact_service_migrates_legacy_e_public_ids_to_a_prefix(tmp_path):
         allowed_hosts=["example.com"],
         allowed_protocols=["https"],
         allowed_ports=[443],
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
 
     with sqlite3.connect(settings.sqlite_path) as connection:
@@ -127,7 +126,7 @@ def test_artifact_service_migrates_mixed_public_ids_into_stable_a_sequence(tmp_p
         allowed_hosts=["example.com"],
         allowed_protocols=["https"],
         allowed_ports=[443],
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
 
     with sqlite3.connect(settings.sqlite_path) as connection:

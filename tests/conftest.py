@@ -7,9 +7,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from app.operation_service import OperationService
 from app.redteam_session_service import RedteamSessionBundle, RedteamSessionService
-from models.operation import Operation, OperationStatus
+from models.session import Session, SessionStatus
 
 
 def create_redteam_bundle(
@@ -28,7 +27,7 @@ def create_redteam_bundle(
     max_concurrency: int = 1,
     rate_limit_per_minute: int | None = None,
     confirmation_required_actions: list[str] | None = None,
-    status: OperationStatus = OperationStatus.DRAFT,
+    status: SessionStatus = SessionStatus.DRAFT,
 ) -> RedteamSessionBundle:
     return RedteamSessionService.from_settings(settings).create_redteam_session(
         title=title,
@@ -48,6 +47,6 @@ def create_redteam_bundle(
     )
 
 
-def create_redteam_operation(settings, **kwargs) -> Operation:
+def create_redteam_operation(settings, **kwargs) -> Session:
     bundle = create_redteam_bundle(settings, **kwargs)
-    return OperationService.from_settings(settings).require_operation(bundle.session.id)
+    return bundle.session

@@ -32,14 +32,6 @@ class SessionDashboard:
     event_counts: dict[str, int]
     recent_events: list[SessionEvent]
 
-    @property
-    def evidence_count(self) -> int:
-        return self.artifact_count
-
-    @property
-    def recent_evidence(self) -> list[Artifact]:
-        return self.recent_artifacts
-
 
 class DashboardService:
     def __init__(

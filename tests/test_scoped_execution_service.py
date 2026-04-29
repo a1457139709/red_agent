@@ -4,7 +4,7 @@ from app.scoped_execution_service import ScopedExecutionService
 from app.session_event_service import SessionEventService
 from conftest import create_redteam_operation
 from models.job import JobStatus
-from models.operation import OperationStatus
+from models.session import SessionStatus
 from models.session_event import SessionEventLevel, SessionEventType
 from orchestration.scope_validator import AdmissionRequest
 
@@ -18,9 +18,9 @@ def build_settings(tmp_path):
     )
 
 
-def make_request(*, operation_id: str, job_id: str | None, raw_target: str, tool_name: str = "http_probe"):
+def make_request(*, session_id: str, job_id: str | None, raw_target: str, tool_name: str = "http_probe"):
     return AdmissionRequest(
-        operation_id=operation_id,
+        session_id=session_id,
         job_id=job_id,
         tool_name=tool_name,
         tool_category="recon",
@@ -40,17 +40,17 @@ def test_scoped_execution_service_blocks_out_of_scope_requests_without_mutating_
         title="Recon",
         objective="Inspect public web surface",
         allowed_domains=["example.com"],
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     job = job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="http_probe",
         target_ref="https://outside.example.org",
     )
 
     result = execution_service.execute(
         request=make_request(
-            operation_id=operation.public_id,
+            session_id=operation.public_id,
             job_id=job.public_id,
             raw_target="https://outside.example.org",
         ),
@@ -80,17 +80,17 @@ def test_scoped_execution_service_records_full_confirmation_and_success_flow(tmp
         objective="Inspect public web surface",
         allowed_domains=["example.com"],
         confirmation_required_actions=["http_probe"],
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     job = job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="http_probe",
         target_ref="https://example.com",
     )
 
     result = execution_service.execute(
         request=make_request(
-            operation_id=operation.public_id,
+            session_id=operation.public_id,
             job_id=job.public_id,
             raw_target="https://example.com",
         ),
@@ -126,17 +126,17 @@ def test_scoped_execution_service_records_execution_failure_without_mutating_job
         title="Recon",
         objective="Inspect public web surface",
         allowed_domains=["example.com"],
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     job = job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="http_probe",
         target_ref="https://example.com",
     )
 
     result = execution_service.execute(
         request=make_request(
-            operation_id=operation.public_id,
+            session_id=operation.public_id,
             job_id=job.public_id,
             raw_target="https://example.com",
         ),
@@ -164,15 +164,15 @@ def test_scoped_execution_service_enforces_rate_limit_from_recent_execution_even
         objective="Inspect public web surface",
         allowed_domains=["example.com"],
         rate_limit_per_minute=1,
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     job = job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="http_probe",
         target_ref="https://example.com",
     )
     event_service.create_event(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         event_type=SessionEventType.EXECUTION_STARTED,
         level=SessionEventLevel.INFO,
         tool_name="http_probe",
@@ -182,7 +182,7 @@ def test_scoped_execution_service_enforces_rate_limit_from_recent_execution_even
 
     result = execution_service.execute(
         request=make_request(
-            operation_id=operation.public_id,
+            session_id=operation.public_id,
             job_id=job.public_id,
             raw_target="https://example.com",
         ),
@@ -211,17 +211,17 @@ def test_scoped_execution_service_rechecks_rate_limit_after_confirmation(tmp_pat
         allowed_domains=["example.com"],
         confirmation_required_actions=["http_probe"],
         rate_limit_per_minute=1,
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     job = job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="http_probe",
         target_ref="https://example.com",
     )
 
     def confirm(_prompt):
         event_service.create_event(
-            operation_identifier=operation.public_id,
+            session_identifier=operation.public_id,
             event_type=SessionEventType.EXECUTION_STARTED,
             level=SessionEventLevel.INFO,
             tool_name="http_probe",
@@ -232,7 +232,7 @@ def test_scoped_execution_service_rechecks_rate_limit_after_confirmation(tmp_pat
 
     result = execution_service.execute(
         request=make_request(
-            operation_id=operation.public_id,
+            session_id=operation.public_id,
             job_id=job.public_id,
             raw_target="https://example.com",
         ),
@@ -268,16 +268,16 @@ def test_scoped_execution_service_enforces_max_concurrency_before_execution(tmp_
         objective="Inspect public web surface",
         allowed_domains=["example.com"],
         max_concurrency=1,
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     running_job = job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="http_probe",
         target_ref="https://example.com",
         status=JobStatus.RUNNING,
     )
     blocked_job = job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="http_probe",
         target_ref="https://example.com",
     )
@@ -286,7 +286,7 @@ def test_scoped_execution_service_enforces_max_concurrency_before_execution(tmp_
 
     result = execution_service.execute(
         request=make_request(
-            operation_id=operation.public_id,
+            session_id=operation.public_id,
             job_id=blocked_job.public_id,
             raw_target="https://example.com",
         ),
@@ -313,14 +313,14 @@ def test_scoped_execution_service_blocks_non_runnable_operation_statuses(tmp_pat
         allowed_domains=["example.com"],
     )
     job = job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="http_probe",
         target_ref="https://example.com",
     )
 
     result = execution_service.execute(
         request=make_request(
-            operation_id=operation.public_id,
+            session_id=operation.public_id,
             job_id=job.public_id,
             raw_target="https://example.com",
         ),

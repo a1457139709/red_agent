@@ -2,7 +2,6 @@ from agent.settings import Settings
 from app.redteam_session_service import RedteamSessionService
 from app.scope_policy_service import ScopePolicyService
 from app.session_service import SessionService
-from models.operation import OperationStatus
 from models.session import SessionMode, SessionPersistenceMode, SessionStatus
 
 
@@ -34,7 +33,7 @@ def test_redteam_session_service_bootstraps_session_and_scope_policy(tmp_path):
         max_concurrency=2,
         rate_limit_per_minute=30,
         confirmation_required_actions=["port_scan"],
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
 
     session = session_service.require_session(bundle.session.id)

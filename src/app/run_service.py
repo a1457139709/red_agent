@@ -10,7 +10,6 @@ from models.run import (
     duration_ms_between,
     utc_now_iso,
 )
-from storage.repositories.operations import OperationRepository
 from storage.sqlite import SQLiteStorage
 from storage.runs import RunRepository
 
@@ -23,12 +22,10 @@ class RunService:
         self,
         repository: RunRepository,
         session_service: SessionService,
-        operation_repository: OperationRepository,
         settings: Settings,
     ) -> None:
         self.repository = repository
         self.session_service = session_service
-        self.operation_repository = operation_repository
         self.settings = settings
 
     @classmethod
@@ -38,7 +35,6 @@ class RunService:
         return cls(
             RunRepository(storage),
             SessionService.from_settings(settings),
-            OperationRepository(storage),
             settings,
         )
 
@@ -149,8 +145,4 @@ class RunService:
         return self.repository.list_logs_for_run(run.id, limit=limit)
 
     def _resolve_session_id(self, identifier: str) -> str:
-        return resolve_session_identifier(
-            self.session_service,
-            identifier,
-            operation_repository=self.operation_repository,
-        )
+        return resolve_session_identifier(self.session_service, identifier)

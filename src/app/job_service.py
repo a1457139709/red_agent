@@ -3,7 +3,6 @@ from __future__ import annotations
 from agent.settings import Settings, get_settings
 from models.job import Job, JobLogEntry, JobLogLevel, JobStatus
 from storage.repositories.jobs import JobRepository
-from storage.repositories.operations import OperationRepository
 from storage.sqlite import SQLiteStorage
 
 from .session_scope import resolve_session_identifier
@@ -25,12 +24,10 @@ class JobService:
         self,
         repository: JobRepository,
         session_service: SessionService,
-        operation_repository: OperationRepository,
         settings: Settings,
     ) -> None:
         self.repository = repository
         self.session_service = session_service
-        self.operation_repository = operation_repository
         self.settings = settings
 
     @classmethod
@@ -40,15 +37,13 @@ class JobService:
         return cls(
             JobRepository(storage),
             SessionService.from_settings(settings),
-            OperationRepository(storage),
             settings,
         )
 
     def create_job(
         self,
         *,
-        session_identifier: str | None = None,
-        operation_identifier: str | None = None,
+        session_identifier: str,
         job_type: str,
         target_ref: str,
         arguments: dict | None = None,
@@ -57,7 +52,7 @@ class JobService:
         retry_limit: int = 0,
         status: JobStatus = JobStatus.PENDING,
     ) -> Job:
-        session_id = self._resolve_session_id(session_identifier or operation_identifier)
+        session_id = self._resolve_session_id(session_identifier)
         if timeout_seconds is not None:
             _ensure_positive_int(timeout_seconds, field_name="timeout_seconds")
         _ensure_non_negative_int(retry_limit, field_name="retry_limit")
@@ -140,8 +135,4 @@ class JobService:
     def _resolve_session_id(self, identifier: str | None) -> str:
         if not identifier:
             raise ValueError("session_identifier is required.")
-        return resolve_session_identifier(
-            self.session_service,
-            identifier,
-            operation_repository=self.operation_repository,
-        )
+        return resolve_session_identifier(self.session_service, identifier)

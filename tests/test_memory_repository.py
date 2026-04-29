@@ -23,14 +23,14 @@ def test_memory_repository_lists_entries_and_preserves_structured_value(tmp_path
 
     operation = create_redteam_operation(settings, title="Track", objective="Persist facts")
     first = MemoryEntry.create(
-        operation_id=operation.id,
+        session_id=operation.id,
         entry_type="service",
         key="services",
         value={"ports": [80, 443]},
         summary="Discovered HTTP and HTTPS.",
     )
     second = MemoryEntry.create(
-        operation_id=operation.id,
+        session_id=operation.id,
         entry_type="note",
         key="observations",
         value=["cdn detected"],

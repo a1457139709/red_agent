@@ -75,7 +75,7 @@ class TargetDescriptor:
 
 @dataclass(frozen=True, slots=True)
 class AdmissionRequest:
-    operation_id: str
+    session_id: str
     job_id: str | None
     tool_name: str
     tool_category: str
@@ -242,7 +242,7 @@ class ScopeValidator:
         label: str | None = None,
     ) -> _TargetEvaluation:
         scoped_request = AdmissionRequest(
-            operation_id=request.operation_id,
+            session_id=request.session_id,
             job_id=request.job_id,
             tool_name=request.tool_name,
             tool_category=request.tool_category,

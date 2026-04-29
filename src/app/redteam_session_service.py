@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from agent.settings import Settings, get_settings
-from models.operation import OperationStatus
 from models.scope_policy import ScopePolicy
 from models.session import (
     Session,
@@ -22,20 +21,6 @@ from .session_service import SessionService
 def _ensure_positive_int(value: int, *, field_name: str) -> None:
     if value <= 0:
         raise ValueError(f"{field_name} must be greater than 0.")
-
-
-def _operation_to_session_status(status: OperationStatus) -> SessionStatus:
-    mapping = {
-        OperationStatus.DRAFT: SessionStatus.DRAFT,
-        OperationStatus.READY: SessionStatus.ACTIVE,
-        OperationStatus.RUNNING: SessionStatus.ACTIVE,
-        OperationStatus.PAUSED: SessionStatus.PAUSED,
-        OperationStatus.BLOCKED: SessionStatus.ACTIVE,
-        OperationStatus.FAILED: SessionStatus.FAILED,
-        OperationStatus.COMPLETED: SessionStatus.COMPLETED,
-        OperationStatus.CANCELLED: SessionStatus.CANCELLED,
-    }
-    return mapping[OperationStatus(status)]
 
 
 def _build_targets(
@@ -98,7 +83,7 @@ class RedteamSessionService:
         max_concurrency: int = 1,
         rate_limit_per_minute: int | None = None,
         confirmation_required_actions: list[str] | None = None,
-        status: OperationStatus = OperationStatus.DRAFT,
+        status: SessionStatus = SessionStatus.DRAFT,
     ) -> RedteamSessionBundle:
         _ensure_positive_int(max_concurrency, field_name="max_concurrency")
         if rate_limit_per_minute is not None:
@@ -115,7 +100,7 @@ class RedteamSessionService:
                 allowed_domains=allowed_domains,
                 allowed_cidrs=allowed_cidrs,
             ),
-            status=_operation_to_session_status(status),
+            status=status,
         )
         scope_policy = ScopePolicy.create(
             session_id=session.id,

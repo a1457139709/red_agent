@@ -56,8 +56,7 @@ class Job:
     def create(
         cls,
         *,
-        session_id: str | None = None,
-        operation_id: str | None = None,
+        session_id: str,
         job_type: str,
         target_ref: str,
         status: JobStatus = JobStatus.PENDING,
@@ -66,13 +65,10 @@ class Job:
         timeout_seconds: int | None = None,
         retry_limit: int = 0,
     ) -> "Job":
-        resolved_session_id = session_id or operation_id
-        if not resolved_session_id:
-            raise ValueError("session_id is required.")
         return cls(
             id=str(uuid4()),
             public_id="",
-            session_id=resolved_session_id,
+            session_id=session_id,
             job_type=job_type,
             target_ref=target_ref,
             status=status,
@@ -140,15 +136,6 @@ class Job:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
-
-    @property
-    def operation_id(self) -> str:
-        return self.session_id
-
-    @operation_id.setter
-    def operation_id(self, value: str) -> None:
-        self.session_id = value
-
 
 @dataclass(slots=True)
 class JobLogEntry:

@@ -57,9 +57,6 @@ class ScopePolicyRepository:
             ).fetchone()
         return ScopePolicy.from_row(dict(row)) if row else None
 
-    def get_by_operation_id(self, operation_id: str) -> ScopePolicy | None:
-        return self.get_by_session_id(operation_id)
-
     def list(self, *, limit: int | None = 50) -> list[ScopePolicy]:
         query = "SELECT * FROM scope_policies ORDER BY updated_at DESC"
         params: list[object] = []

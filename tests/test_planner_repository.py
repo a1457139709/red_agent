@@ -27,7 +27,7 @@ def test_planner_repository_round_trip_and_updates(tmp_path):
 
     operation = create_redteam_operation(settings, title="Plan", objective="Persist planner state")
     plan = PlannerPlan.create(
-        operation_id=operation.id,
+        session_id=operation.id,
         planning_mode="next_steps",
         context_hash="abc123",
         summary="Planner summary.",

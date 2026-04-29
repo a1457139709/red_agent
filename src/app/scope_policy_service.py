@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import warnings
-
 from agent.settings import Settings, get_settings
 from models.scope_policy import ScopePolicy
 from storage.repositories.scope_policies import ScopePolicyRepository
@@ -27,8 +25,7 @@ class ScopePolicyService:
     def create_scope_policy(
         self,
         *,
-        operation_id: str | None = None,
-        session_id: str | None = None,
+        session_id: str,
         allowed_hosts: list[str] | None = None,
         allowed_domains: list[str] | None = None,
         allowed_cidrs: list[str] | None = None,
@@ -45,7 +42,7 @@ class ScopePolicyService:
             _ensure_positive_int(rate_limit_per_minute, field_name="rate_limit_per_minute")
 
         policy = ScopePolicy.create(
-            session_id=session_id or operation_id,
+            session_id=session_id,
             allowed_hosts=allowed_hosts,
             allowed_domains=allowed_domains,
             allowed_cidrs=allowed_cidrs,
@@ -62,15 +59,6 @@ class ScopePolicyService:
     def get_scope_policy(self, policy_id: str) -> ScopePolicy | None:
         return self.repository.get(policy_id)
 
-    def get_scope_policy_for_operation(self, operation_id: str) -> ScopePolicy | None:
-        warnings.warn(
-            "ScopePolicyService.get_scope_policy_for_operation() is deprecated. "
-            "Use get_scope_policy_for_session() instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.repository.get_by_operation_id(operation_id)
-
     def get_scope_policy_for_session(self, session_id: str) -> ScopePolicy | None:
         return self.repository.get_by_session_id(session_id)
 
@@ -79,15 +67,6 @@ class ScopePolicyService:
         if policy is None:
             raise ValueError(f"Scope policy not found for session: {session_id}")
         return policy
-
-    def require_scope_policy_for_operation(self, operation_id: str) -> ScopePolicy:
-        warnings.warn(
-            "ScopePolicyService.require_scope_policy_for_operation() is deprecated. "
-            "Use require_scope_policy_for_session() instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.require_scope_policy_for_session(operation_id)
 
     def require_scope_policy(self, policy_id: str) -> ScopePolicy:
         policy = self.get_scope_policy(policy_id)

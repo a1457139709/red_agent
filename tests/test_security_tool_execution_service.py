@@ -4,16 +4,17 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 from threading import Thread
+import pytest
 
 import app.security_tool_execution_service as security_tool_execution_module
-from app.evidence_service import EvidenceService
+from app.artifact_service import ArtifactService
 from app.finding_service import FindingService
 from agent.settings import Settings
 from app.job_service import JobService
 from app.security_tool_execution_service import SecurityToolExecutionService
 from conftest import create_redteam_operation
 from models.job import JobStatus
-from models.operation import OperationStatus
+from models.session import SessionStatus
 from runtime.timeouts import ExecutionTimedOutError
 from tools.contracts import EvidenceCandidate, FindingCandidate, SecurityToolResult
 
@@ -41,7 +42,10 @@ class _ProbeHandler(BaseHTTPRequestHandler):
 
 
 def run_http_server():
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _ProbeHandler)
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _ProbeHandler)
+    except PermissionError as exc:
+        pytest.skip(f"local test server bind is not permitted in this environment: {exc}")
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, thread
@@ -63,10 +67,10 @@ def test_security_tool_execution_service_runs_job_through_scoped_runtime(tmp_pat
             allowed_protocols=["http"],
             allowed_ports=[port],
             allowed_tool_categories=["recon"],
-            status=OperationStatus.READY,
+            status=SessionStatus.ACTIVE,
         )
         job = job_service.create_job(
-            operation_identifier=operation.public_id,
+            session_identifier=operation.public_id,
             job_type="http_probe",
             target_ref=f"http://127.0.0.1:{port}/health",
         )
@@ -74,7 +78,7 @@ def test_security_tool_execution_service_runs_job_through_scoped_runtime(tmp_pat
         result = execution_service.execute_job(job_identifier=job.public_id)
         refreshed = job_service.require_job(job.public_id)
         logs = job_service.list_logs(job.public_id)
-        evidence = EvidenceService.from_settings(settings).list_evidence(operation.public_id, limit=None)
+        artifacts = ArtifactService.from_settings(settings).list_artifacts(operation.public_id, limit=None)
 
         assert result.status == "succeeded"
         assert isinstance(result.result, SecurityToolResult)
@@ -84,10 +88,10 @@ def test_security_tool_execution_service_runs_job_through_scoped_runtime(tmp_pat
             "security_tool_persistence_succeeded",
             "security_tool_validation_started",
         }
-        assert len(evidence) == 1
-        assert evidence[0].hash_digest is not None
-        assert evidence[0].artifact_path.startswith("artifacts/")
-        artifact_path = settings.sessions_dir / operation.id / Path(evidence[0].artifact_path)
+        assert len(artifacts) == 1
+        assert artifacts[0].hash_digest is not None
+        assert artifacts[0].artifact_path.startswith("artifacts/")
+        artifact_path = settings.sessions_dir / operation.id / Path(artifacts[0].artifact_path)
         assert artifact_path.exists()
         assert not (tmp_path / "artifacts").exists()
         artifact_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
@@ -115,10 +119,10 @@ def test_security_tool_execution_service_blocks_out_of_scope_targets_before_tool
         allowed_protocols=["http"],
         allowed_ports=[80],
         allowed_tool_categories=["recon"],
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     job = job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="http_probe",
         target_ref="http://outside.example.org",
     )
@@ -147,10 +151,10 @@ def test_security_tool_execution_service_returns_failed_result_for_validation_er
         allowed_hosts=["127.0.0.1"],
         allowed_protocols=["tcp"],
         allowed_ports=[80],
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     job = job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="port_scan",
         target_ref="127.0.0.1",
         arguments={"ports": [81]},
@@ -176,10 +180,10 @@ def test_security_tool_execution_service_returns_failed_result_for_unknown_tool_
         title="Recon",
         objective="Reject unsupported tool types",
         allowed_domains=["example.com"],
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     job = job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="unknown_tool",
         target_ref="https://example.com",
     )
@@ -207,10 +211,10 @@ def test_security_tool_execution_service_reports_timeouts(tmp_path, monkeypatch)
         allowed_protocols=["http"],
         allowed_ports=[80],
         allowed_tool_categories=["recon"],
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     job = job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="http_probe",
         target_ref="http://127.0.0.1/slow",
         timeout_seconds=1,
@@ -246,10 +250,10 @@ def test_security_tool_execution_service_enforces_job_timeout_over_argument_time
         allowed_protocols=["https"],
         allowed_ports=[443],
         allowed_tool_categories=["recon"],
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     job = job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="http_probe",
         target_ref="https://example.com",
         arguments={"timeout_seconds": 5},
@@ -303,10 +307,10 @@ def test_security_tool_execution_service_persists_findings_and_traceability_for_
         allowed_protocols=["tls"],
         allowed_ports=[443],
         allowed_tool_categories=["recon"],
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     job = job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="tls_inspect",
         target_ref="example.com:443",
     )
@@ -380,10 +384,10 @@ def test_security_tool_execution_service_returns_failed_result_when_evidence_pip
             allowed_protocols=["http"],
             allowed_ports=[port],
             allowed_tool_categories=["recon"],
-            status=OperationStatus.READY,
+            status=SessionStatus.ACTIVE,
         )
         job = job_service.create_job(
-            operation_identifier=operation.public_id,
+            session_identifier=operation.public_id,
             job_type="http_probe",
             target_ref=f"http://127.0.0.1:{port}/health",
         )
@@ -397,12 +401,12 @@ def test_security_tool_execution_service_returns_failed_result_when_evidence_pip
         result = execution_service.execute_job(job_identifier=job.public_id)
         refreshed = job_service.require_job(job.public_id)
         logs = job_service.list_logs(job.public_id)
-        evidence = EvidenceService.from_settings(settings).list_evidence(operation.public_id, limit=None)
+        artifacts = ArtifactService.from_settings(settings).list_artifacts(operation.public_id, limit=None)
 
         assert result.status == "failed"
         assert "Evidence pipeline failed" in result.message
         assert refreshed.status == JobStatus.PENDING
-        assert not evidence
+        assert not artifacts
         assert any(entry.message == "security_tool_persistence_failed" for entry in logs)
     finally:
         server.shutdown()

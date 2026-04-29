@@ -11,8 +11,8 @@ from app.session_event_service import SessionEventService
 from app.session_record_locator import SessionRecordLocator
 from conftest import create_redteam_operation
 from models.job import JobLogLevel
-from models.operation import OperationStatus
 from models.run import SessionLogLevel
+from models.session import SessionStatus
 from models.session_event import SessionEventLevel, SessionEventType
 
 
@@ -44,7 +44,7 @@ def test_session_record_locator_aggregates_session_layers(tmp_path):
         allowed_hosts=["example.com"],
         allowed_protocols=["https"],
         allowed_ports=[443],
-        status=OperationStatus.READY,
+        status=SessionStatus.ACTIVE,
     )
     run = run_service.start_run(operation.public_id)
     run_service.write_log(

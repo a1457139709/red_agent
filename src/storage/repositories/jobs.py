@@ -196,9 +196,7 @@ class JobRepository:
         *,
         now: str,
         session_id: str | None = None,
-        operation_id: str | None = None,
     ) -> list[Job]:
-        resolved_session_id = session_id or operation_id
         query = """
             SELECT *
             FROM session_jobs
@@ -209,9 +207,9 @@ class JobRepository:
               )
         """
         params: list[object] = [JobStatus.RUNNING.value, now]
-        if resolved_session_id is not None:
+        if session_id is not None:
             query += " AND session_id = ?"
-            params.append(resolved_session_id)
+            params.append(session_id)
         query += " ORDER BY lease_expires_at ASC, updated_at ASC"
         with self.storage.connect() as connection:
             rows = connection.execute(query, params).fetchall()

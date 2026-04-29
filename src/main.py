@@ -113,17 +113,6 @@ def parse_module_command(command: str) -> tuple[str, list[str]] | None:
     return parts[1], parts[2:]
 
 
-def parse_operation_command(command: str) -> tuple[str, list[str]] | None:
-    stripped = command.strip()
-    if not stripped.startswith("/operation"):
-        return None
-
-    parts = stripped.split()
-    if len(parts) == 1:
-        return "", []
-    return parts[1], parts[2:]
-
-
 def parse_job_command(command: str) -> tuple[str, list[str]] | None:
     stripped = command.strip()
     if not stripped.startswith("/job"):
@@ -218,7 +207,6 @@ def parse_skill_shorthand(
         not stripped.startswith("/")
         or stripped.startswith("/skill")
         or stripped.startswith("/module")
-        or stripped.startswith("/operation")
         or stripped.startswith("/job")
         or stripped.startswith("/finding")
         or stripped.startswith("/artifact")
@@ -1183,7 +1171,7 @@ def handle_finding_command(
                 artifact_service.require_artifact(link.artifact_id).public_id
                 for link in links
             ]
-            ui.show_finding_detail(finding, linked_evidence_ids=linked_artifact_ids)
+            ui.show_finding_detail(finding, linked_artifact_ids=linked_artifact_ids)
             return True
 
         if action == "confirm":

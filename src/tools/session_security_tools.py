@@ -21,9 +21,9 @@ _SECURITY_TOOL_EXECUTOR = SecurityToolExecutor(
 _SCOPE_VALIDATOR = ScopeValidator()
 
 
-def _build_inline_session_policy(*, operation_id: str, tool_category: str) -> ScopePolicy:
+def _build_inline_session_policy(*, session_id: str, tool_category: str) -> ScopePolicy:
     return ScopePolicy.create(
-        operation_id=operation_id,
+        session_id=session_id,
         allowed_tool_categories=[tool_category],
     )
 
@@ -61,7 +61,7 @@ def _run_security_tool(
     try:
         tool = _SECURITY_TOOL_EXECUTOR.get_tool(tool_name)
         policy = _build_inline_session_policy(
-            operation_id=f"session-inline:{tool_name}",
+            session_id=f"session-inline:{tool_name}",
             tool_category=tool.category,
         )
         invocation = _SECURITY_TOOL_EXECUTOR.validate(
@@ -71,7 +71,7 @@ def _run_security_tool(
             policy=policy,
         )
         admission_request = invocation.to_admission_request(
-            operation_id=policy.operation_id,
+            session_id=policy.session_id,
             job_id=None,
             tool_name=tool.name,
             tool_category=tool.category,
@@ -94,7 +94,7 @@ def _run_security_tool(
         "target": result.target,
         "summary": result.summary,
         "payload": result.payload,
-        "evidence_count": len(result.evidence_candidates),
+        "artifact_count": len(result.evidence_candidates),
         "finding_count": len(result.finding_candidates),
     }
     return _format_result(tool_name, result.summary, payload)

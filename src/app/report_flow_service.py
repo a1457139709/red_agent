@@ -7,7 +7,6 @@ from models.report import Report
 
 from .artifact_service import ArtifactService
 from .finding_service import FindingService
-from .operation_service import project_session_to_operation
 from .report_service import ReportService
 from .scope_policy_service import ScopePolicyService
 from .session_record_query_service import SessionRecordQueryService
@@ -113,15 +112,6 @@ class ReportFlowService:
                 "max_concurrency": policy.max_concurrency,
                 "rate_limit_per_minute": policy.rate_limit_per_minute,
                 "confirmation_required_actions": policy.confirmation_required_actions,
-            }
-            operation = project_session_to_operation(session, policy)
-            payload["operation"] = {
-                "id": operation.id,
-                "public_id": operation.public_id,
-                "title": operation.title,
-                "objective": operation.objective,
-                "workspace": operation.workspace,
-                "status": operation.status.value,
             }
 
         artifacts = self.session_record_query_service.list_artifacts(session.id, limit=None)

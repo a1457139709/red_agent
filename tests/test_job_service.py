@@ -19,14 +19,14 @@ def test_job_service_creates_lists_and_loads_jobs(tmp_path):
 
     operation = create_redteam_operation(settings, title="Surface recon", objective="Map services")
     first = job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="dns_lookup",
         target_ref="example.com",
         arguments={"record_type": "A"},
         retry_limit=1,
     )
     second = job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="http_probe",
         target_ref="https://example.com",
         dependency_job_ids=[first.public_id],
@@ -50,7 +50,7 @@ def test_job_service_writes_and_reads_job_logs(tmp_path):
 
     operation = create_redteam_operation(settings, title="Probe", objective="Inspect endpoint")
     job = job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="http_probe",
         target_ref="https://example.com",
     )

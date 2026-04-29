@@ -16,7 +16,7 @@ def make_request(
     port: int | None = None,
 ) -> AdmissionRequest:
     return AdmissionRequest(
-        operation_id="op-1",
+        session_id="session-1",
         job_id="job-1",
         tool_name=tool_name,
         tool_category=tool_category,
@@ -27,7 +27,7 @@ def make_request(
 
 
 def make_policy(**kwargs) -> ScopePolicy:
-    return ScopePolicy.create(operation_id="op-1", **kwargs)
+    return ScopePolicy.create(session_id="session-1", **kwargs)
 
 
 def test_scope_validator_allows_exact_host_and_normalizes_https_default_port():
@@ -153,7 +153,7 @@ def test_scope_validator_checks_additional_targets_without_reconfirming():
         confirmation_required_actions=["dns_lookup"],
     )
     request = AdmissionRequest(
-        operation_id="op-1",
+        session_id="session-1",
         job_id="job-1",
         tool_name="dns_lookup",
         tool_category="recon",

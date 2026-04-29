@@ -97,9 +97,5 @@ class Artifact:
         return self.artifact_type
 
     @property
-    def operation_id(self) -> str:
-        return self.session_id
-
-    @property
     def job_id(self) -> str | None:
         return self.source_job_id

@@ -3,20 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from app.operation_service import project_session_to_operation
 from app.scope_policy_service import ScopePolicyService
 from app.session_scope import resolve_session_identifier
 from app.session_event_service import SessionEventService
 from models.job import Job
-from models.operation import Operation
 from models.session import Session, SessionStatus
 from models.session_event import SessionEventLevel, SessionEventType
 from models.scope_policy import ScopePolicy
-from storage.repositories.operations import OperationRepository
 from storage.repositories.jobs import JobRepository
 from app.session_service import SessionService
 
-from .rate_limits import OperationRateLimiter
+from .rate_limits import SessionRateLimiter
 from .scope_validator import AdmissionDecision, AdmissionRequest, ScopeValidator, TargetDescriptor
 
 
@@ -28,12 +25,8 @@ class AdmissionContext:
     target: TargetDescriptor
     decision: AdmissionDecision
 
-    @property
-    def operation(self) -> Operation:
-        return project_session_to_operation(self.session, self.policy)
 
-
-class OperationAdmissionService:
+class SessionAdmissionService:
     RUNNABLE_SESSION_STATUSES = frozenset({SessionStatus.ACTIVE})
 
     def __init__(
@@ -42,23 +35,20 @@ class OperationAdmissionService:
         scope_policy_service: ScopePolicyService,
         job_repository: JobRepository,
         session_event_service: SessionEventService,
-        operation_repository: OperationRepository,
         scope_validator: ScopeValidator | None = None,
-        rate_limiter: OperationRateLimiter | None = None,
+        rate_limiter: SessionRateLimiter | None = None,
     ) -> None:
         self.session_service = session_service
         self.scope_policy_service = scope_policy_service
         self.job_repository = job_repository
         self.session_event_service = session_event_service
-        self.operation_repository = operation_repository
         self.scope_validator = scope_validator or ScopeValidator()
-        self.rate_limiter = rate_limiter or OperationRateLimiter()
+        self.rate_limiter = rate_limiter or SessionRateLimiter()
 
     def admit(self, request: AdmissionRequest) -> AdmissionContext:
         session_id = resolve_session_identifier(
             self.session_service,
-            request.operation_id,
-            operation_repository=self.operation_repository,
+            request.session_id,
         )
         session = self.session_service.require_session(session_id)
         policy = self.scope_policy_service.require_scope_policy_for_session(session.id)
@@ -66,7 +56,7 @@ class OperationAdmissionService:
         target = self._describe_target_for_audit(request)
 
         self.session_event_service.create_event(
-            operation_identifier=session.id,
+            session_identifier=session.id,
             job_identifier=job.id if job is not None else None,
             event_type=SessionEventType.ADMISSION_REQUESTED,
             level=SessionEventLevel.INFO,
@@ -110,7 +100,7 @@ class OperationAdmissionService:
 
         if decision.outcome == "denied":
             self.session_event_service.create_event(
-                operation_identifier=session.id,
+                session_identifier=session.id,
                 job_identifier=job.id if job is not None else None,
                 event_type=SessionEventType.ADMISSION_DENIED,
                 level=SessionEventLevel.ERROR,

@@ -14,7 +14,7 @@ class FakePlannerModel:
                 "content": (
                     '{"summary":"Planner summary.","rationale":"Planner rationale.","proposals":['
                     '{"job_type":"http_probe","target_ref":"https://example.com","arguments":{"method":"GET"},'
-                    '"summary":"Probe https://example.com.","rationale":"Recent evidence points here."}'
+                    '"summary":"Probe https://example.com.","rationale":"Recent artifacts point here."}'
                     "]}"
                 )
             },
@@ -47,22 +47,22 @@ def seed_operation_state(planner_service: PlannerService):
         allowed_protocols=["http", "https"],
     )
     job = planner_service.job_service.create_job(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         job_type="http_probe",
         target_ref="https://example.com",
     )
     job.status = JobStatus.SUCCEEDED
     planner_service.job_service.save_job(job)
-    planner_service.runtime.evidence_service.create_evidence(
-        operation_identifier=operation.public_id,
-        job_identifier=job.public_id,
-        evidence_type="http_response",
+    planner_service.runtime.artifact_service.create_artifact(
+        session_identifier=operation.public_id,
+        source_job_identifier=job.public_id,
+        artifact_type="http_response",
         target_ref="https://example.com",
         title="Homepage probe",
         summary="Captured homepage response.",
     )
     planner_service.runtime.finding_service.create_finding(
-        operation_identifier=operation.public_id,
+        session_identifier=operation.public_id,
         source_job_identifier=job.public_id,
         finding_type="tls_hostname_mismatch",
         title="TLS mismatch",

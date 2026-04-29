@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from agent.settings import Settings, get_settings
 from app.job_service import JobService
 from app.memory_service import MemoryService
-from app.operation_service import project_session_to_operation
 from app.scope_policy_service import ScopePolicyService
 from app.session_service import SessionService
 from models.job import Job
@@ -107,7 +106,6 @@ class PlannerService:
         bundle = self.get_plan_bundle(identifier)
         session = self.session_service.require_session(bundle.plan.session_id)
         policy = self.scope_policy_service.require_scope_policy_for_session(session.id)
-        operation = project_session_to_operation(session, policy)
         selectable = [
             proposal
             for proposal in bundle.proposals
@@ -123,7 +121,7 @@ class PlannerService:
                 skipped_proposals.append(proposal)
                 continue
             is_valid, reason = self.runtime.revalidate_proposal(
-                operation=operation,
+                session=session,
                 policy=policy,
                 proposal=proposal,
             )
@@ -165,8 +163,8 @@ class PlannerService:
             skipped_proposals=skipped_proposals,
         )
 
-    def build_operation_context_summary(self, session_identifier: str):
-        return self.runtime.build_operation_context_summary(session_identifier)
+    def build_session_context_summary(self, session_identifier: str):
+        return self.runtime.build_session_context_summary(session_identifier)
 
     def _write_back_memory_candidates(self, session_identifier: str) -> PlannerMemoryWritebackSummary:
         created_count = 0

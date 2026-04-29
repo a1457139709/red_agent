@@ -13,7 +13,6 @@ from models.session import SessionStatus
 from models.run import utc_now_iso
 from runtime.leases import DEFAULT_JOB_LEASE_SECONDS, lease_deadline, new_lease_token
 from storage.repositories.jobs import JobRepository
-from storage.repositories.operations import OperationRepository
 from storage.sqlite import SQLiteStorage
 
 
@@ -59,13 +58,11 @@ class JobOrchestrationService:
         repository: JobRepository,
         job_service: AppJobService,
         session_service: SessionService,
-        operation_repository: OperationRepository,
         settings: Settings,
     ) -> None:
         self.repository = repository
         self.job_service = job_service
         self.session_service = session_service
-        self.operation_repository = operation_repository
         self.settings = settings
 
     @classmethod
@@ -76,23 +73,22 @@ class JobOrchestrationService:
             repository=JobRepository(storage),
             job_service=AppJobService.from_settings(settings),
             session_service=SessionService.from_settings(settings),
-            operation_repository=OperationRepository(storage),
             settings=settings,
         )
 
     def enqueue_ready_jobs(
         self,
-        operation_identifier: str | None = None,
+        session_identifier: str | None = None,
         *,
         now: str | None = None,
     ) -> list[Job]:
         timestamp = now or utc_now_iso()
         updated_jobs: list[Job] = []
-        for operation_jobs in self._iter_operation_jobs(operation_identifier):
-            if not self._operation_is_runnable(operation_jobs[0].operation_id):
+        for session_jobs in self._iter_session_jobs(session_identifier):
+            if not self._session_is_runnable(session_jobs[0].session_id):
                 continue
-            job_map = {job.id: job for job in operation_jobs}
-            for job in operation_jobs:
+            job_map = {job.id: job for job in session_jobs}
+            for job in session_jobs:
                 if job.status != JobStatus.PENDING or job.cancel_requested_at is not None:
                     continue
                 dependencies = self._dependency_jobs(job, job_map)
@@ -141,14 +137,14 @@ class JobOrchestrationService:
 
     def cancel_requested_jobs(
         self,
-        operation_identifier: str | None = None,
+        session_identifier: str | None = None,
         *,
         now: str | None = None,
     ) -> list[Job]:
         timestamp = now or utc_now_iso()
         cancelled_jobs: list[Job] = []
         candidate_statuses = {JobStatus.PENDING, JobStatus.QUEUED}
-        for job in self._iter_candidate_jobs(operation_identifier, statuses=candidate_statuses):
+        for job in self._iter_candidate_jobs(session_identifier, statuses=candidate_statuses):
             if job.cancel_requested_at is None:
                 continue
             self._clear_lease(job)
@@ -169,15 +165,15 @@ class JobOrchestrationService:
 
     def block_jobs_with_failed_dependencies(
         self,
-        operation_identifier: str | None = None,
+        session_identifier: str | None = None,
         *,
         now: str | None = None,
     ) -> list[Job]:
         timestamp = now or utc_now_iso()
         blocked_jobs: list[Job] = []
-        for operation_jobs in self._iter_operation_jobs(operation_identifier):
-            job_map = {job.id: job for job in operation_jobs}
-            for job in operation_jobs:
+        for session_jobs in self._iter_session_jobs(session_identifier):
+            job_map = {job.id: job for job in session_jobs}
+            for job in session_jobs:
                 if job.status not in {JobStatus.PENDING, JobStatus.QUEUED}:
                     continue
                 dependencies = self._dependency_jobs(job, job_map)
@@ -213,16 +209,16 @@ class JobOrchestrationService:
 
     def recover_stale_leases(
         self,
-        operation_identifier: str | None = None,
+        session_identifier: str | None = None,
         *,
         now: str | None = None,
     ) -> list[AttemptResolution]:
         timestamp = now or utc_now_iso()
         session_id: str | None = None
-        if operation_identifier is not None:
-            session_id = self._resolve_session_id(operation_identifier)
+        if session_identifier is not None:
+            session_id = self._resolve_session_id(session_identifier)
         recovered: list[AttemptResolution] = []
-        for job in self.repository.list_stale_leases(now=timestamp, operation_id=session_id):
+        for job in self.repository.list_stale_leases(now=timestamp, session_id=session_id):
             if job.cancel_requested_at is not None:
                 cancelled_job = self._cancel_running_job(
                     job=job,
@@ -488,20 +484,20 @@ class JobOrchestrationService:
 
     def _iter_candidate_jobs(
         self,
-        operation_identifier: str | None,
+        session_identifier: str | None,
         *,
         statuses: set[JobStatus],
     ) -> list[Job]:
         jobs = self.repository.list_by_statuses(statuses)
-        if operation_identifier is None:
+        if session_identifier is None:
             return jobs
-        session_id = self._resolve_session_id(operation_identifier)
+        session_id = self._resolve_session_id(session_identifier)
         return [job for job in jobs if job.session_id == session_id]
 
-    def _iter_operation_jobs(self, operation_identifier: str | None) -> list[list[Job]]:
+    def _iter_session_jobs(self, session_identifier: str | None) -> list[list[Job]]:
         grouped: dict[str, list[Job]] = defaultdict(list)
-        if operation_identifier is not None:
-            session_id = self._resolve_session_id(operation_identifier)
+        if session_identifier is not None:
+            session_id = self._resolve_session_id(session_identifier)
             jobs = self.repository.list(session_id, limit=None)
             return [jobs] if jobs else []
         for job in self.repository.list_by_statuses(
@@ -516,7 +512,7 @@ class JobOrchestrationService:
                 JobStatus.CANCELLED,
             }
         ):
-            grouped[job.operation_id].append(job)
+            grouped[job.session_id].append(job)
         return list(grouped.values())
 
     def _dependency_jobs(self, job: Job, job_map: dict[str, Job]) -> list[Job] | None:
@@ -528,16 +524,12 @@ class JobOrchestrationService:
             dependencies.append(dependency)
         return dependencies
 
-    def _operation_is_runnable(self, operation_identifier: str) -> bool:
-        session = self.session_service.require_session(self._resolve_session_id(operation_identifier))
+    def _session_is_runnable(self, session_identifier: str) -> bool:
+        session = self.session_service.require_session(self._resolve_session_id(session_identifier))
         return session.status in RUNNABLE_SESSION_STATUSES
 
     def _resolve_session_id(self, identifier: str) -> str:
-        return resolve_session_identifier(
-            self.session_service,
-            identifier,
-            operation_repository=self.operation_repository,
-        )
+        return resolve_session_identifier(self.session_service, identifier)
 
 
 def job_log_level(status: JobStatus) -> JobLogLevel:
