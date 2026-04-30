@@ -1,10 +1,8 @@
 from pathlib import *
 
-from langchain.tools import tool
-
 from utils.safety import resolve_safe_path
 
-from .registry import register_tool
+from .registry import invokable
 
 
 tool_schema = {
@@ -23,12 +21,7 @@ tool_schema = {
 }
 
 
-@register_tool
-@tool(
-    "search",
-    description="Search file contents and return complete matching lines.",
-    args_schema=tool_schema,
-)
+@invokable
 def search(query: str, file_path: str = "."):
     try:
         safe_path = resolve_safe_path(file_path)

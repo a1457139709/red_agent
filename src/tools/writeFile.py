@@ -1,10 +1,8 @@
 from pathlib import *
 
-from langchain.tools import tool
-
 from utils.safety import resolve_safe_path
 
-from .registry import register_tool
+from .registry import invokable
 
 
 tool_schema = {
@@ -23,15 +21,7 @@ tool_schema = {
 }
 
 
-@register_tool
-@tool(
-    "write_file",
-    description=(
-        "Write content to a file. Create the file if it does not exist, otherwise "
-        "overwrite it completely. Use edit_file for targeted edits."
-    ),
-    args_schema=tool_schema,
-)
+@invokable
 def write_file(file_path: str, content: str) -> str:
     try:
         safe_path = resolve_safe_path(file_path)

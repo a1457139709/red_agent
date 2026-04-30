@@ -1,10 +1,8 @@
 from pathlib import *
 
-from langchain.tools import tool
-
 from utils.safety import resolve_safe_path
 
-from .registry import register_tool
+from .registry import invokable
 
 
 tool_schema = {
@@ -27,15 +25,7 @@ tool_schema = {
 }
 
 
-@register_tool
-@tool(
-    "edit_file",
-    description=(
-        "Replace a specific string in a file. old_string must appear exactly once, "
-        "or the edit is rejected. Use read_file first to confirm the target text."
-    ),
-    args_schema=tool_schema,
-)
+@invokable
 def edit_file(file_path: str, old_string: str, new_string: str) -> str:
     try:
         safe_path = resolve_safe_path(file_path)

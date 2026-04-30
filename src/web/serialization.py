@@ -33,6 +33,7 @@ from .contracts import (
     ConversationSnapshotDto,
     ControllerResultDto,
     DashboardDto,
+    ExecutionProgressDto,
     ExecutionStepDto,
     FindingDto,
     FindingExplanationDto,
@@ -42,6 +43,9 @@ from .contracts import (
     SessionEventDto,
     SessionHistoryDto,
     SessionSummaryDto,
+    ToolEventDto,
+    ToolPresentationDto,
+    ToolResultEnvelopeDto,
 )
 
 
@@ -254,8 +258,67 @@ def serialize_confirmation_decision(
 
 def serialize_execution_progress_event(
     event: ExecutionProgressEvent,
-) -> dict[str, Any]:
-    return event.to_dict()
+) -> ExecutionProgressDto:
+    payload = event.to_dict()
+    raw_tool_event = event.payload.get("tool_event") if event.payload else None
+    tool_event = (
+        serialize_tool_event_payload(raw_tool_event)
+        if isinstance(raw_tool_event, dict)
+        else None
+    )
+    return ExecutionProgressDto(
+        event_type=event.event_type.value,
+        session_id=event.session_id,
+        session_public_id=event.session_public_id,
+        step_type=event.step_type,
+        step_label=event.step_label,
+        target_summary=event.target_summary,
+        message=event.message,
+        action_name=event.action_name,
+        risk_level=event.risk_level,
+        reason=event.reason,
+        timestamp=event.timestamp,
+        payload=payload["payload"],
+        tool_event=tool_event,
+    )
+
+
+def serialize_tool_event_payload(payload: dict[str, Any]) -> ToolEventDto:
+    output = payload.get("output")
+    return ToolEventDto(
+        event_type=str(payload.get("event_type") or ""),
+        tool_name=str(payload.get("tool_name") or ""),
+        capability=payload.get("capability"),
+        target=payload.get("target"),
+        args_summary=payload.get("args_summary"),
+        result_summary=payload.get("result_summary"),
+        error=payload.get("error"),
+        input=dict(payload.get("input") or {}),
+        output=(
+            serialize_tool_result_envelope(output)
+            if isinstance(output, dict)
+            else None
+        ),
+    )
+
+
+def serialize_tool_result_envelope(payload: dict[str, Any]) -> ToolResultEnvelopeDto:
+    presentation = payload.get("presentation")
+    presentation_dto = None
+    if isinstance(presentation, dict):
+        presentation_dto = ToolPresentationDto(
+            title=presentation.get("title"),
+            group=presentation.get("group"),
+            accent=presentation.get("accent"),
+        )
+    return ToolResultEnvelopeDto(
+        summary=str(payload.get("summary") or ""),
+        model_text=str(payload.get("model_text") or ""),
+        data=dict(payload.get("data") or {}),
+        artifacts=list(payload.get("artifacts") or []),
+        findings=list(payload.get("findings") or []),
+        presentation=presentation_dto,
+    )
 
 
 def serialize_record_lookup_payload(

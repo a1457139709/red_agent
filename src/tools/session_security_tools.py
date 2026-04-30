@@ -3,15 +3,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from langchain.tools import tool
-
 from models.scope_policy import ScopePolicy
 from orchestration.scope_validator import AdmissionOutcome, ScopeValidator
 from tools.error_signals import RECOVERABLE_TOOL_ERROR_PREFIX
 from tools.executor import SecurityToolExecutionError, SecurityToolExecutor
 from utils.truncate import truncate_tool_output
 
-from .registry import register_tool
+from .registry import invokable
 from .security import AVAILABLE_SECURITY_TOOLS
 
 
@@ -100,35 +98,7 @@ def _run_security_tool(
     return _format_result(tool_name, result.summary, payload)
 
 
-@register_tool
-@tool(
-    "dns_lookup",
-    description=(
-        "Run a DNS lookup using the typed security runtime and return a structured summary."
-    ),
-    args_schema={
-        "type": "object",
-        "properties": {
-            "target": {
-                "type": "string",
-                "description": "Domain or hostname to query.",
-            },
-            "record_type": {
-                "type": "string",
-                "description": "DNS record type such as A, AAAA, CNAME, TXT, MX.",
-            },
-            "nameserver": {
-                "type": "string",
-                "description": "Resolver IP address.",
-            },
-            "timeout_seconds": {
-                "type": "integer",
-                "description": "Request timeout in seconds.",
-            },
-        },
-        "required": ["target"],
-    },
-)
+@invokable
 def dns_lookup(
     target: str,
     record_type: str = "A",
@@ -146,39 +116,7 @@ def dns_lookup(
     )
 
 
-@register_tool
-@tool(
-    "http_probe",
-    description=(
-        "Probe an HTTP(S) target with the typed security runtime and return structured metadata."
-    ),
-    args_schema={
-        "type": "object",
-        "properties": {
-            "target": {
-                "type": "string",
-                "description": "Absolute URL target.",
-            },
-            "method": {
-                "type": "string",
-                "description": "HTTP method (GET or HEAD).",
-            },
-            "max_body_chars": {
-                "type": "integer",
-                "description": "Maximum response body characters to include.",
-            },
-            "timeout_seconds": {
-                "type": "integer",
-                "description": "Request timeout in seconds.",
-            },
-            "headers": {
-                "type": "object",
-                "description": "Optional request headers.",
-            },
-        },
-        "required": ["target"],
-    },
-)
+@invokable
 def http_probe(
     target: str,
     method: str = "GET",
@@ -198,31 +136,7 @@ def http_probe(
     )
 
 
-@register_tool
-@tool(
-    "tls_inspect",
-    description=(
-        "Inspect TLS certificate and negotiated ciphers for a host or host:port target."
-    ),
-    args_schema={
-        "type": "object",
-        "properties": {
-            "target": {
-                "type": "string",
-                "description": "Host, host:port, or URL target.",
-            },
-            "port": {
-                "type": "integer",
-                "description": "Optional TLS port override.",
-            },
-            "timeout_seconds": {
-                "type": "integer",
-                "description": "Connection timeout in seconds.",
-            },
-        },
-        "required": ["target"],
-    },
-)
+@invokable
 def tls_inspect(
     target: str,
     port: int | None = None,
@@ -238,39 +152,7 @@ def tls_inspect(
     )
 
 
-@register_tool
-@tool(
-    "banner_grab",
-    description=(
-        "Grab a service banner from a host:port target using the typed security runtime."
-    ),
-    args_schema={
-        "type": "object",
-        "properties": {
-            "target": {
-                "type": "string",
-                "description": "Host or host:port target.",
-            },
-            "port": {
-                "type": "integer",
-                "description": "Optional port override when target omits port.",
-            },
-            "probe": {
-                "type": "string",
-                "description": "Probe mode (none/http/redis).",
-            },
-            "max_read_bytes": {
-                "type": "integer",
-                "description": "Maximum bytes to read from the service banner.",
-            },
-            "timeout_seconds": {
-                "type": "integer",
-                "description": "Connection timeout in seconds.",
-            },
-        },
-        "required": ["target"],
-    },
-)
+@invokable
 def banner_grab(
     target: str,
     port: int | None = None,
@@ -290,31 +172,7 @@ def banner_grab(
     )
 
 
-@register_tool
-@tool(
-    "port_scan",
-    description=(
-        "Run a typed TCP port scan and return open/closed status for requested ports."
-    ),
-    args_schema={
-        "type": "object",
-        "properties": {
-            "target": {
-                "type": "string",
-                "description": "Host, host:port, or URL target.",
-            },
-            "ports": {
-                "type": ["array", "string"],
-                "description": "Port list, e.g. [80,443] or '80,443'.",
-            },
-            "timeout_seconds": {
-                "type": "integer",
-                "description": "Connection timeout in seconds.",
-            },
-        },
-        "required": ["target"],
-    },
-)
+@invokable
 def port_scan(
     target: str,
     ports: list[int] | str | None = None,

@@ -297,8 +297,9 @@ class ForegroundRunner:
                     session_public_id=session.public_id,
                     step_type="tool",
                     step_label=event.tool_name,
-                    target_summary=session.target_summary,
+                    target_summary=event.target or session.target_summary,
                     message=message,
+                    payload={"tool_event": event.to_payload()},
                 )
             )
 

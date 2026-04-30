@@ -506,7 +506,7 @@ def test_render_controller_result_uses_callback_presenter(tmp_path):
     assert any("Mode: redteam" in message for message in outputs)
 
 
-def test_run_interactive_shell_rejects_plain_text_even_with_active_skill(
+def test_run_interactive_shell_routes_plain_text_through_controller_and_skill_bridge(
     monkeypatch,
     tmp_path,
 ):
@@ -518,17 +518,15 @@ def test_run_interactive_shell_rejects_plain_text_even_with_active_skill(
     capability_service = main_module.create_capability_service()
     execution_service = FakeExecutionService()
     tool_executor = ToolExecutor(build_tool_registry())
-    errors: list[str] = []
+    captured = {"answers": []}
     responses = iter(["inspect the configs", "/quit"])
 
     def fake_input(_prompt):
         return next(responses)
 
-    monkeypatch.setattr(
-        main_module,
-        "get_presenter",
-        lambda: main_module.CliPresenter.for_callbacks(error_output=errors.append),
-    )
+    monkeypatch.setattr(main_module.ColoredOutput, "print_final_answer", captured["answers"].append)
+    monkeypatch.setattr(main_module.ColoredOutput, "print_error", captured["answers"].append)
+    monkeypatch.setattr(main_module.ColoredOutput, "print_info", captured["answers"].append)
 
     asyncio.run(
         run_interactive_shell(
@@ -544,14 +542,17 @@ def test_run_interactive_shell_rejects_plain_text_even_with_active_skill(
         )
     )
 
-    assert execution_service.calls == []
-    assert shell_state.active_session_mode is None
-    assert shell_state.active_session_public_id is None
-    assert build_prompt(shell_state) == "\nskill:security-audit normal > "
-    assert any("Unknown command: inspect the configs. Type /help for available commands." in message for message in errors)
+    assert len(execution_service.calls) == 1
+    assert execution_service.calls[0]["prompt_text"] == "inspect the configs"
+    assert execution_service.calls[0]["skill_name"] == "security-audit"
+    assert shell_state.active_session_mode is not None
+    assert shell_state.active_session_mode.value == "normal"
+    assert shell_state.active_session_public_id is not None
+    assert build_prompt(shell_state).startswith("\nskill:security-audit normal:")
+    assert "done" in captured["answers"]
 
 
-def test_run_interactive_shell_rejects_plain_text_with_active_session_binding(
+def test_run_interactive_shell_keeps_plain_text_on_session_flow_with_active_session_binding(
     monkeypatch,
     tmp_path,
 ):
@@ -567,17 +568,15 @@ def test_run_interactive_shell_rejects_plain_text_with_active_session_binding(
     capability_service = main_module.create_capability_service()
     execution_service = FakeExecutionService()
     tool_executor = ToolExecutor(build_tool_registry())
-    errors: list[str] = []
+    captured = {"answers": []}
     responses = iter(["inspect the configs", "/quit"])
 
     def fake_input(_prompt):
         return next(responses)
 
-    monkeypatch.setattr(
-        main_module,
-        "get_presenter",
-        lambda: main_module.CliPresenter.for_callbacks(error_output=errors.append),
-    )
+    monkeypatch.setattr(main_module.ColoredOutput, "print_final_answer", captured["answers"].append)
+    monkeypatch.setattr(main_module.ColoredOutput, "print_error", captured["answers"].append)
+    monkeypatch.setattr(main_module.ColoredOutput, "print_info", captured["answers"].append)
 
     asyncio.run(
         run_interactive_shell(
@@ -593,14 +592,15 @@ def test_run_interactive_shell_rejects_plain_text_with_active_session_binding(
         )
     )
 
-    assert execution_service.calls == []
+    assert len(execution_service.calls) == 1
+    assert execution_service.calls[0]["prompt_text"] == "inspect the configs"
     assert shell_state.active_session_mode == SessionMode.NORMAL
     assert shell_state.active_session_public_id is not None
     assert build_prompt(shell_state).startswith("\nnormal:")
-    assert any("Unknown command: inspect the configs. Type /help for available commands." in message for message in errors)
+    assert "done" in captured["answers"]
 
 
-def test_run_interactive_shell_redteam_command_sets_requested_mode_only(
+def test_run_interactive_shell_redteam_command_sets_mode_and_next_plain_text_executes(
     monkeypatch,
     tmp_path,
 ):
@@ -632,9 +632,11 @@ def test_run_interactive_shell_redteam_command_sets_requested_mode_only(
     )
 
     assert shell_state.requested_session_mode == SessionMode.REDTEAM
-    assert shell_state.active_session_mode is None
-    assert build_prompt(shell_state) == "\nredteam > "
-    assert execution_service.calls == []
+    assert shell_state.active_session_mode is not None
+    assert shell_state.active_session_mode.value == "redteam"
+    assert build_prompt(shell_state).startswith("\nredteam:")
+    assert len(execution_service.calls) == 1
+    assert execution_service.calls[0]["prompt_text"] == "Scan example.com for open services"
 
 
 def test_run_interactive_shell_ctrl_d_exits_with_goodbye(monkeypatch, tmp_path):

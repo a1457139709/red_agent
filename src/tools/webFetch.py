@@ -8,11 +8,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-from langchain.tools import tool
-
 from utils.truncate import truncate_tool_output
 
-from .registry import register_tool
+from .registry import invokable
 
 USER_AGENT = "red-code/0.1 (+local-agent)"
 DEFAULT_TIMEOUT_SECONDS = 10
@@ -232,15 +230,7 @@ def fetch_web_document(url: str, timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS)
     )
 
 
-@register_tool
-@tool(
-    "web_fetch",
-    description=(
-        "Fetch an http(s) page and extract readable text. Use this to inspect a known URL "
-        "without relying on local shell tools."
-    ),
-    args_schema=tool_schema,
-)
+@invokable
 def web_fetch(
     url: str,
     max_chars: int = DEFAULT_MAX_CHARS,

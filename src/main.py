@@ -1659,10 +1659,6 @@ async def run_interactive_shell(
         if not question:
             continue
 
-        if not question.startswith("/"):
-            ui.show_error(f"Unknown command: {question}. Type /help for available commands.")
-            continue
-
         try:
             interaction_outcome = await interaction_service.handle_message(
                 question=question,

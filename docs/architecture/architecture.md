@@ -33,7 +33,7 @@ src/
   models/                # domain entities and serialization helpers
   capabilities/          # capability manifests, prompt bodies, and discovery helpers
   storage/               # SQLite repositories and schema management
-  tools/                 # registered tools, executor, and runtime safety policy
+  tools/                 # tool factories, registered tools, executor, and runtime safety policy
   utils/                 # confirmation, truncation, and path/shell safety helpers
 ```
 
@@ -104,7 +104,23 @@ If a local capability has the same name as a built-in capability, the local defi
 
 ### 4. Tool Execution and Safety
 
-The callable tool set exposed by `src/tools/__init__.py` is currently:
+The callable tool set exposed by `src/tools/__init__.py` is built from factory definitions in `src/tools/definitions.py`. Each tool definition owns:
+
+- canonical tool name and model-facing description
+- Pydantic input model and generated JSON Schema
+- safety capability and fail-closed concurrency/read/write metadata
+- CLI/Web presentation hints that remain outside business logic
+
+Tool implementations are plain local callables wrapped by the project-owned `invokable` adapter where direct `.invoke(...)` compatibility is useful in tests. LangChain `StructuredTool` objects are generated only by `ToolDefinition.build_langchain_tool()` at the model boundary; the source tools themselves no longer use LangChain decorators or a global decorator registry.
+
+Every factory tool returns, or is normalized into, a `ToolResultEnvelope` containing:
+
+- `summary` for execution logs and compact progress rows
+- `model_text` for the agent's observation stream
+- `data`, `artifacts`, and `findings` for structured consumers
+- `presentation` hints for CLI and Web renderers
+
+The current base tool set is:
 
 - `list_dir`
 - `read_file`
@@ -126,7 +142,10 @@ The callable tool set exposed by `src/tools/__init__.py` is currently:
 - bounded shell execution with explicit shell selection, timeout, and non-zero exit reporting
 - UTF-8-first shell output decoding with Windows fallback codecs to avoid mojibake
 - task-scoped audit and tool-event callbacks
+- structured tool-event payloads for CLI and Web rendering
 - unknown tool requests normalized into audited tool errors
+
+`src/cli/ui.py` renders these structured envelopes through Rich without coupling Web consumers to terminal components. `src/web/contracts.py` and `src/web/serialization.py` expose matching DTOs such as `ExecutionProgressDto`, `ToolEventDto`, and `ToolResultEnvelopeDto` for future API/Web delivery.
 
 `src/tools/policy.py` maps tools into capability tiers:
 

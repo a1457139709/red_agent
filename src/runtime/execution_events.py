@@ -32,6 +32,7 @@ class ExecutionProgressEvent:
     action_name: str | None = None
     risk_level: str | None = None
     reason: str | None = None
+    payload: dict[str, Any] = field(default_factory=dict)
     timestamp: str = field(default_factory=utc_now_iso)
 
     def to_dict(self) -> dict[str, Any]:
@@ -46,6 +47,7 @@ class ExecutionProgressEvent:
             "action_name": self.action_name,
             "risk_level": self.risk_level,
             "reason": self.reason,
+            "payload": dict(self.payload),
             "timestamp": self.timestamp,
         }
 

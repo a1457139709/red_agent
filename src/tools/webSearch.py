@@ -5,11 +5,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
-from langchain.tools import tool
-
 from utils.truncate import truncate_tool_output
 
-from .registry import register_tool
+from .registry import invokable
 from .webFetch import (
     DEFAULT_TIMEOUT_SECONDS,
     USER_AGENT,
@@ -137,15 +135,7 @@ def _perform_search(query: str, timeout_seconds: int) -> list[dict[str, str]]:
     return [result for result in parser.results if result.get("title") and result.get("url")]
 
 
-@register_tool
-@tool(
-    "web_search",
-    description=(
-        "Search the public web for a query and return a compact result list with titles, "
-        "URLs, and snippets."
-    ),
-    args_schema=tool_schema,
-)
+@invokable
 def web_search(
     query: str,
     max_results: int = DEFAULT_MAX_RESULTS,

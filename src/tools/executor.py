@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import json
 from typing import Any
@@ -10,6 +10,7 @@ from models.scope_policy import ScopePolicy
 from orchestration.scope_validator import TargetDescriptor
 from tools.contracts import SecurityTool, SecurityToolInvocation, SecurityToolResult
 from tools.error_signals import RECOVERABLE_TOOL_ERROR_PREFIX
+from tools.factory import ToolDefinition, ToolResultEnvelope
 from tools.policy import CapabilityTier, RuntimeSafetyPolicy, SafetyAuditEvent, get_tool_capability
 from utils.safety import detect_danger, is_sensitive_path, resolve_safe_path
 
@@ -27,18 +28,28 @@ class ToolExecutionEvent:
     args_summary: str | None = None
     result_summary: str | None = None
     error: str | None = None
+    target: str | None = None
+    input_payload: dict[str, Any] = field(default_factory=dict)
+    output_payload: dict[str, Any] = field(default_factory=dict)
 
-    def to_payload(self) -> dict[str, str]:
-        payload = {
+    def to_payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "event_type": self.event_type,
             "tool_name": self.tool_name,
             "capability": self.capability.value,
         }
+        if self.target:
+            payload["target"] = self.target
         if self.args_summary:
             payload["args_summary"] = self.args_summary
         if self.result_summary:
             payload["result_summary"] = self.result_summary
         if self.error:
             payload["error"] = self.error
+        if self.input_payload:
+            payload["input"] = self.input_payload
+        if self.output_payload:
+            payload["output"] = self.output_payload
         return payload
 
 
@@ -135,7 +146,13 @@ class ToolExecutor:
         return self._safety_policy
 
     def get_tools(self) -> list:
-        return list(self._tools.values())
+        tools = []
+        for tool in self._tools.values():
+            if isinstance(tool, ToolDefinition):
+                tools.append(tool.build_langchain_tool())
+            else:
+                tools.append(tool)
+        return tools
 
     def restricted_to(self, allowed_names: list[str] | set[str] | tuple[str, ...]) -> "ToolExecutor":
         allowed = set(allowed_names)
@@ -207,6 +224,7 @@ class ToolExecutor:
             target=target,
             args_summary=args_summary,
         )
+        input_payload = self._build_input_payload(effective_args)
 
         # Emit the invocation before policy checks so blocked attempts still show
         # up in the execution trail alongside their audit events.
@@ -215,6 +233,8 @@ class ToolExecutor:
             tool_name=tool_name,
             capability=capability,
             args_summary=args_summary,
+            target=target,
+            input_payload=input_payload,
         )
 
         gate_decision = self._apply_execution_gate(
@@ -228,6 +248,9 @@ class ToolExecutor:
                 capability=capability,
                 args_summary=args_summary,
                 error=gate_decision.message,
+                target=target,
+                input_payload=input_payload,
+                output_payload={"error": gate_decision.message},
             )
             raise ToolExecutionBlockedError(
                 tool_name,
@@ -245,6 +268,9 @@ class ToolExecutor:
                 capability=capability,
                 args_summary=args_summary,
                 error=error,
+                target=target,
+                input_payload=input_payload,
+                output_payload={"error": error},
             )
             self._emit_audit(
                 event_type="operation_failed",
@@ -263,6 +289,9 @@ class ToolExecutor:
                 capability=capability,
                 args_summary=args_summary,
                 error=denial,
+                target=target,
+                input_payload=input_payload,
+                output_payload={"error": denial},
             )
             return denial
 
@@ -283,6 +312,9 @@ class ToolExecutor:
                     capability=capability,
                     args_summary=args_summary,
                     error=denial,
+                    target=target,
+                    input_payload=input_payload,
+                    output_payload={"error": denial},
                 )
                 return denial
 
@@ -299,6 +331,9 @@ class ToolExecutor:
                     capability=capability,
                     args_summary=args_summary,
                     error=denial,
+                    target=target,
+                    input_payload=input_payload,
+                    output_payload={"error": denial},
                 )
                 return denial
 
@@ -311,11 +346,15 @@ class ToolExecutor:
                     capability=capability,
                     args_summary=args_summary,
                     error=denial,
+                    target=target,
+                    input_payload=input_payload,
+                    output_payload={"error": denial},
                 )
                 return denial
 
         try:
-            result = tool.invoke(effective_args)
+            envelope = self._execute_registered_tool(tool, effective_args)
+            result = envelope.to_model_text()
             recoverable_error = self._extract_recoverable_tool_error(result)
             if recoverable_error is not None:
                 self._emit_tool_event(
@@ -324,14 +363,21 @@ class ToolExecutor:
                     capability=capability,
                     args_summary=args_summary,
                     error=recoverable_error,
+                    target=target,
+                    input_payload=input_payload,
+                    output_payload={"error": recoverable_error},
                 )
                 return recoverable_error
+            output_payload = envelope.to_event_payload()
             self._emit_tool_event(
                 event_type="tool_completed",
                 tool_name=tool_name,
                 capability=capability,
                 args_summary=args_summary,
-                result_summary=self._summarize_result(result),
+                result_summary=envelope.summary,
+                target=target,
+                input_payload=input_payload,
+                output_payload=output_payload,
             )
             return result
         except Exception as exc:
@@ -342,6 +388,9 @@ class ToolExecutor:
                 capability=capability,
                 args_summary=args_summary,
                 error=error,
+                target=target,
+                input_payload=input_payload,
+                output_payload={"error": error},
             )
             if capability != CapabilityTier.READ:
                 self._emit_audit(
@@ -541,6 +590,9 @@ class ToolExecutor:
         args_summary: str | None = None,
         result_summary: str | None = None,
         error: str | None = None,
+        target: str | None = None,
+        input_payload: dict[str, Any] | None = None,
+        output_payload: dict[str, Any] | None = None,
     ) -> None:
         if self._on_tool_event is None:
             return
@@ -552,6 +604,9 @@ class ToolExecutor:
                 args_summary=args_summary,
                 result_summary=result_summary,
                 error=error,
+                target=target,
+                input_payload=dict(input_payload or {}),
+                output_payload=dict(output_payload or {}),
             )
         )
 
@@ -559,6 +614,63 @@ class ToolExecutor:
         if len(value) <= limit:
             return value
         return value[: limit - 3] + "..."
+
+    def _build_input_payload(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._compact_payload(args, limit=500)
+
+    def _build_output_payload(self, result: object) -> dict[str, Any]:
+        if isinstance(result, SecurityToolResult):
+            return {
+                "summary": result.summary,
+                "target": result.target,
+                "payload": self._compact_payload(result.payload, limit=2000),
+                "artifact_count": len(result.evidence_candidates),
+                "finding_count": len(result.finding_candidates),
+            }
+        if isinstance(result, ToolResultEnvelope):
+            return result.to_event_payload()
+        text = str(result)
+        structured = self._extract_json_tail(text)
+        if structured is not None:
+            return self._compact_payload(structured, limit=2000)
+        return {"text": self._truncate(text, limit=2000)}
+
+    def _execute_registered_tool(self, tool: object, args: dict[str, Any]) -> ToolResultEnvelope:
+        if isinstance(tool, ToolDefinition):
+            return tool.run(args)
+        result = tool.invoke(args)
+        if isinstance(result, ToolResultEnvelope):
+            return result
+        return ToolResultEnvelope(
+            summary=self._summarize_result(result),
+            model_text=str(result),
+            data=self._build_output_payload(str(result)),
+        )
+
+    def _extract_json_tail(self, text: str) -> dict[str, Any] | None:
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        for line in reversed(lines[-3:]):
+            if not line.startswith("{"):
+                continue
+            try:
+                decoded = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(decoded, dict):
+                return decoded
+        return None
+
+    def _compact_payload(self, value: Any, *, limit: int) -> Any:
+        if isinstance(value, dict):
+            return {
+                str(key): self._compact_payload(item, limit=limit)
+                for key, item in value.items()
+            }
+        if isinstance(value, (list, tuple)):
+            return [self._compact_payload(item, limit=limit) for item in value]
+        if isinstance(value, str):
+            return self._truncate(value, limit=limit)
+        return value
 
     def _extract_recoverable_tool_error(self, result: object) -> str | None:
         if not isinstance(result, str):

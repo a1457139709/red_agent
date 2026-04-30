@@ -30,7 +30,7 @@ Use this project when you want a local assistant that can:
 - Interactive Rich-based CLI with slash-command completion and persistent input history.
 - Natural-language first controller flow with slash commands for advanced control.
 - OpenAI-compatible model configuration through environment variables.
-- LangChain tool execution for file, shell, web, and session-facing security tools.
+- Factory-defined tool execution for file, shell, web, and session-facing security tools, with LangChain adapters generated at the boundary.
 - Capability manifests for prompt-assist skills and executable modules.
 - Session persistence through SQLite plus file-backed checkpoint and artifact storage.
 - Redteam sessions with scope policies, admission checks, confirmation gates, job leases, retries, and cooperative cancellation.
@@ -48,16 +48,16 @@ Create a virtual environment:
 
 ```bash
 # macOS / Linux
-python3.12 -m venv .venv
-. .venv/bin/activate
+python3.12 -m venv venv
+. venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
 ```powershell
 # Windows PowerShell
-py -3.12 -m venv .venv
-.venv\Scripts\Activate.ps1
+py -3.12 -m venv venv
+venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
@@ -98,11 +98,11 @@ SYSTEM_PROMPT_RESERVE=2000
 Start the CLI from the repository root:
 
 ```bash
-.venv/bin/python src/main.py
+venv/bin/python src/main.py
 ```
 
 ```powershell
-.venv\Scripts\python src\main.py
+venv\Scripts\python src\main.py
 ```
 
 Startup prints an ASCII banner and a short command guide:
@@ -391,17 +391,17 @@ Built-in executable modules:
 Run the test suite:
 
 ```bash
-.venv/bin/python -m pytest
+venv/bin/python -m pytest
 ```
 
 ```powershell
-.venv\Scripts\python -m pytest
+venv\Scripts\python -m pytest
 ```
 
 Useful focused checks:
 
 ```bash
-.venv/bin/python -m pytest tests/test_session_public_exports.py tests/test_module_service.py tests/test_capability_service.py
+venv/bin/python -m pytest tests/test_session_public_exports.py tests/test_module_service.py tests/test_capability_service.py
 ```
 
 ## Project Structure
@@ -416,7 +416,7 @@ Core source areas:
 - `src/orchestration/`: admission, scope validation, scheduler, worker-facing job orchestration, and planner runtime
 - `src/runtime/`: execution runtime, worker runtime, leases, isolation, and timeouts
 - `src/storage/`: SQLite repositories and file path helpers
-- `src/tools/`: file, shell, web, and typed security tools
+- `src/tools/`: factory-defined file, shell, web, and typed security tools plus structured execution events
 - `src/capabilities/`: built-in skill and module manifests
 - `src/web/`: transport-neutral DTOs and interaction adapter contracts
 - `docs/`: maintained architecture and development documentation

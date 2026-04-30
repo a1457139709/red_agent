@@ -1,11 +1,9 @@
 from pathlib import *
 
-from langchain.tools import tool
-
 from utils.safety import resolve_safe_path
 from utils.truncate import truncate_tool_output
 
-from .registry import register_tool
+from .registry import invokable
 
 
 tool_schema = {
@@ -28,15 +26,7 @@ tool_schema = {
 }
 
 
-@register_tool
-@tool(
-    "read_file",
-    description=(
-        "Read a local file. For large files, prefer offset + limit to read in chunks. "
-        "Output includes line numbers for easier navigation."
-    ),
-    args_schema=tool_schema,
-)
+@invokable
 def read_file(file_path: str, offset: int = None, limit: int = None) -> str:
     try:
         safe_path = resolve_safe_path(file_path)

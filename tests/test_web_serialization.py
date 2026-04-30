@@ -3,7 +3,12 @@ from app.session_service import SessionService
 from controller.contracts import ControllerIntent, ControllerResult
 from models.conversation_context import ConversationContext
 from models.session import SessionMode, SessionStatus
-from web.serialization import serialize_controller_result, serialize_conversation_snapshot
+from runtime.execution_events import ExecutionEventType, ExecutionProgressEvent
+from web.serialization import (
+    serialize_controller_result,
+    serialize_conversation_snapshot,
+    serialize_execution_progress_event,
+)
 
 
 def build_settings(tmp_path) -> Settings:
@@ -81,3 +86,42 @@ def test_web_serialization_converts_missing_field_error():
     assert dto.missing_field_error.allowed_values == {
         "session_scope": ["current", "latest", "S0001"],
     }
+
+
+def test_web_serialization_converts_tool_progress_payload():
+    dto = serialize_execution_progress_event(
+        ExecutionProgressEvent(
+            event_type=ExecutionEventType.STEP_COMPLETED,
+            session_id="session-1",
+            session_public_id="S0001",
+            step_type="tool",
+            step_label="port_scan",
+            payload={
+                "tool_event": {
+                    "event_type": "tool_completed",
+                    "tool_name": "port_scan",
+                    "capability": "execute",
+                    "input": {"target": "127.0.0.1", "ports": [80]},
+                    "output": {
+                        "summary": "checked",
+                        "model_text": "checked\n{}",
+                        "data": {"open_ports": []},
+                        "artifacts": [],
+                        "findings": [],
+                        "presentation": {
+                            "title": "PORT SCAN",
+                            "group": "security",
+                            "accent": "green",
+                        },
+                    },
+                }
+            },
+        )
+    )
+
+    assert dto.tool_event is not None
+    assert dto.tool_event.tool_name == "port_scan"
+    assert dto.tool_event.output is not None
+    assert dto.tool_event.output.data == {"open_ports": []}
+    assert dto.tool_event.output.presentation is not None
+    assert dto.tool_event.output.presentation.group == "security"

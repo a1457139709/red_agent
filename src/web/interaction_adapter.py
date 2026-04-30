@@ -117,7 +117,7 @@ class _WebInteractionPort(InteractionPort):
     async def emit_execution_progress(self, event, context: ConversationContext) -> None:
         await self._append_event(
             event_kind=WebEventKind.EXECUTION_PROGRESS,
-            payload=serialize_execution_progress_event(event),
+            payload=to_payload(serialize_execution_progress_event(event)),
             timestamp=event.timestamp,
             session_id=event.session_id,
             session_public_id=event.session_public_id,

@@ -1224,6 +1224,15 @@ class CliPresenter:
         self._emit(Group(*renderables))
 
     def show_execution_progress(self, event: ExecutionProgressEvent) -> None:
+        tool_event = event.payload.get("tool_event") if event.payload else None
+        if isinstance(tool_event, dict) and event.event_type in {
+            ExecutionEventType.STEP_STARTED,
+            ExecutionEventType.STEP_COMPLETED,
+            ExecutionEventType.STEP_FAILED,
+        }:
+            self._emit_tool_progress_panel(event, tool_event)
+            return
+
         if event.event_type == ExecutionEventType.CONFIRMATION_REQUIRED:
             details = [
                 f"Session: {event.session_public_id}",
@@ -1333,6 +1342,101 @@ class CliPresenter:
             ),
             kind=sink_kind,
         )
+
+    def _emit_tool_progress_panel(
+        self,
+        event: ExecutionProgressEvent,
+        tool_event: dict,
+    ) -> None:
+        tool_name = str(tool_event.get("tool_name") or event.step_label or "tool")
+        status_label = {
+            ExecutionEventType.STEP_STARTED: "STEP STARTED",
+            ExecutionEventType.STEP_COMPLETED: "STEP COMPLETED",
+            ExecutionEventType.STEP_FAILED: "STEP FAILED",
+        }[event.event_type]
+        border_style = {
+            ExecutionEventType.STEP_STARTED: "cyan",
+            ExecutionEventType.STEP_COMPLETED: "green",
+            ExecutionEventType.STEP_FAILED: "red",
+        }[event.event_type]
+        renderables: list[RenderableType] = [
+            Rule(f" {status_label}: {tool_name} ", style=border_style, characters="-")
+        ]
+        input_payload = tool_event.get("input")
+        if isinstance(input_payload, dict) and input_payload:
+            renderables.append(
+                self._dict_table("Tool Input", input_payload, key_style="bold cyan")
+            )
+        output_payload = tool_event.get("output")
+        if isinstance(output_payload, dict) and output_payload:
+            specialized = self._tool_result_renderable(tool_name, output_payload)
+            renderables.append(
+                specialized
+                or self._dict_table("Tool Output", output_payload, key_style="bold green")
+            )
+        summary = tool_event.get("error") or tool_event.get("result_summary") or event.message
+        if summary:
+            renderables.append(
+                Panel(
+                    Text(str(summary)),
+                    title=f"{tool_name} ({event.session_public_id})",
+                    border_style=border_style,
+                    box=ASCII_BOX,
+                )
+            )
+        self._emit(
+            Group(*renderables),
+            kind="error" if event.event_type == ExecutionEventType.STEP_FAILED else "info",
+        )
+
+    def _dict_table(self, title: str, values: dict, *, key_style: str) -> Table:
+        table = Table(title=title, box=ASCII_BOX, expand=True)
+        table.add_column("Field", style=key_style, no_wrap=True)
+        table.add_column("Value", overflow="fold")
+        for key, value in values.items():
+            if key == "payload" and isinstance(value, dict):
+                continue
+            table.add_row(str(key), self._format_tool_argument_value(value))
+        return table
+
+    def _tool_result_renderable(self, tool_name: str, output_payload: dict) -> RenderableType | None:
+        data = output_payload.get("data")
+        if not isinstance(data, dict):
+            return None
+        presentation = output_payload.get("presentation")
+        group = presentation.get("group") if isinstance(presentation, dict) else None
+        if group == "security":
+            return self._security_tool_result_table(tool_name, data)
+        if group == "file":
+            return self._dict_table("File Tool Result", data, key_style="bold cyan")
+        if group == "web":
+            return self._dict_table("Web Tool Result", data, key_style="bold blue")
+        if group == "shell":
+            return self._dict_table("Shell Result", data, key_style="bold yellow")
+        return None
+
+    def _security_tool_result_table(self, tool_name: str, data: dict) -> RenderableType | None:
+        payload = data.get("payload")
+        if not isinstance(payload, dict):
+            return self._dict_table("Security Tool Result", data, key_style="bold green")
+        if tool_name != "port_scan":
+            return self._dict_table("Security Tool Result", payload, key_style="bold green")
+        ports = payload.get("ports")
+        if not isinstance(ports, list):
+            return self._dict_table("Security Tool Result", payload, key_style="bold green")
+        table = Table(title="Port Scan Result", box=ASCII_BOX, expand=True)
+        table.add_column("Port", style="bold yellow", no_wrap=True)
+        table.add_column("Status", no_wrap=True)
+        table.add_column("Error", overflow="fold")
+        for entry in ports:
+            if not isinstance(entry, dict):
+                continue
+            table.add_row(
+                str(entry.get("port", "-")),
+                str(entry.get("status", "-")),
+                str(entry.get("error") or "-"),
+            )
+        return table
 
     def show_info(self, message: str) -> None:
         self._emit(Panel(Text(message), title="Info", border_style="blue", box=ASCII_BOX), kind="info")

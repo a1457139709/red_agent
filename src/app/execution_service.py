@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from ipaddress import ip_address, ip_network
@@ -319,6 +320,14 @@ class ExecutionService:
                 step_type="module",
                 step_label=step.tool_name,
                 message=step.summary or f"Run {step.tool_name} for {step.target}.",
+                payload={
+                    "tool_event": {
+                        "event_type": "tool_invoked",
+                        "tool_name": step.tool_name,
+                        "target": step.target,
+                        "input": step.tool_arguments(),
+                    }
+                },
             )
             try:
                 result = runtime_executor.execute(step.tool_name, step.tool_arguments())
@@ -378,6 +387,16 @@ class ExecutionService:
                 step_type="module",
                 step_label=step.tool_name,
                 message=result_summary,
+                payload={
+                    "tool_event": {
+                        "event_type": "tool_completed",
+                        "tool_name": step.tool_name,
+                        "target": step.target,
+                        "input": step.tool_arguments(),
+                        "output": self._build_module_step_output_payload(result),
+                        "result_summary": result_summary,
+                    }
+                },
             )
 
         response = self._format_module_response(invocation, step_results)
@@ -734,6 +753,20 @@ class ExecutionService:
             return first_line
         return first_line[:197] + "..."
 
+    def _build_module_step_output_payload(self, result: object) -> dict:
+        text = str(result)
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        for line in reversed(lines[-3:]):
+            if not line.startswith("{"):
+                continue
+            try:
+                decoded = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(decoded, dict):
+                return decoded
+        return {"text": text[:2000]}
+
     def _format_module_response(
         self,
         invocation: ModuleInvocationRequest,
@@ -757,6 +790,7 @@ class ExecutionService:
         step_type: str | None = None,
         step_label: str | None = None,
         message: str | None = None,
+        payload: dict | None = None,
     ) -> None:
         if on_progress is None:
             return
@@ -769,6 +803,7 @@ class ExecutionService:
                 step_label=step_label,
                 target_summary=session.target_summary,
                 message=message,
+                payload=dict(payload or {}),
             )
         )
 

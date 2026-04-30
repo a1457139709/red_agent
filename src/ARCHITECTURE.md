@@ -106,7 +106,7 @@ src/
 
 ## 6. 开发指南
 
-- **新增工具**: 在 `tools/` 目录下创建新文件，使用 `@register_tool` 装饰器
+- **新增工具**: 在 `tools/definitions.py` 中添加 `ToolDefinition` 工厂定义，使用 Pydantic 输入模型和本地 callable；仅在模型边界生成 LangChain `StructuredTool`
 - **修改提示词**: 编辑 `SYSTEM_PROMPT.md` 和 `agent/prompt.py`
 - **调试 Agent**: 修改 `main.py` 中的调试代码段
 - **测试工具**: 运行 `test.py` 进行单元测试

@@ -181,6 +181,53 @@ class ConfirmationDecisionDto:
 
 
 @dataclass(frozen=True, slots=True)
+class ToolPresentationDto:
+    title: str | None = None
+    group: str | None = None
+    accent: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ToolResultEnvelopeDto:
+    summary: str
+    model_text: str
+    data: dict[str, Any] = field(default_factory=dict)
+    artifacts: list[dict[str, Any]] = field(default_factory=list)
+    findings: list[dict[str, Any]] = field(default_factory=list)
+    presentation: ToolPresentationDto | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ToolEventDto:
+    event_type: str
+    tool_name: str
+    capability: str | None = None
+    target: str | None = None
+    args_summary: str | None = None
+    result_summary: str | None = None
+    error: str | None = None
+    input: dict[str, Any] = field(default_factory=dict)
+    output: ToolResultEnvelopeDto | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionProgressDto:
+    event_type: str
+    session_id: str
+    session_public_id: str
+    step_type: str | None = None
+    step_label: str | None = None
+    target_summary: str | None = None
+    message: str | None = None
+    action_name: str | None = None
+    risk_level: str | None = None
+    reason: str | None = None
+    timestamp: str = ""
+    payload: dict[str, Any] = field(default_factory=dict)
+    tool_event: ToolEventDto | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ControllerResultDto:
     status: str
     intent: str

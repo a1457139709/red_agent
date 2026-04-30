@@ -1,8 +1,6 @@
-from langchain.tools import tool
-
 from utils.safety import resolve_safe_path
 
-from .registry import register_tool
+from .registry import invokable
 
 
 tool_schema = {
@@ -17,8 +15,7 @@ tool_schema = {
 }
 
 
-@register_tool
-@tool("delete_file", description="Delete the specified file.", args_schema=tool_schema)
+@invokable
 def delete_file(file_path: str) -> str:
     try:
         safe_path = resolve_safe_path(file_path)

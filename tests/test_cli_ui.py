@@ -285,6 +285,42 @@ def test_presenter_renders_structured_execution_progress_events():
     )
     presenter.show_execution_progress(
         ExecutionProgressEvent(
+            event_type=ExecutionEventType.STEP_COMPLETED,
+            session_id="session-1",
+            session_public_id="S0001",
+            step_type="tool",
+            step_label="port_scan",
+            message="checked ports",
+            payload={
+                "tool_event": {
+                    "event_type": "tool_completed",
+                    "tool_name": "port_scan",
+                    "input": {"target": "127.0.0.1", "ports": [80]},
+                    "output": {
+                        "summary": "checked",
+                        "model_text": "checked",
+                        "data": {
+                            "payload": {
+                                "ports": [
+                                    {"port": 80, "status": "closed", "error": "61"},
+                                ],
+                                "open_ports": [],
+                            },
+                        },
+                        "presentation": {
+                            "title": "PORT SCAN",
+                            "group": "security",
+                            "accent": "green",
+                        },
+                    },
+                    "result_summary": "checked",
+                }
+            },
+            timestamp="2026-04-09T10:00:02+00:00",
+        )
+    )
+    presenter.show_execution_progress(
+        ExecutionProgressEvent(
             event_type=ExecutionEventType.EXECUTION_FAILED,
             session_id="session-1",
             session_public_id="S0001",
@@ -299,4 +335,7 @@ def test_presenter_renders_structured_execution_progress_events():
     assert "Execution Started" in merged
     assert "session S0001 | http_probe started" in merged
     assert "Step Completed (S0001)" in merged
+    assert "STEP COMPLETED: port_scan" in merged
+    assert "Port Scan Result" in merged
+    assert "closed" in merged
     assert "Execution Failed" in merged

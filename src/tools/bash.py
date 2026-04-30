@@ -1,11 +1,9 @@
 import locale
 import subprocess
 
-from langchain.tools import tool
-
 from utils.truncate import truncate_tool_output
 
-from .registry import register_tool
+from .registry import invokable
 from .shells import ShellResolutionError, resolve_shell_spec
 
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 30
@@ -80,15 +78,7 @@ def _format_timeout_seconds(timeout: float | int | None) -> str:
     return str(timeout)
 
 
-@register_tool
-@tool(
-    "bash",
-    description=(
-        "Execute a shell command. Dangerous commands such as rm -rf pause for user "
-        "confirmation. Long output is truncated automatically."
-    ),
-    args_schema=tool_schema,
-)
+@invokable
 def execute_command(command: str, shell: str | None = None) -> str:
     """
     Executes a shell command and returns its output.

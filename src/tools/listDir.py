@@ -1,8 +1,6 @@
-from langchain.tools import tool
-
 from utils.safety import resolve_safe_path
 
-from .registry import register_tool
+from .registry import invokable
 
 
 tool_schema = {
@@ -17,12 +15,7 @@ tool_schema = {
 }
 
 
-@register_tool
-@tool(
-    "list_dir",
-    description="List files and directories in the target folder without recursion.",
-    args_schema=tool_schema,
-)
+@invokable
 def list_dir(path: str = ".") -> str:
     """List directory contents."""
 
