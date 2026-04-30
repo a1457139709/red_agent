@@ -6,13 +6,13 @@ def test_handle_help_command_supports_all_registered_topics():
     errors: list[str] = []
 
     assert main_module.handle_help_command(
-        "/help report",
+        "/help reports",
         text_output=outputs.append,
         error_output=errors.append,
     )
 
     assert errors == []
-    assert "Help: report" in outputs[0]
+    assert "Help: reports" in outputs[0]
     assert "Report Commands" in outputs[0]
 
 
@@ -30,7 +30,7 @@ def test_handle_help_command_reports_full_supported_topic_list_for_errors():
     assert len(errors) == 1
     assert "Unknown help topic: nope." in errors[0]
     assert "Available topics:" in errors[0]
-    assert "query, finding, artifact, report" in errors[0]
+    assert "findings, artifacts, reports" in errors[0]
     assert "planner, skill, module" in errors[0]
 
 
@@ -63,3 +63,32 @@ def test_handle_help_command_usage_lists_all_topics():
     assert len(errors) == 1
     assert "Usage: /help <topic>" in errors[0]
     assert "Available topics:" in errors[0]
+
+
+def test_handle_help_command_rejects_removed_query_topic():
+    outputs: list[str] = []
+    errors: list[str] = []
+
+    assert main_module.handle_help_command(
+        "/help query",
+        text_output=outputs.append,
+        error_output=errors.append,
+    )
+
+    assert outputs == []
+    assert len(errors) == 1
+    assert "Unknown help topic: query." in errors[0]
+
+
+def test_help_command_requires_exact_slash_command():
+    outputs: list[str] = []
+    errors: list[str] = []
+
+    assert not main_module.handle_help_command(
+        "/helpful reports",
+        text_output=outputs.append,
+        error_output=errors.append,
+    )
+
+    assert outputs == []
+    assert errors == []

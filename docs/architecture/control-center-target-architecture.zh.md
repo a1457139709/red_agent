@@ -304,7 +304,7 @@ classDiagram
       conversation_id
       connection_id
       active_session_id
-      pending_clarification
+      missing_field_error
       pending_approval_id
       updated_at
     }
@@ -398,7 +398,8 @@ classDiagram
   - 不等同于业务 session
 - `Conversation`
   - 交互状态对象
-  - 保存当前绑定 session 和 pending clarification/approval
+  - 保存当前绑定 session 和 pending approval
+  - 缺字段场景通过 `missing_field_error` 返回给前端表单，不保存 conversation-level pending clarification
 - `Session`
   - 顶层业务容器
   - 用户真正操作和检索的对象

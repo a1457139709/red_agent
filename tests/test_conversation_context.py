@@ -1,4 +1,4 @@
-from controller.contracts import ClarificationRequest, ClarificationKind, SessionSummary
+from controller.contracts import SessionSummary
 from models.conversation_context import ConversationContext
 from models.session import SessionMode, SessionStatus
 
@@ -28,20 +28,6 @@ def test_conversation_context_binds_and_clears_session_state():
     assert context.active_session_mode is None
     assert context.requested_session_mode == SessionMode.NORMAL
     assert context.active_skill_name == "security-audit"
-
-
-def test_conversation_context_clears_pending_clarification_only():
-    clarification = ClarificationRequest(
-        kind=ClarificationKind.RECORD_SCOPE,
-        question="Which session should I use?",
-        missing_fields=["session_scope"],
-        original_request="what did you already do",
-    )
-    context = ConversationContext(pending_clarification=clarification)
-
-    context.clear_pending_clarification()
-
-    assert context.pending_clarification is None
 
 
 def test_conversation_context_tracks_requested_session_mode():

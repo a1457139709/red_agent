@@ -7,22 +7,11 @@ from typing import Any
 
 class WebEventKind(StrEnum):
     CONTROLLER_RESULT = "controller_result"
-    CLARIFICATION_REQUIRED = "clarification_required"
     EXECUTION_PROGRESS = "execution_progress"
     CONFIRMATION_REQUIRED = "confirmation_required"
     CONFIRMATION_RESOLVED = "confirmation_resolved"
     FINAL_ANSWER = "final_answer"
     INTERACTION_ERROR = "interaction_error"
-
-
-@dataclass(frozen=True, slots=True)
-class ClarificationRequestDto:
-    request_id: str
-    kind: str
-    question: str
-    missing_fields: list[str] = field(default_factory=list)
-    original_request: str = ""
-    context: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,7 +24,13 @@ class ConversationSnapshotDto:
     active_session_mode: str | None
     active_session_title: str | None
     active_session_target_summary: str | None
-    pending_clarification: ClarificationRequestDto | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MissingFieldErrorDto:
+    message: str
+    missing_fields: list[str] = field(default_factory=list)
+    allowed_values: dict[str, list[str]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,7 +187,7 @@ class ControllerResultDto:
     message: str | None
     bind_session: bool
     session_summary: SessionSummaryDto | None = None
-    clarification_request: ClarificationRequestDto | None = None
+    missing_field_error: MissingFieldErrorDto | None = None
     record_lookup: dict[str, Any] | None = None
     finding_explanation: FindingExplanationDto | None = None
     generated_report: GeneratedReportDto | None = None

@@ -36,7 +36,6 @@ def build_controller_request_from_context(
         active_session_mode=conversation_context.active_session_mode,
         active_session_title=conversation_context.active_session_title,
         active_session_target_summary=conversation_context.active_session_target_summary,
-        pending_clarification=conversation_context.pending_clarification,
     )
 
 
@@ -90,17 +89,11 @@ class SessionInteractionService:
         )
 
         if controller_result.status == ControllerResultStatus.DELEGATED_TO_ADVANCED_COMMAND:
-            conversation_context.clear_pending_clarification()
             return InteractionOutcome(
                 conversation_context=conversation_context,
                 controller_result=controller_result,
                 advanced_command_delegated=True,
             )
-
-        if controller_result.status == ControllerResultStatus.CLARIFICATION_REQUIRED:
-            conversation_context.pending_clarification = controller_result.clarification_request
-        else:
-            conversation_context.clear_pending_clarification()
 
         if controller_result.bind_session and controller_result.session_summary is not None:
             conversation_context.bind_session(controller_result.session_summary)

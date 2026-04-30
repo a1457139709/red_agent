@@ -8,9 +8,7 @@ from app.session_record_query_service import SessionRecordQueryService
 from app.session_service import SessionService
 from models.session import Session, SessionMode, SessionStatus, SessionTarget
 
-from .clarification import apply_clarification_answer, build_clarification_request
 from .contracts import (
-    ClarificationKind,
     ControllerIntent,
     ControllerRequest,
     ControllerResult,
@@ -29,6 +27,7 @@ from .intents import IntentClassification, classify_input, extract_targets
 SESSION_START_KEYWORDS = ("start", "create", "new session", "open session")
 DEFAULT_MODULE_NAMES = ("surface-recon", "web-enum")
 MODULE_INVOCATION_VERBS = ("run", "use", "invoke", "execute")
+SESSION_SCOPE_ALLOWED_VALUES = {"session_scope": ["current", "latest", "S0001"]}
 
 
 @dataclass(slots=True)
@@ -53,12 +52,10 @@ class AgentController:
         )
 
     def handle(self, request: ControllerRequest) -> ControllerResult:
-        if request.pending_clarification is not None:
-            return self._handle_clarification(request)
+        classification = classify_input(request.raw_input)
         if request.record_query is not None:
             return self._handle_structured_record_query(request)
 
-        classification = classify_input(request.raw_input)
         if classification.intent == ControllerIntent.ADVANCED_COMMAND_REQUEST:
             return ControllerResult.delegated_to_advanced_command()
         if classification.intent == ControllerIntent.UNSUPPORTED_REQUEST:
@@ -82,28 +79,6 @@ class AgentController:
             classification=classification,
             mode=request.requested_session_mode,
             execute=True,
-        )
-
-    def _handle_clarification(self, request: ControllerRequest) -> ControllerResult:
-        resolution = apply_clarification_answer(
-            request.pending_clarification,
-            request.raw_input,
-        )
-        if resolution.next_request is not None:
-            return ControllerResult.clarification_required(
-                message=resolution.next_request.question,
-                clarification_request=resolution.next_request,
-            )
-        if resolution.resolved_record_scope is not None:
-            return self._handle_record_query(
-                request=request,
-                record_query=RecordQueryRequest(
-                    kind=RecordLookupKind.SESSION_HISTORY,
-                    explicit_scope=resolution.resolved_record_scope,
-                ),
-            )
-        return ControllerResult.unsupported(
-            message="I still need a session scope like current, latest, or S0001."
         )
 
     def _handle_record_lookup(
@@ -140,13 +115,16 @@ class AgentController:
     ) -> ControllerResult:
         resolved_scope = record_query.explicit_scope or request.active_session_public_id
         if resolved_scope is None:
-            clarification = build_clarification_request(
-                kind=ClarificationKind.RECORD_SCOPE,
-                original_request=request.raw_input,
+            message = self._missing_record_scope_message(record_query)
+            return ControllerResult.missing_fields(
+                intent=ControllerIntent.RECORD_LOOKUP_REQUEST,
+                message=message,
+                missing_fields=["session_scope"],
+                allowed_values=SESSION_SCOPE_ALLOWED_VALUES,
             )
-            return ControllerResult.clarification_required(
-                message=clarification.question,
-                clarification_request=clarification,
+        if resolved_scope == "current" and request.active_session_public_id is None:
+            return ControllerResult.unsupported(
+                message=self._missing_record_scope_message(record_query)
             )
 
         session = self._resolve_record_lookup_session(request=request, scope=resolved_scope)
@@ -177,6 +155,23 @@ class AgentController:
         if scope == "latest":
             return self.session_service.get_latest_session()
         return self.session_service.get_session(scope)
+
+    def _missing_record_scope_message(self, record_query: RecordQueryRequest) -> str:
+        command = record_query.source_command
+        identifier = record_query.lookup_identifier
+        if command == "/show" and identifier:
+            return f"No active session. Use /show {identifier} latest or /show {identifier} S0001."
+        if command == "/why" and identifier:
+            return f"No active session. Use /why {identifier} latest or /why {identifier} S0001."
+        if command == "/reports" and record_query.report_type is not None:
+            report_type = record_query.report_type.value
+            return (
+                "No active session. Use "
+                f"/reports generate {report_type} latest or /reports generate {report_type} S0001."
+            )
+        if command:
+            return f"No active session. Use {command} latest or {command} S0001."
+        return "No active session. Ask for the latest session or provide a session id like S0001."
 
     def _build_record_lookup_result(
         self,

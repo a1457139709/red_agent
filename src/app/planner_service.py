@@ -97,6 +97,9 @@ class PlannerService:
             raise ValueError(f"Planner plan not found: {identifier}")
         return PlannerPlanBundle(plan=plan, proposals=self.repository.list_plan_proposals(plan.id))
 
+    def list_plans(self, *, limit: int | None = 50) -> list[PlannerPlan]:
+        return self.repository.list_plans(limit=limit)
+
     def apply_plan(
         self,
         identifier: str,

@@ -80,6 +80,20 @@ class PlannerRepository:
             )
         return PlannerPlan.from_row(dict(row)) if row else None
 
+    def list_plans(self, *, limit: int | None = 50) -> list[PlannerPlan]:
+        query = """
+            SELECT *
+            FROM planner_plans
+            ORDER BY updated_at DESC, created_at DESC, id ASC
+        """
+        parameters: tuple[int, ...] = ()
+        if limit is not None:
+            query += " LIMIT ?"
+            parameters = (limit,)
+        with self.storage.connect() as connection:
+            rows = connection.execute(query, parameters).fetchall()
+        return [PlannerPlan.from_row(dict(row)) for row in rows]
+
     def list_plan_proposals(self, plan_identifier: str) -> list[PlannerProposal]:
         plan = self.get_plan(plan_identifier)
         if plan is None:

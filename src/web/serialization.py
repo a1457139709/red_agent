@@ -10,11 +10,11 @@ from app.session_record_query_service import (
     SessionHistorySummaryView,
 )
 from controller.contracts import (
-    ClarificationRequest,
     ConfirmationDecision,
     ConfirmationRequest,
     ControllerResult,
     GeneratedReportPayload,
+    MissingFieldError,
     RecordLookupPayload,
     SessionSummary,
 )
@@ -27,7 +27,6 @@ from runtime.execution_events import ExecutionProgressEvent
 
 from .contracts import (
     ArtifactDto,
-    ClarificationRequestDto,
     ConfirmationDecisionDto,
     ConfirmationRequestDto,
     ConversationEventEnvelopeDto,
@@ -38,6 +37,7 @@ from .contracts import (
     FindingDto,
     FindingExplanationDto,
     GeneratedReportDto,
+    MissingFieldErrorDto,
     ReportDto,
     SessionEventDto,
     SessionHistoryDto,
@@ -49,21 +49,6 @@ def to_payload(dto: object | None) -> dict[str, Any]:
     if dto is None:
         return {}
     return asdict(dto)
-
-
-def serialize_clarification_request(
-    request: ClarificationRequest | None,
-) -> ClarificationRequestDto | None:
-    if request is None:
-        return None
-    return ClarificationRequestDto(
-        request_id=request.request_id,
-        kind=request.kind.value,
-        question=request.question,
-        missing_fields=list(request.missing_fields),
-        original_request=request.original_request,
-        context=dict(request.context),
-    )
 
 
 def serialize_conversation_snapshot(
@@ -82,7 +67,18 @@ def serialize_conversation_snapshot(
         ),
         active_session_title=context.active_session_title,
         active_session_target_summary=context.active_session_target_summary,
-        pending_clarification=serialize_clarification_request(context.pending_clarification),
+    )
+
+
+def serialize_missing_field_error(
+    error: MissingFieldError | None,
+) -> MissingFieldErrorDto | None:
+    if error is None:
+        return None
+    return MissingFieldErrorDto(
+        message=error.message,
+        missing_fields=list(error.missing_fields),
+        allowed_values={key: list(values) for key, values in error.allowed_values.items()},
     )
 
 
@@ -318,7 +314,7 @@ def serialize_controller_result(result: ControllerResult) -> ControllerResultDto
             if result.session_summary is not None
             else None
         ),
-        clarification_request=serialize_clarification_request(result.clarification_request),
+        missing_field_error=serialize_missing_field_error(result.missing_field_error),
         record_lookup=(
             serialize_record_lookup_payload(result.record_lookup_payload)
             if result.record_lookup_payload is not None

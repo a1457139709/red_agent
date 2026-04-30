@@ -1,8 +1,5 @@
 from .agent_controller import AgentController
 from .contracts import (
-    ClarificationAnswer,
-    ClarificationKind,
-    ClarificationRequest,
     ConfirmationDecision,
     ConfirmationDecisionValue,
     ConfirmationRequest,
@@ -14,6 +11,7 @@ from .contracts import (
     ExecutionBridgeKind,
     FindingExplanationPayload,
     GeneratedReportPayload,
+    MissingFieldError,
     RecordLookupKind,
     RecordLookupPayload,
     RecordQueryRequest,
@@ -24,9 +22,6 @@ from .record_query_parser import parse_record_query_command
 
 __all__ = [
     "AgentController",
-    "ClarificationAnswer",
-    "ClarificationKind",
-    "ClarificationRequest",
     "ConfirmationDecision",
     "ConfirmationDecisionValue",
     "ConfirmationRequest",
@@ -38,6 +33,7 @@ __all__ = [
     "ExecutionBridgeKind",
     "FindingExplanationPayload",
     "GeneratedReportPayload",
+    "MissingFieldError",
     "RecordLookupKind",
     "RecordLookupPayload",
     "RecordQueryRequest",

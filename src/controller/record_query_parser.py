@@ -28,6 +28,7 @@ LOOKUP_COMMANDS = {
     "/reports": RecordLookupKind.REPORTS,
     "/r": RecordLookupKind.REPORTS,
 }
+RESOURCE_SUBCOMMANDS = {"list", "show", "confirm", "dismiss"}
 
 
 def parse_record_query_command(command: str) -> RecordQueryRequest | None:
@@ -41,6 +42,30 @@ def parse_record_query_command(command: str) -> RecordQueryRequest | None:
 
     command_name = parts[0].lower()
     args = parts[1:]
+
+    if command_name == "/reports" and args and args[0].lower() == "generate":
+        if len(args) < 2 or len(args) > 3:
+            raise ValueError(
+                "Usage: /reports generate <session_summary|findings_summary|operator_report> [current|latest|S0001]"
+            )
+        report_type = REPORT_TYPES.get(args[1].lower())
+        if report_type is None:
+            raise ValueError(
+                "Usage: /reports generate <session_summary|findings_summary|operator_report> [current|latest|S0001]"
+            )
+        scope_hint = _parse_optional_scope_hint(
+            args[2:],
+            usage="Usage: /reports generate <session_summary|findings_summary|operator_report> [current|latest|S0001]",
+        )
+        return RecordQueryRequest(
+            kind=RecordLookupKind.REPORTS,
+            explicit_scope=scope_hint,
+            report_type=report_type,
+            source_command=command_name,
+        )
+
+    if command_name in {"/findings", "/artifacts", "/reports"} and args and args[0].lower() in RESOURCE_SUBCOMMANDS:
+        return None
 
     if command_name in LOOKUP_COMMANDS:
         scope_hint = _parse_optional_scope_hint(
@@ -84,25 +109,6 @@ def parse_record_query_command(command: str) -> RecordQueryRequest | None:
             kind=RecordLookupKind.FINDING_EXPLANATION,
             explicit_scope=scope_hint,
             lookup_identifier=lookup_identifier,
-            source_command=command_name,
-        )
-
-    if command_name == "/report":
-        if not args or len(args) > 2:
-            raise ValueError(
-                "Usage: /report <session_summary|findings_summary|operator_report> [current|latest|S0001]"
-            )
-        report_type = REPORT_TYPES.get(args[0].lower())
-        if report_type is None:
-            return None
-        scope_hint = _parse_optional_scope_hint(
-            args[1:],
-            usage="Usage: /report <session_summary|findings_summary|operator_report> [current|latest|S0001]",
-        )
-        return RecordQueryRequest(
-            kind=RecordLookupKind.REPORTS,
-            explicit_scope=scope_hint,
-            report_type=report_type,
             source_command=command_name,
         )
 

@@ -13,7 +13,8 @@ from app.session_service import SessionService
 from app.session_event_service import SessionEventService
 from controller.agent_controller import AgentController
 from controller.contracts import (
-    ClarificationKind,
+    ConfirmationDecisionValue,
+    ConfirmationRequest,
     ControllerIntent,
     ControllerRequest,
     ControllerResult,
@@ -27,6 +28,8 @@ from main import (
     build_controller_request,
     build_prompt,
     handle_clear_command,
+    handle_normal_command,
+    prompt_execution_confirmation,
     handle_redteam_command,
     render_controller_result,
     run_interactive_shell,
@@ -226,7 +229,7 @@ def test_agent_controller_keeps_ambiguous_target_requests_in_normal_flow(tmp_pat
 
     assert result.status == ControllerResultStatus.HANDLED
     assert result.intent == ControllerIntent.NORMAL_REQUEST
-    assert result.clarification_request is None
+    assert result.missing_field_error is None
     assert result.execution_bridge is not None
     assert result.execution_bridge.kind == ExecutionBridgeKind.BASE_RUNTIME
 
@@ -316,9 +319,13 @@ def test_agent_controller_structured_history_command_requires_scope_without_acti
         )
     )
 
-    assert result.status == ControllerResultStatus.CLARIFICATION_REQUIRED
-    assert result.clarification_request is not None
-    assert result.clarification_request.kind == ClarificationKind.RECORD_SCOPE
+    assert result.status == ControllerResultStatus.MISSING_FIELDS
+    assert result.missing_field_error is not None
+    assert result.missing_field_error.missing_fields == ["session_scope"]
+    assert result.missing_field_error.allowed_values == {
+        "session_scope": ["current", "latest", "S0001"],
+    }
+    assert result.message == "No active session. Use /history latest or /history S0001."
 
 
 def test_agent_controller_handles_structured_report_command_with_explicit_scope(tmp_path):
@@ -326,7 +333,7 @@ def test_agent_controller_handles_structured_report_command_with_explicit_scope(
 
     result = controller.handle(
         build_controller_request(
-            question=f"/report operator_report {session.public_id}",
+            question=f"/reports generate operator_report {session.public_id}",
             shell_state=ShellState(),
         )
     )
@@ -347,13 +354,13 @@ def test_agent_controller_reuses_existing_generated_report(tmp_path):
 
     first = controller.handle(
         build_controller_request(
-            question=f"/report operator_report {session.public_id}",
+            question=f"/reports generate operator_report {session.public_id}",
             shell_state=ShellState(),
         )
     )
     second = controller.handle(
         build_controller_request(
-            question=f"/report operator_report {session.public_id}",
+            question=f"/reports generate operator_report {session.public_id}",
             shell_state=ShellState(),
         )
     )
@@ -499,7 +506,7 @@ def test_render_controller_result_uses_callback_presenter(tmp_path):
     assert any("Mode: redteam" in message for message in outputs)
 
 
-def test_run_interactive_shell_routes_plain_text_through_controller_and_skill_bridge(
+def test_run_interactive_shell_rejects_plain_text_even_with_active_skill(
     monkeypatch,
     tmp_path,
 ):
@@ -511,15 +518,17 @@ def test_run_interactive_shell_routes_plain_text_through_controller_and_skill_br
     capability_service = main_module.create_capability_service()
     execution_service = FakeExecutionService()
     tool_executor = ToolExecutor(build_tool_registry())
-    captured = {"answers": []}
+    errors: list[str] = []
     responses = iter(["inspect the configs", "/quit"])
 
     def fake_input(_prompt):
         return next(responses)
 
-    monkeypatch.setattr(main_module.ColoredOutput, "print_final_answer", captured["answers"].append)
-    monkeypatch.setattr(main_module.ColoredOutput, "print_error", captured["answers"].append)
-    monkeypatch.setattr(main_module.ColoredOutput, "print_info", captured["answers"].append)
+    monkeypatch.setattr(
+        main_module,
+        "get_presenter",
+        lambda: main_module.CliPresenter.for_callbacks(error_output=errors.append),
+    )
 
     asyncio.run(
         run_interactive_shell(
@@ -535,17 +544,14 @@ def test_run_interactive_shell_routes_plain_text_through_controller_and_skill_br
         )
     )
 
-    assert len(execution_service.calls) == 1
-    assert execution_service.calls[0]["prompt_text"] == "inspect the configs"
-    assert execution_service.calls[0]["skill_name"] == "security-audit"
-    assert shell_state.active_session_mode is not None
-    assert shell_state.active_session_mode.value == "normal"
-    assert shell_state.active_session_public_id is not None
-    assert build_prompt(shell_state).startswith("\nskill:security-audit normal:")
-    assert "done" in captured["answers"]
+    assert execution_service.calls == []
+    assert shell_state.active_session_mode is None
+    assert shell_state.active_session_public_id is None
+    assert build_prompt(shell_state) == "\nskill:security-audit normal > "
+    assert any("Unknown command: inspect the configs. Type /help for available commands." in message for message in errors)
 
 
-def test_run_interactive_shell_keeps_plain_text_on_session_flow_with_active_session_binding(
+def test_run_interactive_shell_rejects_plain_text_with_active_session_binding(
     monkeypatch,
     tmp_path,
 ):
@@ -561,15 +567,17 @@ def test_run_interactive_shell_keeps_plain_text_on_session_flow_with_active_sess
     capability_service = main_module.create_capability_service()
     execution_service = FakeExecutionService()
     tool_executor = ToolExecutor(build_tool_registry())
-    captured = {"answers": []}
+    errors: list[str] = []
     responses = iter(["inspect the configs", "/quit"])
 
     def fake_input(_prompt):
         return next(responses)
 
-    monkeypatch.setattr(main_module.ColoredOutput, "print_final_answer", captured["answers"].append)
-    monkeypatch.setattr(main_module.ColoredOutput, "print_error", captured["answers"].append)
-    monkeypatch.setattr(main_module.ColoredOutput, "print_info", captured["answers"].append)
+    monkeypatch.setattr(
+        main_module,
+        "get_presenter",
+        lambda: main_module.CliPresenter.for_callbacks(error_output=errors.append),
+    )
 
     asyncio.run(
         run_interactive_shell(
@@ -585,15 +593,14 @@ def test_run_interactive_shell_keeps_plain_text_on_session_flow_with_active_sess
         )
     )
 
-    assert len(execution_service.calls) == 1
-    assert execution_service.calls[0]["prompt_text"] == "inspect the configs"
+    assert execution_service.calls == []
     assert shell_state.active_session_mode == SessionMode.NORMAL
     assert shell_state.active_session_public_id is not None
     assert build_prompt(shell_state).startswith("\nnormal:")
-    assert "done" in captured["answers"]
+    assert any("Unknown command: inspect the configs. Type /help for available commands." in message for message in errors)
 
 
-def test_run_interactive_shell_redteam_startup_executes_in_foreground(
+def test_run_interactive_shell_redteam_command_sets_requested_mode_only(
     monkeypatch,
     tmp_path,
 ):
@@ -605,7 +612,7 @@ def test_run_interactive_shell_redteam_startup_executes_in_foreground(
     capability_service = main_module.create_capability_service()
     execution_service = FakeExecutionService()
     tool_executor = ToolExecutor(build_tool_registry())
-    responses = iter(["/redteam on", "Scan example.com for open services", "/quit"])
+    responses = iter(["/redteam", "Scan example.com for open services", "/quit"])
 
     def fake_input(_prompt):
         return next(responses)
@@ -624,11 +631,82 @@ def test_run_interactive_shell_redteam_startup_executes_in_foreground(
         )
     )
 
-    assert shell_state.active_session_mode is not None
-    assert shell_state.active_session_mode.value == "redteam"
-    assert build_prompt(shell_state).startswith("\nredteam:")
-    assert len(execution_service.calls) == 1
-    assert execution_service.calls[0]["prompt_text"] == "Scan example.com for open services"
+    assert shell_state.requested_session_mode == SessionMode.REDTEAM
+    assert shell_state.active_session_mode is None
+    assert build_prompt(shell_state) == "\nredteam > "
+    assert execution_service.calls == []
+
+
+def test_run_interactive_shell_ctrl_d_exits_with_goodbye(monkeypatch, tmp_path):
+    settings = build_settings(tmp_path)
+    session_state = SessionState()
+    shell_state = ShellState()
+    session_service = SessionService.from_settings(settings)
+    controller = AgentController.from_session_service(session_service)
+    capability_service = main_module.create_capability_service()
+    execution_service = FakeExecutionService()
+    tool_executor = ToolExecutor(build_tool_registry())
+    headers: list[str] = []
+
+    def fake_input(_prompt):
+        raise EOFError
+
+    monkeypatch.setattr(main_module.ColoredOutput, "print_header", headers.append)
+
+    asyncio.run(
+        run_interactive_shell(
+            settings=settings,
+            session_state=session_state,
+            shell_state=shell_state,
+            tool_executor=tool_executor,
+            session_service=session_service,
+            controller=controller,
+            execution_service=execution_service,
+            capability_service=capability_service,
+            input_func=fake_input,
+        )
+    )
+
+    assert headers == ["Goodbye"]
+    assert execution_service.calls == []
+
+
+def test_run_interactive_shell_ctrl_c_requires_confirmation(monkeypatch, tmp_path):
+    settings = build_settings(tmp_path)
+    session_state = SessionState()
+    shell_state = ShellState()
+    session_service = SessionService.from_settings(settings)
+    controller = AgentController.from_session_service(session_service)
+    capability_service = main_module.create_capability_service()
+    execution_service = FakeExecutionService()
+    tool_executor = ToolExecutor(build_tool_registry())
+    headers: list[str] = []
+    responses = iter([KeyboardInterrupt(), "n", KeyboardInterrupt(), "y"])
+
+    def fake_input(_prompt):
+        response = next(responses)
+        if isinstance(response, BaseException):
+            raise response
+        return response
+
+    monkeypatch.setattr(main_module.ColoredOutput, "print_header", headers.append)
+
+    asyncio.run(
+        run_interactive_shell(
+            settings=settings,
+            session_state=session_state,
+            shell_state=shell_state,
+            tool_executor=tool_executor,
+            session_service=session_service,
+            controller=controller,
+            execution_service=execution_service,
+            capability_service=capability_service,
+            input_func=fake_input,
+        )
+    )
+
+    assert headers == ["Goodbye"]
+    assert execution_service.calls == []
 
 
 def test_run_interactive_shell_routes_explicit_module_request_to_module_runtime(
@@ -651,7 +729,7 @@ def test_run_interactive_shell_routes_explicit_module_request_to_module_runtime(
     execution_service = FakeExecutionService()
     tool_executor = ToolExecutor(build_tool_registry())
     captured = {"answers": []}
-    responses = iter(["Run surface-recon for example.com", "/quit"])
+    responses = iter(["/module run surface-recon example.com", "/quit"])
 
     def fake_input(_prompt):
         return next(responses)
@@ -702,21 +780,11 @@ def test_build_controller_request_and_clear_command_preserve_session_binding(tmp
         active_session_title="Session",
         active_session_target_summary="example.com",
         active_skill_name="security-audit",
-        pending_clarification=ControllerResult.clarification_required(
-            message="clarify",
-            clarification_request=main_module.ClarificationRequest(
-                kind="record_scope",
-                question="Which session should I use?",
-                missing_fields=["session_scope"],
-                original_request="what did you already do?",
-            ),
-        ).clarification_request,
     )
 
     request = build_controller_request(question="inspect configs", shell_state=shell_state)
     assert request.requested_session_mode == SessionMode.REDTEAM
     assert request.active_session_public_id == "S0001"
-    assert request.pending_clarification is not None
     assert request.record_query is None
 
     handle_clear_command("/clear", shell_state=shell_state, session_state=session_state)
@@ -724,7 +792,6 @@ def test_build_controller_request_and_clear_command_preserve_session_binding(tmp
     assert shell_state.active_session_public_id == "S0001"
     assert shell_state.active_session_mode == SessionMode.NORMAL
     assert shell_state.requested_session_mode == SessionMode.REDTEAM
-    assert shell_state.pending_clarification is None
     assert shell_state.active_skill_name == "security-audit"
 
 
@@ -739,7 +806,7 @@ def test_build_prompt_prefers_session_binding():
     assert build_prompt(shell_state) == "\nnormal:S0001 > "
 
 
-def test_handle_redteam_command_toggles_requested_mode():
+def test_handle_redteam_and_normal_commands_set_requested_mode():
     shell_state = ShellState()
     outputs: list[str] = []
     presenter = main_module.CliPresenter.for_callbacks(
@@ -748,14 +815,51 @@ def test_handle_redteam_command_toggles_requested_mode():
         error_output=outputs.append,
     )
 
-    assert handle_redteam_command("/redteam current", shell_state=shell_state, presenter=presenter)
-    assert shell_state.requested_session_mode == SessionMode.NORMAL
-    assert handle_redteam_command("/redteam on", shell_state=shell_state, presenter=presenter)
+    assert handle_redteam_command("/redteam", shell_state=shell_state, presenter=presenter)
     assert shell_state.requested_session_mode == SessionMode.REDTEAM
-    assert handle_redteam_command("/redteam toggle", shell_state=shell_state, presenter=presenter)
+    assert handle_normal_command("/normal", shell_state=shell_state, presenter=presenter)
     assert shell_state.requested_session_mode == SessionMode.NORMAL
-    assert any("Current mode: normal" in message for message in outputs)
     assert any("Switched to redteam mode." in message for message in outputs)
+    assert any("Switched to normal mode." in message for message in outputs)
+
+
+def test_redteam_and_normal_commands_reject_arguments():
+    shell_state = ShellState()
+    errors: list[str] = []
+    presenter = main_module.CliPresenter.for_callbacks(error_output=errors.append)
+
+    assert handle_redteam_command("/redteam on", shell_state=shell_state, presenter=presenter)
+    assert shell_state.requested_session_mode == SessionMode.NORMAL
+    assert handle_normal_command("/normal now", shell_state=shell_state, presenter=presenter)
+    assert shell_state.requested_session_mode == SessionMode.NORMAL
+    assert any("Usage: /redteam" in message for message in errors)
+    assert any("Usage: /normal" in message for message in errors)
+
+
+def test_prompt_execution_confirmation_ctrl_c_defaults_to_deny():
+    outputs: list[str] = []
+    presenter = main_module.CliPresenter.for_callbacks(info_output=outputs.append)
+    request = ConfirmationRequest(
+        action_name="scan",
+        risk_level="medium",
+        target_summary="example.com",
+        reason="test",
+        message="Approve scan?",
+        request_id="confirm-1",
+    )
+
+    def interrupted_input(_prompt):
+        raise KeyboardInterrupt
+
+    decision = prompt_execution_confirmation(
+        request=request,
+        input_func=interrupted_input,
+        ui=presenter,
+    )
+
+    assert decision.request_id == "confirm-1"
+    assert decision.decision == ConfirmationDecisionValue.DENY
+    assert any("Confirmation required: scan" in output for output in outputs)
 
 
 def test_build_controller_request_parses_record_query_commands():

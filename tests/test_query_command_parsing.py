@@ -29,7 +29,7 @@ def test_parse_record_query_command_supports_show_why_and_report_flows():
     show_artifact = parse_record_query_command("/show A0004")
     show_session = parse_record_query_command("/show s0009")
     explain_finding = parse_record_query_command("/why F0003 latest")
-    report = parse_record_query_command("/report operator_report S0002")
+    report = parse_record_query_command("/reports generate operator_report S0002")
 
     assert show_artifact is not None
     assert show_artifact.kind == RecordLookupKind.ARTIFACTS
@@ -53,8 +53,16 @@ def test_parse_record_query_command_supports_show_why_and_report_flows():
 
 
 def test_parse_record_query_command_preserves_legacy_report_commands_as_advanced_commands():
-    assert parse_record_query_command("/report list S0001") is None
-    assert parse_record_query_command("/report show RP0001") is None
+    assert parse_record_query_command("/reports list S0001") is None
+    assert parse_record_query_command("/reports show RP0001") is None
+    assert parse_record_query_command("/report operator_report S0001") is None
+
+
+def test_parse_record_query_command_preserves_plural_resource_subcommands_as_advanced_commands():
+    assert parse_record_query_command("/findings list S0001") is None
+    assert parse_record_query_command("/findings show F0001") is None
+    assert parse_record_query_command("/artifacts list S0001") is None
+    assert parse_record_query_command("/artifacts show A0001") is None
 
 
 def test_parse_record_query_command_rejects_invalid_usage():

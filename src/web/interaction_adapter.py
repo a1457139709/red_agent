@@ -102,13 +102,8 @@ class _WebInteractionPort(InteractionPort):
         )
 
     async def emit_controller_result(self, result, context: ConversationContext) -> None:
-        event_kind = (
-            WebEventKind.CLARIFICATION_REQUIRED
-            if result.status.value == "clarification_required"
-            else WebEventKind.CONTROLLER_RESULT
-        )
         await self._append_event(
-            event_kind=event_kind,
+            event_kind=WebEventKind.CONTROLLER_RESULT,
             payload=to_payload(serialize_controller_result(result)),
             timestamp=utc_now_iso(),
             session_id=result.session_summary.id if result.session_summary is not None else context.active_session_id,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Callable
+from typing import Awaitable, Callable
 
 from agent.logger import ColoredOutput, reset_steps
 from agent.loop import agent_loop
@@ -25,7 +25,6 @@ from app.session_service import SessionService
 from capabilities.registry import CapabilityRegistry
 from controller import (
     AgentController,
-    ClarificationRequest,
     ConfirmationDecision,
     ConfirmationDecisionValue,
     ConfirmationRequest,
@@ -40,6 +39,7 @@ from models.finding import Finding
 from models.report import Report
 from models.session import SessionMode
 from runtime.task_runner import apply_result_to_session
+from cli.input import CompletionContext, PromptToolkitInput
 from cli.ui import CliPresenter, get_presenter
 from tools import build_tool_registry
 from tools.executor import ToolExecutor
@@ -47,11 +47,33 @@ from tools.executor import ToolExecutor
 
 OutputFn = Callable[[str], None]
 InputFn = Callable[[str], str]
+AsyncInputFn = Callable[[str], Awaitable[str]]
 NONE_LABEL = "none"
+RESOURCE_LIST_ACTIONS = {"list", "show", "confirm", "dismiss", "generate", "help"}
+STARTUP_BANNER = r"""
+ ____  _____ ____        ____ ___  ____  _____
+|  _ \| ____|  _ \      / ___/ _ \|  _ \| ____|
+| |_) |  _| | | | |____| |  | | | | | | |  _|
+|  _ <| |___| |_| |____| |__| |_| | |_| | |___
+|_| \_\_____|____/      \____\___/|____/|_____|
+"""
+STARTUP_INTRO = """RED-CODE 0.1.0
+Command-driven local agent for development and bounded redteam workflows.
+Use /help for commands.
+Use /redteam to enter redteam mode, /normal to return.
+Redteam mode: use AI-assisted automated testing, run scoped modules, then inspect findings, artifacts, and reports."""
 
 
 class ShellState(ConversationContext):
     pass
+
+
+def format_startup_banner() -> str:
+    return f"{STARTUP_BANNER.strip()}\n\n{STARTUP_INTRO}"
+
+
+def print_startup_banner(output: OutputFn = print) -> None:
+    output(format_startup_banner())
 
 
 def create_capability_service(
@@ -91,108 +113,109 @@ def build_prompt(shell_state: ShellState) -> str:
     return f"\n{mode_label} > "
 
 
-def parse_skill_command(command: str) -> tuple[str, list[str]] | None:
+def _split_slash_command(command: str, command_name: str) -> list[str] | None:
     stripped = command.strip()
-    if not stripped.startswith("/skill"):
+    if stripped != command_name and not stripped.startswith(f"{command_name} "):
+        return None
+    parts = stripped.split()
+    return parts[1:]
+
+
+def _is_slash_command(command: str, command_name: str) -> bool:
+    return _split_slash_command(command, command_name) is not None
+
+
+def parse_skill_command(command: str) -> tuple[str, list[str]] | None:
+    args = _split_slash_command(command, "/skill")
+    if args is None:
         return None
 
-    parts = stripped.split()
+    parts = ["/skill", *args]
     if len(parts) == 1:
         return "", []
     return parts[1], parts[2:]
 
 
 def parse_module_command(command: str) -> tuple[str, list[str]] | None:
-    stripped = command.strip()
-    if stripped != "/module" and not stripped.startswith("/module "):
+    args = _split_slash_command(command, "/module")
+    if args is None:
         return None
 
-    parts = stripped.split(maxsplit=4)
+    parts = ["/module", *command.strip().split(maxsplit=4)[1:]]
     if len(parts) == 1:
         return "", []
     return parts[1], parts[2:]
 
 
 def parse_job_command(command: str) -> tuple[str, list[str]] | None:
-    stripped = command.strip()
-    if not stripped.startswith("/job"):
+    args = _split_slash_command(command, "/job")
+    if args is None:
         return None
 
-    parts = stripped.split()
+    parts = ["/job", *args]
     if len(parts) == 1:
         return "", []
     return parts[1], parts[2:]
 
 
 def parse_finding_command(command: str) -> tuple[str, list[str]] | None:
-    stripped = command.strip()
-    if not stripped.startswith("/finding"):
+    args = _split_slash_command(command, "/findings")
+    if args is None:
         return None
 
-    parts = stripped.split()
+    parts = ["/findings", *args]
     if len(parts) == 1:
         return "", []
     return parts[1], parts[2:]
 
 
 def parse_artifact_command(command: str) -> tuple[str, list[str]] | None:
-    stripped = command.strip()
-    if not stripped.startswith("/artifact"):
+    args = _split_slash_command(command, "/artifacts")
+    if args is None:
         return None
 
-    parts = stripped.split()
+    parts = ["/artifacts", *args]
     if len(parts) == 1:
         return "", []
     return parts[1], parts[2:]
 
 
 def parse_report_command(command: str) -> tuple[str, list[str]] | None:
-    stripped = command.strip()
-    if not stripped.startswith("/report"):
+    args = _split_slash_command(command, "/reports")
+    if args is None:
         return None
 
-    parts = stripped.split()
+    parts = ["/reports", *args]
     if len(parts) == 1:
         return "", []
     return parts[1], parts[2:]
 
 
 def parse_dashboard_command(command: str) -> list[str] | None:
-    stripped = command.strip()
-    if not stripped.startswith("/dashboard"):
-        return None
-
-    parts = stripped.split()
-    return parts[1:]
+    return _split_slash_command(command, "/dashboard")
 
 
 def parse_planner_command(command: str) -> tuple[str, list[str]] | None:
-    stripped = command.strip()
-    if not stripped.startswith("/planner"):
+    args = _split_slash_command(command, "/planner")
+    if args is None:
         return None
 
-    parts = stripped.split()
+    parts = ["/planner", *args]
     if len(parts) == 1:
         return "", []
     return parts[1], parts[2:]
 
 
 def parse_help_command(command: str) -> list[str] | None:
-    stripped = command.strip()
-    if not stripped.startswith("/help"):
-        return None
-
-    parts = stripped.split()
-    return parts[1:]
+    return _split_slash_command(command, "/help")
 
 
 def parse_redteam_command(command: str) -> list[str] | None:
-    stripped = command.strip()
-    if not stripped.startswith("/redteam"):
-        return None
+    return _split_slash_command(command, "/redteam")
 
-    parts = stripped.split()
-    return parts[1:]
+
+def parse_normal_command(command: str) -> list[str] | None:
+    return _split_slash_command(command, "/normal")
 
 
 def parse_skill_shorthand(
@@ -205,15 +228,17 @@ def parse_skill_shorthand(
     # become a shorthand skill invocation if `name` resolves to a known skill.
     if (
         not stripped.startswith("/")
-        or stripped.startswith("/skill")
-        or stripped.startswith("/module")
-        or stripped.startswith("/job")
-        or stripped.startswith("/finding")
-        or stripped.startswith("/artifact")
-        or stripped.startswith("/report")
-        or stripped.startswith("/dashboard")
-        or stripped.startswith("/planner")
-        or stripped.startswith("/redteam")
+        or _is_slash_command(stripped, "/skill")
+        or _is_slash_command(stripped, "/module")
+        or _is_slash_command(stripped, "/job")
+        or _is_slash_command(stripped, "/findings")
+        or _is_slash_command(stripped, "/artifacts")
+        or _is_slash_command(stripped, "/reports")
+        or _is_slash_command(stripped, "/dashboard")
+        or _is_slash_command(stripped, "/planner")
+        or _is_slash_command(stripped, "/redteam")
+        or _is_slash_command(stripped, "/normal")
+        or _is_slash_command(stripped, "/help")
     ):
         return None
 
@@ -230,7 +255,26 @@ def parse_skill_shorthand(
 
 
 def _confirm_choice(input_func: InputFn, prompt: str) -> bool:
-    response = input_func(prompt).strip().lower()
+    try:
+        response = input_func(prompt).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return response in {"y", "yes"}
+
+
+def _confirm_exit_after_interrupt(input_func: InputFn) -> bool:
+    try:
+        response = input_func("Exit red-code? [y/N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return True
+    return response in {"y", "yes"}
+
+
+async def _confirm_exit_after_interrupt_async(input_func: AsyncInputFn) -> bool:
+    try:
+        response = (await input_func("Exit red-code? [y/N]: ")).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return True
     return response in {"y", "yes"}
 
 
@@ -330,7 +374,6 @@ def handle_clear_command(
         return False
 
     session_state.reset()
-    shell_state.pending_clarification = None
     if presenter is not None or any(
         output is not None for output in (text_output, info_output, error_output, success_output)
     ):
@@ -367,34 +410,42 @@ def handle_redteam_command(
         error_output=error_output,
         success_output=success_output,
     )
-    action = args[0].lower() if args else "toggle"
-
-    if len(args) > 1:
-        ui.show_error("Usage: /redteam [on|off|toggle|current]")
+    if args:
+        ui.show_error("Usage: /redteam")
         return True
 
-    if action == "current":
-        ui.show_info(f"Current mode: {shell_state.requested_session_mode.value}")
-        return True
-    if action == "toggle":
-        next_mode = (
-            SessionMode.REDTEAM
-            if shell_state.requested_session_mode == SessionMode.NORMAL
-            else SessionMode.NORMAL
-        )
-        shell_state.set_requested_session_mode(next_mode)
-        ui.show_success(f"Switched to {next_mode.value} mode.")
-        return True
-    if action in {"on", "enable"}:
-        shell_state.set_requested_session_mode(SessionMode.REDTEAM)
-        ui.show_success("Switched to redteam mode.")
-        return True
-    if action in {"off", "disable", "normal"}:
-        shell_state.set_requested_session_mode(SessionMode.NORMAL)
-        ui.show_success("Switched to normal mode.")
+    shell_state.set_requested_session_mode(SessionMode.REDTEAM)
+    ui.show_success("Switched to redteam mode.")
+    return True
+
+
+def handle_normal_command(
+    command: str,
+    *,
+    shell_state: ShellState,
+    presenter: CliPresenter | None = None,
+    text_output: OutputFn | None = None,
+    info_output: OutputFn | None = None,
+    error_output: OutputFn | None = None,
+    success_output: OutputFn | None = None,
+) -> bool:
+    args = parse_normal_command(command)
+    if args is None:
+        return False
+
+    ui = _resolve_presenter(
+        presenter,
+        text_output=text_output,
+        info_output=info_output,
+        error_output=error_output,
+        success_output=success_output,
+    )
+    if args:
+        ui.show_error("Usage: /normal")
         return True
 
-    ui.show_error(f"Unknown redteam mode command: {action}")
+    shell_state.set_requested_session_mode(SessionMode.NORMAL)
+    ui.show_success("Switched to normal mode.")
     return True
 
 
@@ -620,6 +671,60 @@ def _parse_optional_limit_arg(args: list[str], *, usage: str) -> int:
     raise ValueError(usage)
 
 
+def _looks_like_positive_int(raw: str) -> bool:
+    try:
+        return int(raw) > 0
+    except ValueError:
+        return False
+
+
+def _resolve_resource_scope(
+    raw_scope: str | None,
+    *,
+    shell_state: ShellState,
+    session_service: SessionService,
+) -> str:
+    normalized = raw_scope.strip() if raw_scope else ""
+    if not normalized or normalized.lower() == "current":
+        identifier = shell_state.active_session_public_id or shell_state.active_session_id
+        if identifier is None:
+            raise ValueError("No active session. Use current, latest, or a session id like S0001.")
+        return identifier
+    if normalized.lower() == "latest":
+        session = session_service.get_latest_session()
+        if session is None:
+            raise ValueError("No sessions found.")
+        return session.public_id or session.id
+    return normalized
+
+
+def _parse_resource_list_args(
+    args: list[str],
+    *,
+    usage: str,
+    shell_state: ShellState,
+    session_service: SessionService,
+) -> tuple[str, int]:
+    if not args:
+        return _resolve_resource_scope(None, shell_state=shell_state, session_service=session_service), 20
+    if len(args) == 1:
+        if _looks_like_positive_int(args[0]):
+            return (
+                _resolve_resource_scope(None, shell_state=shell_state, session_service=session_service),
+                _parse_limit(args[0]),
+            )
+        return (
+            _resolve_resource_scope(args[0], shell_state=shell_state, session_service=session_service),
+            20,
+        )
+    if len(args) == 2:
+        return (
+            _resolve_resource_scope(args[0], shell_state=shell_state, session_service=session_service),
+            _parse_limit(args[1]),
+        )
+    raise ValueError(usage)
+
+
 def _parse_selection_indices(raw: str) -> list[int]:
     values: list[int] = []
     seen: set[int] = set()
@@ -662,9 +767,14 @@ def render_controller_result(
     *,
     ui: CliPresenter,
 ) -> None:
-    if result.status == ControllerResultStatus.CLARIFICATION_REQUIRED:
-        if result.message:
-            ui.show_info(result.message)
+    if result.status == ControllerResultStatus.MISSING_FIELDS:
+        message = (
+            result.missing_field_error.message
+            if result.missing_field_error is not None
+            else result.message
+        )
+        if message:
+            ui.show_error(message)
         return
     if result.status == ControllerResultStatus.UNSUPPORTED:
         if result.message:
@@ -927,7 +1037,40 @@ def prompt_execution_confirmation(
         f"Confirmation required: {request.action_name} | risk={request.risk_level} | "
         f"reason={request.reason}"
     )
-    answer = input_func(prompt).strip().lower()
+    try:
+        answer = input_func(prompt).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = ""
+    decision = (
+        ConfirmationDecisionValue.APPROVE
+        if answer in {"y", "yes"}
+        else ConfirmationDecisionValue.DENY
+    )
+    return ConfirmationDecision(
+        request_id=request.request_id,
+        decision=decision,
+    )
+
+
+async def prompt_execution_confirmation_async(
+    *,
+    request: ConfirmationRequest,
+    input_func: AsyncInputFn,
+    ui: CliPresenter,
+) -> ConfirmationDecision:
+    target_summary = request.target_summary or "-"
+    prompt = (
+        f"Approve action '{request.action_name}' "
+        f"(risk: {request.risk_level}, target: {target_summary})? [y/N]: "
+    )
+    ui.show_info(
+        f"Confirmation required: {request.action_name} | risk={request.risk_level} | "
+        f"reason={request.reason}"
+    )
+    try:
+        answer = (await input_func(prompt)).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = ""
     decision = (
         ConfirmationDecisionValue.APPROVE
         if answer in {"y", "yes"}
@@ -945,9 +1088,11 @@ class CliInteractionPort(InteractionPort):
         *,
         ui: CliPresenter,
         input_func: InputFn = input,
+        async_input_func: AsyncInputFn | None = None,
     ) -> None:
         self.ui = ui
         self.input_func = input_func
+        self.async_input_func = async_input_func
 
     async def emit_controller_result(
         self,
@@ -982,6 +1127,12 @@ class CliInteractionPort(InteractionPort):
         request: ConfirmationRequest,
         context: ConversationContext,
     ) -> ConfirmationDecision:
+        if self.async_input_func is not None:
+            return await prompt_execution_confirmation_async(
+                request=request,
+                input_func=self.async_input_func,
+                ui=self.ui,
+            )
         return prompt_execution_confirmation(
             request=request,
             input_func=self.input_func,
@@ -1126,6 +1277,7 @@ def handle_finding_command(
     command: str,
     *,
     finding_service: FindingService,
+    shell_state: ShellState,
     presenter: CliPresenter | None = None,
     text_output: OutputFn | None = None,
     info_output: OutputFn | None = None,
@@ -1147,22 +1299,29 @@ def handle_finding_command(
     action, args = parsed
 
     try:
-        if action in {"", "help"}:
-            ui.show_help("finding")
+        if action == "help":
+            ui.show_help("findings")
             return True
 
-        if action == "list":
-            if not args or len(args) > 2:
-                ui.show_error("Usage: /finding list <session_id> [limit]")
+        if action == "" or action == "list" or action not in RESOURCE_LIST_ACTIONS:
+            list_args = args if action in {"", "list"} else [action, *args]
+            try:
+                session_identifier, limit = _parse_resource_list_args(
+                    list_args,
+                    usage="Usage: /findings list [current|latest|S0001] [limit]",
+                    shell_state=shell_state,
+                    session_service=finding_service.session_service,
+                )
+            except ValueError as exc:
+                ui.show_error(str(exc))
                 return True
-            limit = _parse_optional_limit_arg(args[1:], usage="Usage: /finding list <session_id> [limit]")
-            findings = finding_service.list_findings(args[0], limit=limit)
-            ui.show_finding_list(findings, operation_label=args[0])
+            findings = finding_service.list_findings(session_identifier, limit=limit)
+            ui.show_finding_list(findings, operation_label=session_identifier)
             return True
 
         if action == "show":
             if len(args) != 1:
-                ui.show_error("Usage: /finding show <finding_id>")
+                ui.show_error("Usage: /findings show <finding_id>")
                 return True
             finding = finding_service.require_finding(args[0])
             links = finding_service.list_artifact_links_for_finding(finding.id)
@@ -1176,7 +1335,7 @@ def handle_finding_command(
 
         if action == "confirm":
             if len(args) != 1:
-                ui.show_error("Usage: /finding confirm <finding_id>")
+                ui.show_error("Usage: /findings confirm <finding_id>")
                 return True
             finding = finding_service.confirm_finding(args[0])
             ui.show_success(f"Confirmed finding {finding.public_id} ({finding.id})")
@@ -1184,14 +1343,17 @@ def handle_finding_command(
 
         if action == "dismiss":
             if len(args) != 1:
-                ui.show_error("Usage: /finding dismiss <finding_id>")
+                ui.show_error("Usage: /findings dismiss <finding_id>")
                 return True
-            reason = input_func("Dismissal reason [blank=none]: ").strip()
+            try:
+                reason = input_func("Dismissal reason [blank=none]: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                reason = ""
             finding = finding_service.dismiss_finding(args[0], reason=reason or None)
             ui.show_success(f"Dismissed finding {finding.public_id} ({finding.id})")
             return True
 
-        ui.show_error(f"Unknown finding command: {action}")
+        ui.show_error(f"Unknown findings command: {action}")
         return True
     except ValueError as exc:
         ui.show_error(str(exc))
@@ -1206,6 +1368,7 @@ def handle_artifact_command(
     *,
     artifact_service: ArtifactService,
     finding_service: FindingService,
+    shell_state: ShellState,
     presenter: CliPresenter | None = None,
     text_output: OutputFn | None = None,
     info_output: OutputFn | None = None,
@@ -1226,22 +1389,29 @@ def handle_artifact_command(
     action, args = parsed
 
     try:
-        if action in {"", "help"}:
-            ui.show_help("artifact")
+        if action == "help":
+            ui.show_help("artifacts")
             return True
 
-        if action == "list":
-            if not args or len(args) > 2:
-                ui.show_error("Usage: /artifact list <session_id> [limit]")
+        if action == "" or action == "list" or action not in RESOURCE_LIST_ACTIONS:
+            list_args = args if action in {"", "list"} else [action, *args]
+            try:
+                session_identifier, limit = _parse_resource_list_args(
+                    list_args,
+                    usage="Usage: /artifacts list [current|latest|S0001] [limit]",
+                    shell_state=shell_state,
+                    session_service=artifact_service.session_service,
+                )
+            except ValueError as exc:
+                ui.show_error(str(exc))
                 return True
-            limit = _parse_optional_limit_arg(args[1:], usage="Usage: /artifact list <session_id> [limit]")
-            artifacts = artifact_service.list_artifacts(args[0], limit=limit)
-            ui.show_artifact_list(artifacts, session_label=args[0])
+            artifacts = artifact_service.list_artifacts(session_identifier, limit=limit)
+            ui.show_artifact_list(artifacts, session_label=session_identifier)
             return True
 
         if action == "show":
             if len(args) != 1:
-                ui.show_error("Usage: /artifact show <artifact_id>")
+                ui.show_error("Usage: /artifacts show <artifact_id>")
                 return True
             artifact = artifact_service.require_artifact(args[0])
             links = finding_service.list_finding_links_for_artifact(artifact.id)
@@ -1252,7 +1422,7 @@ def handle_artifact_command(
             ui.show_artifact_detail(artifact, linked_finding_ids=linked_finding_ids)
             return True
 
-        ui.show_error(f"Unknown artifact command: {action}")
+        ui.show_error(f"Unknown artifacts command: {action}")
         return True
     except ValueError as exc:
         ui.show_error(str(exc))
@@ -1268,6 +1438,7 @@ def handle_report_command(
     report_service: ReportService,
     artifact_service: ArtifactService,
     finding_service: FindingService,
+    shell_state: ShellState,
     presenter: CliPresenter | None = None,
     text_output: OutputFn | None = None,
     info_output: OutputFn | None = None,
@@ -1288,22 +1459,29 @@ def handle_report_command(
     action, args = parsed
 
     try:
-        if action in {"", "help"}:
-            ui.show_help("report")
+        if action == "help":
+            ui.show_help("reports")
             return True
 
-        if action == "list":
-            if not args or len(args) > 2:
-                ui.show_error("Usage: /report list <session_id> [limit]")
+        if action == "" or action == "list" or action not in RESOURCE_LIST_ACTIONS:
+            list_args = args if action in {"", "list"} else [action, *args]
+            try:
+                session_identifier, limit = _parse_resource_list_args(
+                    list_args,
+                    usage="Usage: /reports list [current|latest|S0001] [limit]",
+                    shell_state=shell_state,
+                    session_service=report_service.session_service,
+                )
+            except ValueError as exc:
+                ui.show_error(str(exc))
                 return True
-            limit = _parse_optional_limit_arg(args[1:], usage="Usage: /report list <session_id> [limit]")
-            reports = report_service.list_reports(args[0], limit=limit)
-            ui.show_report_list(reports, session_label=args[0])
+            reports = report_service.list_reports(session_identifier, limit=limit)
+            ui.show_report_list(reports, session_label=session_identifier)
             return True
 
         if action == "show":
             if len(args) != 1:
-                ui.show_error("Usage: /report show <report_id>")
+                ui.show_error("Usage: /reports show <report_id>")
                 return True
             report = report_service.require_report(args[0])
             artifact_links = report_service.list_artifact_links(report.id)
@@ -1323,7 +1501,11 @@ def handle_report_command(
             )
             return True
 
-        ui.show_error(f"Unknown report command: {action}")
+        if action == "generate":
+            ui.show_error("Usage: /reports generate <session_summary|findings_summary|operator_report> [current|latest|S0001]")
+            return True
+
+        ui.show_error(f"Unknown reports command: {action}")
         return True
     except ValueError as exc:
         ui.show_error(str(exc))
@@ -1406,16 +1588,54 @@ async def run_interactive_shell(
     artifact_service = ArtifactService.from_settings(settings)
     report_service = ReportService.from_settings(settings)
     dashboard_service = DashboardService.from_settings(settings)
+    if input_func is input:
+        shell_input = PromptToolkitInput(
+            CompletionContext(
+                settings=settings,
+                shell_state=shell_state,
+                capability_service=capability_service,
+                module_service=module_service,
+                session_service=session_service,
+                artifact_service=artifact_service,
+                finding_service=finding_service,
+                report_service=report_service,
+                planner_service=planner_service,
+            )
+        )
+        async def command_input(prompt: str) -> str:
+            return await shell_input.read_command_async(prompt)
+
+        async def confirm_exit() -> bool:
+            return await _confirm_exit_after_interrupt_async(shell_input.read_plain_async)
+
+        plain_input_func = input
+        async_plain_input_func = shell_input.read_plain_async
+    else:
+        async def command_input(prompt: str) -> str:
+            return input_func(prompt)
+
+        async def confirm_exit() -> bool:
+            return _confirm_exit_after_interrupt(input_func)
+
+        plain_input_func = input_func
+        async_plain_input_func = None
     ui = get_presenter()
     interaction_port = CliInteractionPort(
         ui=ui,
-        input_func=input_func,
+        input_func=plain_input_func,
+        async_input_func=async_plain_input_func,
     )
     while True:
         try:
-            question = input_func(build_prompt(shell_state)).strip()
+            question = (await command_input(build_prompt(shell_state))).strip()
         except EOFError:
+            ColoredOutput.print_header("Goodbye")
             break
+        except KeyboardInterrupt:
+            if await confirm_exit():
+                ColoredOutput.print_header("Goodbye")
+                break
+            continue
 
         if question in ("/exit", "/quit"):
             ColoredOutput.print_header("Goodbye")
@@ -1425,7 +1645,6 @@ async def run_interactive_shell(
             session_state.reset()
             shell_state.active_skill_name = None
             shell_state.set_requested_session_mode(SessionMode.NORMAL)
-            shell_state.clear_pending_clarification()
             clear_active_session(shell_state)
             ColoredOutput.print_header("Session reset")
             continue
@@ -1438,6 +1657,10 @@ async def run_interactive_shell(
             continue
 
         if not question:
+            continue
+
+        if not question.startswith("/"):
+            ui.show_error(f"Unknown command: {question}. Type /help for available commands.")
             continue
 
         try:
@@ -1461,11 +1684,17 @@ async def run_interactive_shell(
                 ):
                     continue
 
+                if handle_normal_command(
+                    question,
+                    shell_state=shell_state,
+                ):
+                    continue
+
                 if handle_skill_command(
                     question,
                     shell_state=shell_state,
                     capability_service=capability_service,
-                    input_func=input_func,
+                    input_func=plain_input_func,
                 ):
                     continue
 
@@ -1476,7 +1705,7 @@ async def run_interactive_shell(
                     module_service=module_service,
                     execution_service=execution_service,
                     tool_executor=tool_executor,
-                    input_func=input_func,
+                    input_func=plain_input_func,
                 ):
                     continue
 
@@ -1517,6 +1746,8 @@ async def run_interactive_shell(
                 if handle_finding_command(
                     question,
                     finding_service=finding_service,
+                    shell_state=shell_state,
+                    input_func=plain_input_func,
                 ):
                     continue
 
@@ -1524,6 +1755,7 @@ async def run_interactive_shell(
                     question,
                     artifact_service=artifact_service,
                     finding_service=finding_service,
+                    shell_state=shell_state,
                 ):
                     continue
 
@@ -1532,6 +1764,7 @@ async def run_interactive_shell(
                     report_service=report_service,
                     artifact_service=artifact_service,
                     finding_service=finding_service,
+                    shell_state=shell_state,
                 ):
                     continue
 
@@ -1587,5 +1820,5 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    print("red-code 0.1.0 - describe what you want, or type /help for advanced help")
+    print_startup_banner()
     asyncio.run(main())

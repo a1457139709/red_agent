@@ -1,6 +1,6 @@
 from agent.settings import Settings
 from app.session_service import SessionService
-from controller.contracts import ClarificationKind, ClarificationRequest, ControllerIntent, ControllerResult
+from controller.contracts import ControllerIntent, ControllerResult
 from models.conversation_context import ConversationContext
 from models.session import SessionMode, SessionStatus
 from web.serialization import serialize_controller_result, serialize_conversation_snapshot
@@ -25,20 +25,13 @@ def test_web_serialization_converts_conversation_context(tmp_path):
         active_session_public_id="S0001",
         active_session_title="Session",
         active_session_target_summary="example.com",
-        pending_clarification=ClarificationRequest(
-            kind=ClarificationKind.RECORD_SCOPE,
-            question="Which session should I use?",
-            missing_fields=["session_scope"],
-            original_request="what did you already do",
-        ),
     )
 
     dto = serialize_conversation_snapshot(context)
 
     assert dto.conversation_id == "conv-1"
     assert dto.requested_session_mode == "redteam"
-    assert dto.pending_clarification is not None
-    assert dto.pending_clarification.kind == "record_scope"
+    assert not hasattr(dto, "pending_clarification")
 
 
 def test_web_serialization_converts_controller_result(tmp_path):
@@ -70,3 +63,21 @@ def test_web_serialization_converts_controller_result(tmp_path):
     assert dto.status == "handled"
     assert dto.session_summary is not None
     assert dto.session_summary.public_id == session.public_id
+
+
+def test_web_serialization_converts_missing_field_error():
+    result = ControllerResult.missing_fields(
+        intent=ControllerIntent.RECORD_LOOKUP_REQUEST,
+        message="No active session. Use /status latest or /status S0001.",
+        missing_fields=["session_scope"],
+        allowed_values={"session_scope": ["current", "latest", "S0001"]},
+    )
+
+    dto = serialize_controller_result(result)
+
+    assert dto.status == "missing_fields"
+    assert dto.missing_field_error is not None
+    assert dto.missing_field_error.missing_fields == ["session_scope"]
+    assert dto.missing_field_error.allowed_values == {
+        "session_scope": ["current", "latest", "S0001"],
+    }

@@ -37,10 +37,9 @@ SinkFn = Callable[[str], None]
 NONE_LABEL = "none"
 ASCII_BOX = box.ASCII
 HELP_TOPIC_PURPOSES: tuple[tuple[str, str], ...] = (
-    ("query", "Session-first record lookup and report commands"),
-    ("finding", "Session-owned findings and artifact links"),
-    ("artifact", "Inspect raw session artifacts"),
-    ("report", "Inspect persisted session reports"),
+    ("findings", "List, inspect, and update session findings"),
+    ("artifacts", "List and inspect raw session artifacts"),
+    ("reports", "List, inspect, and generate session reports"),
     ("dashboard", "Session runtime summary"),
     ("planner", "Planner plan creation and application"),
     ("skill", "Skill activation, inspection, reload, and shorthand usage"),
@@ -247,33 +246,42 @@ class CliPresenter:
         return limited
 
     def _help_overview(self) -> Group:
-        examples = Table(box=ASCII_BOX, expand=True, header_style="bold")
-        examples.add_column("Example", style="bold green", no_wrap=True)
-        examples.add_column("What Happens", style="white")
-        examples.add_row("Summarize this repository structure", "Starts or reuses a normal session and runs the normal prompt flow.")
-        examples.add_row("/redteam on", "Switches the next plain-language requests into redteam session mode.")
-        examples.add_row("Scan example.com for open services", "Runs in the currently selected mode and reuses that mode's active session when possible.")
-        examples.add_row("What did you already do?", "Looks up the current or requested session context.")
-
-        topics = Table(box=ASCII_BOX, expand=True, header_style="bold")
-        topics.add_column("Topic", style="bold cyan", no_wrap=True)
-        topics.add_column("Purpose", style="white")
-        for topic, purpose in HELP_TOPIC_PURPOSES:
-            topics.add_row(topic, purpose)
+        redteam_mode = self._command_panel("Redteam Mode", [
+            ("/redteam", "Enter redteam mode for AI-assisted automated testing workflows"),
+            ("/normal", "Return to normal mode"),
+            ("/module <list|show|run>", "Inspect and run redteam modules"),
+            ("/findings | /artifacts | /reports", "Inspect session-owned redteam records"),
+        ], border_style="red")
+        command_reference = self._command_panel("Command Reference", [
+            ("/status [scope]", "Session lookup: show the current session-focused history/status summary"),
+            ("/history [scope]", "Session lookup: show session history"),
+            ("/steps [scope]", "Session lookup: show execution step history"),
+            ("/show <public_id> [scope]", "Session lookup: resolve one session/artifact/finding/report public id"),
+            ("/why <finding_public_id> [scope]", "Session lookup: explain a finding through the trace flow"),
+            ("/findings [scope]", "Resources: list, inspect, and update session findings"),
+            ("/artifacts [scope]", "Resources: list and inspect raw session artifacts"),
+            ("/reports [scope]", "Resources: list, inspect, and generate session reports"),
+            ("/redteam", "Runtime: switch to redteam mode"),
+            ("/normal", "Runtime: switch to normal mode"),
+            ("/dashboard [session_id]", "Runtime: show a session runtime summary"),
+            ("/planner <plan|apply> ...", "Runtime: create and apply planner proposals"),
+            ("/skill <list|show|use|reload|clear|current>", "Capabilities: inspect and activate prompt-assist skills"),
+            ("/module <list|show|run>", "Capabilities: inspect and run redteam modules"),
+            ("/clear | /reset | /exit | /quit", "Common shell controls"),
+        ], border_style="bright_blue")
         return Group(
             Text(
-                "Describe what you want in plain language first. "
-                "Slash commands are available for advanced and debug workflows.",
+                "Use slash commands to operate red-code.",
                 style="dim",
             ),
             Rule(style="grey50", characters="-"),
-            Panel(examples, title="Natural-Language First", border_style="green", box=ASCII_BOX),
-            Panel(topics, title="Advanced Help Topics", border_style="bright_blue", box=ASCII_BOX),
+            redteam_mode,
+            command_reference,
             Text(
-                "Use /help <topic> for command details. The table above lists all supported topics.",
+                "Use /help <topic> for detailed command help. Supported topics: "
+                f"{self.supported_help_topics_text()}.",
                 style="dim",
             ),
-            Text("Session shortcuts: /redteam [on|off|toggle|current], /clear, /reset, /exit, /quit", style="dim"),
         )
 
     def _help_topic_page(
@@ -294,70 +302,54 @@ class CliPresenter:
             renderables.append(Text(footer, style="dim"))
         return Group(*renderables)
 
-    def _help_query(self) -> Group:
+    def _help_findings(self) -> Group:
         return self._help_topic_page(
-            heading="Query",
+            heading="Findings",
             summary=(
-                "Inspect session-scoped history, execution steps, findings, artifacts, and reports. "
-                "When scope is omitted, commands default to the active session."
+                "List, inspect, and update session findings, including linked artifact relationships and analyst review state."
             ),
             panels=[
-                self._command_panel("Query Commands", [
-                    ("/status [scope]", "Show the current session-focused history/status summary"),
-                    ("/history [scope]", "Look up session history with current-session default scope"),
-                    ("/steps [scope]", "Look up execution step history for a session"),
-                    ("/artifacts [scope]", "Look up session artifacts"),
-                    ("/findings [scope]", "Look up session findings"),
-                    ("/reports [scope]", "Look up persisted session reports"),
-                    ("/show <public_id> [scope]", "Resolve one session/artifact/finding/report public id in session scope"),
-                    ("/why <finding_public_id> [scope]", "Explain a finding through the Phase 7 trace flow"),
-                    (
-                        "/report <session_summary|findings_summary|operator_report> [scope]",
-                        "Request a session-scoped report flow",
-                    ),
+                self._command_panel("Finding Commands", [
+                    ("/findings [scope]", "List findings for the active or requested session"),
+                    ("/findings list [scope] [limit]", "List findings with an optional limit"),
+                    ("/findings show <finding_id>", "Show finding details and linked artifacts"),
+                    ("/findings confirm <finding_id>", "Mark a finding as confirmed"),
+                    ("/findings dismiss <finding_id>", "Dismiss a finding with an optional reason"),
                 ], border_style="bright_blue"),
             ],
             footer="Scope may be current, latest, or a session id like S0001. No scope means the active session.",
         )
 
-    def _help_finding(self) -> Group:
+    def _help_artifacts(self) -> Group:
         return self._help_topic_page(
-            heading="Finding",
-            summary=(
-                "Inspect and update session findings, including linked artifact relationships and analyst review state."
-            ),
-            panels=[
-                self._command_panel("Finding Commands", [
-                    ("/finding list <session_id> [limit]", "List findings for a session"),
-                    ("/finding show <finding_id>", "Show finding details and linked artifacts"),
-                    ("/finding confirm <finding_id>", "Mark a finding as confirmed"),
-                    ("/finding dismiss <finding_id>", "Dismiss a finding with an optional reason"),
-                ], border_style="bright_blue"),
-            ],
-        )
-
-    def _help_artifact(self) -> Group:
-        return self._help_topic_page(
-            heading="Artifact",
-            summary="Inspect raw session artifacts and trace how they connect back to findings.",
+            heading="Artifacts",
+            summary="List and inspect raw session artifacts and trace how they connect back to findings.",
             panels=[
                 self._command_panel("Artifact Commands", [
-                    ("/artifact list <session_id> [limit]", "List artifacts for a session"),
-                    ("/artifact show <artifact_id>", "Show artifact details and linked findings"),
+                    ("/artifacts [scope]", "List artifacts for the active or requested session"),
+                    ("/artifacts list [scope] [limit]", "List artifacts with an optional limit"),
+                    ("/artifacts show <artifact_id>", "Show artifact details and linked findings"),
                 ], border_style="bright_blue"),
             ],
+            footer="Scope may be current, latest, or a session id like S0001. No scope means the active session.",
         )
 
-    def _help_report(self) -> Group:
+    def _help_reports(self) -> Group:
         return self._help_topic_page(
-            heading="Report",
-            summary="Inspect persisted reports that summarize session outcomes, findings, and linked artifacts.",
+            heading="Reports",
+            summary="List, inspect, and generate persisted reports that summarize session outcomes, findings, and linked artifacts.",
             panels=[
                 self._command_panel("Report Commands", [
-                    ("/report list <session_id> [limit]", "List reports for a session"),
-                    ("/report show <report_id>", "Show report details and linked artifacts/findings"),
+                    ("/reports [scope]", "List reports for the active or requested session"),
+                    ("/reports list [scope] [limit]", "List reports with an optional limit"),
+                    ("/reports show <report_id>", "Show report details and linked artifacts/findings"),
+                    (
+                        "/reports generate <session_summary|findings_summary|operator_report> [scope]",
+                        "Generate or reuse a session-scoped report",
+                    ),
                 ], border_style="bright_blue"),
             ],
+            footer="Scope may be current, latest, or a session id like S0001. No scope means the active session.",
         )
 
     def _help_dashboard(self) -> Group:
@@ -434,10 +426,9 @@ class CliPresenter:
             title = "red-code"
         else:
             topic_builders: dict[str, Callable[[], Group]] = {
-                "query": self._help_query,
-                "finding": self._help_finding,
-                "artifact": self._help_artifact,
-                "report": self._help_report,
+                "findings": self._help_findings,
+                "artifacts": self._help_artifacts,
+                "reports": self._help_reports,
                 "dashboard": self._help_dashboard,
                 "planner": self._help_planner,
                 "skill": self._help_skill,

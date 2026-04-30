@@ -74,7 +74,7 @@ UI Adapters
 
 Agent Controller
   |- mode routing
-  |- clarification flow
+  |- command parameter validation and missing-field errors
   |- plan / execute / summarize loop
 
 Application Services
@@ -143,21 +143,20 @@ Agent Controller 是未来运行时的真正入口协调层。
 它负责：
 
 - 识别当前是普通模式还是红队模式
-- 在信息不足时发起最少必要澄清
+- 在信息不足时返回明确的参数校验或缺字段错误
 - 决定本次任务是否需要创建持久化 redteam session
 - 驱动计划、执行、汇报循环
 - 在需要时调用确认策略
 - 对用户请求的“查看记录”“导出结果”“继续执行”做统一路由
 
-### 7.1 Clarification Rule
+### 7.1 Missing Field Rule
 
-当用户输入目标不完整时，先追问少量必要信息，再继续执行。
+当命令参数不完整时，返回确定性错误和可选缺字段结构，不保存 conversation-level pending clarification。
 
 例如：
 
-- 目标是域名还是 IP
-- 是否是一次长期跟踪任务
-- 是否已有授权说明
+- 无 active session 且 `/status` 未提供 scope 时，提示使用 `/status latest` 或 `/status S0001`
+- Web 表单可根据 `missing_fields` 和 `allowed_values` 补齐参数后重新提交
 
 ### 7.2 Plan-Then-Execute Direction
 

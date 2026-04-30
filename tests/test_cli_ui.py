@@ -18,10 +18,10 @@ def test_presenter_help_and_observation_render_clean_text():
     presenter = build_presenter(outputs)
 
     presenter.show_help()
-    presenter.show_help("query")
+    presenter.show_help("findings")
     presenter.show_help("skill")
-    presenter.show_help("artifact")
-    presenter.show_help("report")
+    presenter.show_help("artifacts")
+    presenter.show_help("reports")
     presenter.show_help("module")
     presenter.show_observation(
         "line1\nline2\nline3\nline4\nline5",
@@ -30,29 +30,42 @@ def test_presenter_help_and_observation_render_clean_text():
     )
 
     assert "red-code" in outputs[0]
-    assert "Natural-Language First" in outputs[0]
-    assert "Advanced Help Topics" in outputs[0]
-    assert "Summarize this repository structure" in outputs[0]
+    assert "Natural-Language First" not in outputs[0]
+    assert "Redteam Mode" in outputs[0]
+    assert "AI-assisted automated testing" in outputs[0]
+    assert "Command Reference" in outputs[0]
+    assert "Advanced Help Topics" not in outputs[0]
+    assert "Summarize this repository structure" not in outputs[0]
     assert "skill" in outputs[0]
-    assert "query" in outputs[0]
+    assert "findings" in outputs[0]
+    assert "query" not in outputs[0]
     assert "operation" not in outputs[0]
     assert "job" not in outputs[0]
     assert "/help <topic>" in outputs[0]
-    assert "The table above lists all supported topics." in outputs[0]
+    assert "Supported topics:" in outputs[0]
     assert "task" not in outputs[0]
     assert "/clear" in outputs[0]
-    assert "/redteam [on|off|toggle|current]" in outputs[0]
-    assert "Query Commands" in outputs[1]
-    assert "/history [scope]" in outputs[1]
-    assert "/report <session_summary|findings_summary|operator_report> [scope]" in outputs[1]
+    assert "/redteam" in outputs[0]
+    assert "/normal" in outputs[0]
+    assert "/redteam [on|off|toggle|current]" not in outputs[0]
+    assert "Session Lookup Commands" not in outputs[0]
+    assert "/history [scope]" in outputs[0]
+    assert "/findings [scope]" in outputs[0]
+    assert "/artifacts [scope]" in outputs[0]
+    assert "/reports [scope]" in outputs[0]
+    assert "/skill <list|show|use|reload|clear|current>" in outputs[0]
+    assert "/module <list|show|run>" in outputs[0]
+    assert "Finding Commands" in outputs[1]
+    assert "/findings list [scope] [limit]" in outputs[1]
     assert "Skill Commands" in outputs[2]
     assert "Shorthand Invocation" in outputs[2]
     assert "/skill-name <prompt>" in outputs[2]
     assert "Artifact Commands" in outputs[3]
-    assert "/artifact list <session_id> [limit]" in outputs[3]
+    assert "/artifacts list [scope] [limit]" in outputs[3]
     assert "/evidence" not in outputs[3]
     assert "Report Commands" in outputs[4]
-    assert "/report show <report_id>" in outputs[4]
+    assert "/reports show <report_id>" in outputs[4]
+    assert "/reports generate <session_summary|findings_summary|operator_report> [scope]" in outputs[4]
     assert "Module Commands" in outputs[5]
     assert "/module run <name> <target> [json_overrides]" in outputs[5]
     assert "line1" in outputs[6]

@@ -21,22 +21,14 @@ class ControllerIntent(StrEnum):
     MODULE_INVOCATION_REQUEST = "module_invocation_request"
     RECORD_LOOKUP_REQUEST = "record_lookup_request"
     ADVANCED_COMMAND_REQUEST = "advanced_command_request"
-    CLARIFICATION_REQUIRED = "clarification_required"
     UNSUPPORTED_REQUEST = "unsupported_request"
 
 
 class ControllerResultStatus(StrEnum):
     HANDLED = "handled"
-    CLARIFICATION_REQUIRED = "clarification_required"
+    MISSING_FIELDS = "missing_fields"
     DELEGATED_TO_ADVANCED_COMMAND = "delegated_to_advanced_command"
     UNSUPPORTED = "unsupported"
-
-
-class ClarificationKind(StrEnum):
-    BARE_TARGET = "bare_target"
-    MISSING_TARGET = "missing_target"
-    PERSISTENCE_MODE = "persistence_mode"
-    RECORD_SCOPE = "record_scope"
 
 
 class ExecutionBridgeKind(StrEnum):
@@ -81,23 +73,6 @@ class SessionSummary:
             target_summary=session.target_summary,
             reused=reused,
         )
-
-
-@dataclass(slots=True)
-class ClarificationRequest:
-    kind: ClarificationKind
-    question: str
-    missing_fields: list[str]
-    original_request: str
-    context: dict[str, str] = field(default_factory=dict)
-    request_id: str = field(default_factory=lambda: str(uuid4()))
-
-
-@dataclass(slots=True)
-class ClarificationAnswer:
-    request_id: str
-    kind: ClarificationKind
-    raw_answer: str
 
 
 @dataclass(slots=True)
@@ -169,6 +144,13 @@ class GeneratedReportPayload:
     linked_finding_ids: list[str] = field(default_factory=list)
 
 
+@dataclass(slots=True)
+class MissingFieldError:
+    message: str
+    missing_fields: list[str]
+    allowed_values: dict[str, list[str]] = field(default_factory=dict)
+
+
 class ConfirmationDecisionValue(StrEnum):
     APPROVE = "approve"
     DENY = "deny"
@@ -201,7 +183,6 @@ class ControllerRequest:
     active_session_mode: SessionMode | None = None
     active_session_title: str | None = None
     active_session_target_summary: str | None = None
-    pending_clarification: ClarificationRequest | None = None
 
     @property
     def is_slash_command(self) -> bool:
@@ -217,7 +198,7 @@ class ControllerResult:
     record_lookup_payload: RecordLookupPayload | None = None
     finding_explanation_payload: FindingExplanationPayload | None = None
     generated_report_payload: GeneratedReportPayload | None = None
-    clarification_request: ClarificationRequest | None = None
+    missing_field_error: MissingFieldError | None = None
     confirmation_request: ConfirmationRequest | None = None
     execution_bridge: ExecutionBridge | None = None
     bind_session: bool = False
@@ -248,17 +229,23 @@ class ControllerResult:
         )
 
     @classmethod
-    def clarification_required(
+    def missing_fields(
         cls,
         *,
-        message: str | None,
-        clarification_request: ClarificationRequest,
+        intent: ControllerIntent,
+        message: str,
+        missing_fields: list[str],
+        allowed_values: dict[str, list[str]] | None = None,
     ) -> "ControllerResult":
         return cls(
-            status=ControllerResultStatus.CLARIFICATION_REQUIRED,
-            intent=ControllerIntent.CLARIFICATION_REQUIRED,
+            status=ControllerResultStatus.MISSING_FIELDS,
+            intent=intent,
             message=message,
-            clarification_request=clarification_request,
+            missing_field_error=MissingFieldError(
+                message=message,
+                missing_fields=list(missing_fields),
+                allowed_values=dict(allowed_values or {}),
+            ),
         )
 
     @classmethod

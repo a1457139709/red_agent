@@ -23,6 +23,7 @@ One naming detail is worth calling out: the product is branded as `red-code`, bu
 ```text
 src/
   main.py                # CLI adapter shell loop, slash commands, and prompt routing
+  cli/input.py           # prompt-toolkit input adapter, slash completion, and shell history
   cli/ui.py              # Rich presenter for help, task, run, checkpoint, and skill output
   agent/                 # model provider, prompt assembly, session state, context compression
   app/                   # task, run, checkpoint, capability, module, execution, and shared session interaction services
@@ -49,15 +50,16 @@ The CLI shell keeps adapter-local conversation state through `ConversationContex
 - `active_skill_name`
 - `active_session_id`
 - `active_session_public_id`
-- `pending_clarification`
 
-`SessionInteractionService` is the shared interaction layer above `AgentController` and `ExecutionService`. `run_interactive_shell(...)` uses that shared service for plain-text interaction, then dispatches advanced slash commands as CLI-only fallback. The CLI adapter still handles:
+`SessionInteractionService` is the shared interaction layer above `AgentController` and `ExecutionService`. `run_interactive_shell(...)` dispatches slash commands first and uses deterministic missing-field errors for incomplete record lookup commands instead of storing pending clarification state. The CLI adapter still handles:
 
 - session commands such as `/clear`, `/reset`, `/exit`, and `/quit`
 - task commands under `/task ...`
 - skill commands under `/skill ...`
 - one-shot skill shorthand such as `/security-audit <prompt>`
-- normal prompts in either base mode, active-skill mode, or bound-task mode
+- execution prompts routed through explicit commands or shared adapter flows
+
+Interactive TTY input is isolated in `src/cli/input.py`. The production shell uses `prompt_toolkit` for slash-command completion, dynamic session/resource/capability id completion, workspace-local history at `.red-code/history`, arrow-key history navigation, and Ctrl-C/Ctrl-D behavior. Tests can still inject a plain `input_func` into `run_interactive_shell(...)` without loading the terminal adapter.
 
 All human-facing structured output is rendered by `src/cli/ui.py`. Web-facing payloads are serialized separately under `src/web/serialization.py` and do not depend on Rich output.
 

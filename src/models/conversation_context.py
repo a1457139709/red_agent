@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from uuid import uuid4
 
-from controller.contracts import ClarificationRequest, SessionSummary
+from controller.contracts import SessionSummary
 from models.session import SessionMode
 
 
@@ -17,7 +17,6 @@ class ConversationContext:
     active_session_mode: SessionMode | None = None
     active_session_title: str | None = None
     active_session_target_summary: str | None = None
-    pending_clarification: ClarificationRequest | None = None
 
     def active_session_label(self) -> str | None:
         if self.active_session_public_id:
@@ -37,9 +36,6 @@ class ConversationContext:
         self.active_session_mode = None
         self.active_session_title = None
         self.active_session_target_summary = None
-
-    def clear_pending_clarification(self) -> None:
-        self.pending_clarification = None
 
     def set_requested_session_mode(self, mode: SessionMode) -> None:
         self.requested_session_mode = SessionMode(mode)

@@ -1,6 +1,7 @@
 from web.contracts import (
     ConversationSnapshotDto,
     ControllerResultDto,
+    MissingFieldErrorDto,
     SessionSummaryDto,
     WebEventKind,
 )
@@ -10,6 +11,7 @@ def test_web_event_kind_values_are_stable():
     assert WebEventKind.CONTROLLER_RESULT.value == "controller_result"
     assert WebEventKind.CONFIRMATION_REQUIRED.value == "confirmation_required"
     assert WebEventKind.FINAL_ANSWER.value == "final_answer"
+    assert "clarification_required" not in {item.value for item in WebEventKind}
 
 
 def test_web_contract_dtos_hold_serializable_fields():
@@ -33,13 +35,17 @@ def test_web_contract_dtos_hold_serializable_fields():
         active_session_target_summary="example.com",
     )
     result = ControllerResultDto(
-        status="handled",
-        intent="normal_request",
-        message="ok",
-        bind_session=True,
-        session_summary=summary,
+        status="missing_fields",
+        intent="record_lookup_request",
+        message="No active session. Use /status latest or /status S0001.",
+        bind_session=False,
+        missing_field_error=MissingFieldErrorDto(
+            message="No active session. Use /status latest or /status S0001.",
+            missing_fields=["session_scope"],
+            allowed_values={"session_scope": ["current", "latest", "S0001"]},
+        ),
     )
 
     assert snapshot.conversation_id == "conv-1"
-    assert result.session_summary is not None
-    assert result.session_summary.public_id == "S0001"
+    assert result.missing_field_error is not None
+    assert result.missing_field_error.missing_fields == ["session_scope"]

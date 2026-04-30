@@ -6,7 +6,12 @@ from app.execution_service import ExecutionService
 from app.session_interaction_service import SessionInteractionService
 from app.session_service import SessionService
 from controller.agent_controller import AgentController
-from controller.contracts import ConfirmationDecision, ConfirmationDecisionValue, ConfirmationRequest
+from controller.contracts import (
+    ConfirmationDecision,
+    ConfirmationDecisionValue,
+    ConfirmationRequest,
+    ControllerResultStatus,
+)
 from models.conversation_context import ConversationContext
 from runtime.execution_events import ExecutionOutcome
 from tools.executor import ToolExecutor
@@ -94,7 +99,7 @@ def test_session_interaction_service_binds_session_and_executes(tmp_path):
     assert interaction_port.final_answers == ["done"]
 
 
-def test_session_interaction_service_preserves_clarification_between_turns(tmp_path):
+def test_session_interaction_service_returns_missing_fields_without_pending_state(tmp_path):
     settings = build_settings(tmp_path)
     session_service = SessionService.from_settings(settings)
     session_service.create_session(
@@ -123,11 +128,13 @@ def test_session_interaction_service_preserves_clarification_between_turns(tmp_p
     )
 
     assert first.controller_result is not None
-    assert context.pending_clarification is not None
+    assert first.controller_result.status == ControllerResultStatus.MISSING_FIELDS
+    assert first.controller_result.missing_field_error is not None
+    assert first.controller_result.missing_field_error.missing_fields == ["session_scope"]
 
     second = asyncio.run(
         interaction_service.handle_message(
-            question="latest",
+            question="/status latest",
             conversation_context=context,
             session_state=SessionState(),
             capability_service=FakeCapabilityService(),
@@ -138,5 +145,46 @@ def test_session_interaction_service_preserves_clarification_between_turns(tmp_p
     )
 
     assert second.controller_result is not None
-    assert context.pending_clarification is None
     assert second.controller_result.record_lookup_payload is not None
+
+
+def test_session_interaction_service_advanced_command_after_missing_fields_is_independent(tmp_path):
+    settings = build_settings(tmp_path)
+    session_service = SessionService.from_settings(settings)
+    interaction_service = SessionInteractionService.from_services(
+        controller=AgentController.from_session_service(session_service),
+        execution_service=FakeExecutionService(),
+    )
+    context = ConversationContext()
+    interaction_port = FakeInteractionPort()
+
+    first = asyncio.run(
+        interaction_service.handle_message(
+            question="/findings",
+            conversation_context=context,
+            session_state=SessionState(),
+            capability_service=FakeCapabilityService(),
+            tool_executor=ToolExecutor({}),
+            settings=settings,
+            interaction_port=interaction_port,
+        )
+    )
+
+    assert first.controller_result is not None
+    assert first.controller_result.status == ControllerResultStatus.MISSING_FIELDS
+
+    second = asyncio.run(
+        interaction_service.handle_message(
+            question="/help findings",
+            conversation_context=context,
+            session_state=SessionState(),
+            capability_service=FakeCapabilityService(),
+            tool_executor=ToolExecutor({}),
+            settings=settings,
+            interaction_port=interaction_port,
+        )
+    )
+
+    assert second.advanced_command_delegated
+    assert second.controller_result is not None
+    assert second.controller_result.status == ControllerResultStatus.DELEGATED_TO_ADVANCED_COMMAND

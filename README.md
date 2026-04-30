@@ -1,95 +1,164 @@
 # red-code
 
-`red-code` is a local Python CLI coding agent built around:
+`red-code` is a local Python CLI agent for coding work and bounded red-team style inspection. It combines a LangChain/OpenAI-compatible tool loop with persistent session state, capability manifests, typed security tools, and a session-owned artifact/report store.
 
-- a controller-first natural-language entry flow
-- a LangChain tool-calling loop
-- persisted session runtime state
-- a capability-first skill/module runtime
-- a controlled local execution boundary
-- a session-first red-team runtime
+The project is designed for local single-user development workflows. It is not a hosted agent platform or a multi-user service.
 
-The project is intended for local single-user development work. It is not a SaaS agent platform or a multi-user service.
+## Overview
 
-The repository now centers on a session-first runtime:
+`red-code` has two primary modes:
 
-- `Session` / `Run` for the interactive coding-agent workflow
-- `Session` / `Job` foundations plus scope-aware admission and a scheduler/worker runtime for the red-team-oriented runtime
+- Normal mode: ask coding, repository, file, shell, and web-research questions through a local CLI agent.
+- Redteam mode: use AI-assisted automated testing and run scoped reconnaissance workflows through typed tools, admission checks, persisted jobs, artifacts, findings, reports, and dashboards.
 
-## Current Capabilities
+The runtime is session-first. User-facing records are organized around `Session`, `Run`, `Job`, `Artifact`, `Finding`, `Report`, `MemoryEntry`, and `SessionEvent`.
 
-- interactive local CLI
-- Rich-based CLI presentation layer
-- hierarchical help output with topic drill-down
-- built-in and user-local capability-backed prompt-assist skills
-- `capability.json` plus `prompt.md` contracts for prompt-assist skills
-- `capability.json` contracts for executable modules
-- explicit skill activation and one-shot skill invocation
-- bounded module execution for `surface-recon` and `web-enum` through the session risk/scope gate
-- file tools: read, write, edit, list, search, delete
-- web tools: `web_fetch` and `web_search`
-- shell command execution with safety checks
-- capability-tier tool safety
-- session state and context compression
-- persisted sessions, runs, checkpoints, and session logs
-- session-scoped safety audit logging
-- blob-backed checkpoint storage with metadata-only SQLite indexing
-- persisted redteam sessions, scope policies, session-owned jobs, artifacts, findings, reports, and memory entries
-- persisted session-level admission and execution events
-- scope-aware target validation for the v2 red-team runtime
-- a durable scheduler/worker runtime with job queueing, leases, heartbeats, retries, and cooperative cancellation
-- pure-Python typed security tools for DNS, HTTP, TLS, banner grabbing, and TCP port scans
-- session runtime exposure of typed security tools via LangChain-compatible adapters
-- structured typed-tool results with artifact and finding candidates
-- automatic persistence of typed-tool artifact payloads, finding records, and indexed reports
-- artifact-to-finding traceability links for structured review and report generation
-- JSON report generation for session summaries, findings, and artifact indexes
-- Phase 6 red-team CLI coverage for sessions, jobs, findings, artifacts, reports, and dashboards
-- Phase 7 command-first query entry contracts for session-scoped history, step, artifact, finding, report, and explanation requests
-- Phase 7 session-owned record retrieval views with traceable finding explanations
-- Phase 7 report-flow orchestration with report reuse and Markdown operator reports
-- Phase 8 shared `ConversationContext` and `SessionInteractionService` extraction above the controller and execution services
-- Phase 8 Web-ready DTO, serialization, conversation store, and transport-neutral interaction adapter contracts
-- isolated subprocess execution for typed security tools so timed-out or cancelled jobs can be terminated cleanly
+## What It Is For
 
-## Run
+Use this project when you want a local assistant that can:
 
-```powershell
-# Windows
-.venv\Scripts\python -m pip install -r requirements.txt
-.venv\Scripts\python src/main.py
-```
+- inspect and edit a repository through controlled file tools
+- run shell commands with safety checks
+- keep persistent session history, logs, checkpoints, and reports
+- activate prompt-assist skills for focused workflows
+- run capability-backed modules such as `surface-recon` and `web-enum`
+- execute bounded DNS, HTTP, TLS, banner, and TCP port-scan checks inside a scoped redteam session
+- persist raw tool output as artifacts and connect those artifacts to findings and reports
+
+## Core Features
+
+- Interactive Rich-based CLI with slash-command completion and persistent input history.
+- Natural-language first controller flow with slash commands for advanced control.
+- OpenAI-compatible model configuration through environment variables.
+- LangChain tool execution for file, shell, web, and session-facing security tools.
+- Capability manifests for prompt-assist skills and executable modules.
+- Session persistence through SQLite plus file-backed checkpoint and artifact storage.
+- Redteam sessions with scope policies, admission checks, confirmation gates, job leases, retries, and cooperative cancellation.
+- Structured artifacts, findings, reports, dashboards, and planner proposals.
+- Web-ready DTO and interaction adapter contracts under `src/web/`.
+
+## Installation
+
+Requirements:
+
+- Python 3.12 or newer
+- An OpenAI-compatible chat model endpoint
+
+Create a virtual environment:
 
 ```bash
 # macOS / Linux
-.venv/bin/python -m pip install -r requirements.txt
+python3.12 -m venv .venv
+. .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
+```
+
+```powershell
+# Windows PowerShell
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
+```
+
+If you only want runtime dependencies, you can also install from `requirements.txt`:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+## Configuration
+
+Configuration is read from the environment. A local `.env` file is supported.
+
+Minimum required settings:
+
+```env
+OPENAI_API_KEY=your-api-key
+OPENAI_MODEL=your-model-name
+```
+
+Common optional settings:
+
+```env
+OPENAI_API_BASE=https://api.openai.com/v1
+OPENAI_REASONING_EFFORT=medium
+MODEL_TEMPERATURE=0.5
+MAX_AGENT_STEPS=50
+MODEL_CONTEXT_TOKEN_LIMIT=128000
+COMPRESSION_THRESHOLD=0.8
+SYSTEM_PROMPT_RESERVE=2000
+```
+
+`OPENAI_API_BASE` is optional for providers that work with the default OpenAI client settings. Set it when using a compatible gateway or local proxy.
+
+## Running the CLI
+
+Start the CLI from the repository root:
+
+```bash
 .venv/bin/python src/main.py
 ```
 
-## Current CLI Commands
+```powershell
+.venv\Scripts\python src\main.py
+```
 
-Describe what you want in plain language first. Examples:
+Startup prints an ASCII banner and a short command guide:
 
-- `Summarize this repository structure`
-- `/redteam on`
-- `Scan example.com for open services`
-- `What did you already do?`
+```text
+ ____  _____ ____        ____ ___  ____  _____
+|  _ \| ____|  _ \      / ___/ _ \|  _ \| ____|
+| |_) |  _| | | | |____| |  | | | | | | |  _|
+|  _ <| |___| |_| |____| |__| |_| | |_| | |___
+|_| \_\_____|____/      \____\___/|____/|_____|
 
-Plain-language requests now default to the normal agent flow. Use `/redteam on` to switch subsequent plain-language requests into redteam mode, and `/redteam off` to return to normal mode.
-`/report session_summary`, `/report findings_summary`, and `/report operator_report` now reuse the most recent session report when possible and generate a new report only when needed.
+RED-CODE 0.1.0
+Command-driven local agent for development and bounded redteam workflows.
+Use /help for commands.
+Use /redteam to enter redteam mode, /normal to return.
+Redteam mode: use AI-assisted automated testing, run scoped modules, then inspect findings, artifacts, and reports.
+```
 
-Use slash commands for skill, module, and shell-level control. Record inspection and reporting are session-first and artifact-first.
+The prompt shows the current mode and active session when one is bound. The CLI is command-driven; use `/help` to list available commands. The interactive prompt supports `/` command completion, dynamic completion for sessions/resources/skills/modules, arrow-key history navigation, and a workspace-local history file at `.red-code/history`.
+
+TTY controls:
+
+- `Tab`: complete slash commands, subcommands, and known ids when available.
+- `Up` / `Down`: move through persisted command history.
+- `Ctrl-C`: ask whether to exit; answer `y` or `yes` to leave the shell.
+- `Ctrl-D`: exit the shell.
+
+Examples:
+
+```text
+/help
+/redteam
+/module run surface-recon example.com {"include_tls": true}
+/findings latest
+/normal
+```
+
+## Command Reference
+
+Use `/help` inside the CLI for the live command guide.
+
+General commands:
 
 - `/help`
-- `/help query`
+- `/help findings`
+- `/help artifacts`
+- `/help reports`
 - `/help skill`
-- `/redteam [on|off|toggle|current]`
 - `/help module`
-- `/module list`
-- `/module show <name>`
-- `/module run <name> <target> [json_overrides]`
-- `/redteam [on|off|toggle|current]`
 - `/clear`
+- `/reset`
+- `/exit`
+- `/quit`
+
+Session and record lookup:
+
 - `/status [current|latest|S0001]`
 - `/history [current|latest|S0001]`
 - `/steps [current|latest|S0001]`
@@ -98,7 +167,33 @@ Use slash commands for skill, module, and shell-level control. Record inspection
 - `/reports [current|latest|S0001]`
 - `/show <public_id> [current|latest|S0001]`
 - `/why <finding_public_id> [current|latest|S0001]`
-- `/report <session_summary|findings_summary|operator_report> [current|latest|S0001]`
+
+Redteam mode:
+
+- `/redteam`
+- `/normal`
+
+Artifacts, findings, reports, and dashboards:
+
+- `/artifacts list [current|latest|S0001] [limit]`
+- `/artifacts show <artifact_id>`
+- `/findings list [current|latest|S0001] [limit]`
+- `/findings show <finding_id>`
+- `/findings confirm <finding_id>`
+- `/findings dismiss <finding_id>`
+- `/reports generate <session_summary|findings_summary|operator_report> [current|latest|S0001]`
+- `/reports list [current|latest|S0001] [limit]`
+- `/reports show <report_id>`
+- `/dashboard`
+- `/dashboard <session_id>`
+
+Planner:
+
+- `/planner plan <session_id>`
+- `/planner apply <plan_id> [1,3,...]`
+
+Skills:
+
 - `/skill list`
 - `/skill show <name>`
 - `/skill use <name>`
@@ -108,66 +203,81 @@ Use slash commands for skill, module, and shell-level control. Record inspection
 - `/skill help`
 - `/skill-name <prompt>`
 
-`/help` now leads with natural-language examples and keeps command groups in advanced help topics.
-Use `/help query` for session-aware retrieval/report commands, `/help skill` for skill command help, and `/help module` for module workflows.
-`/clear` resets only the in-memory context and clears the screen while preserving active session binding and active shell skill.
+Modules:
 
-## Red-Team Runtime Status
+- `/module list`
+- `/module show <name>`
+- `/module run <name> <target> [json_overrides]`
 
-Phase 2 through Phase 7 currently deliver:
+## Usage Examples
 
-- `Session`, `ScopePolicy`, `Job`, `Artifact`, `Finding`, `Report`, and `MemoryEntry` domain models
-- SQLite-backed repositories and services for the v2 red-team runtime
-- atomic redteam session plus scope-policy creation
-- session-level admission and execution event persistence
-- scope-aware target, protocol, port, rate-limit, and confirmation checks
-- confirmation-gated executions are re-admitted before execution to re-check rate and concurrency limits
-- a v2-only scoped execution service that hard-blocks out-of-scope work before execution
-- a job orchestration layer that queues dependency-ready jobs, recovers stale leases, blocks failed dependency chains, and applies cooperative cancellation
-- a worker runtime with atomic job leasing, heartbeat refresh, retry backoff, timeout handling, and `drain()` support for sequential background-style execution
-- a dedicated typed-security tool registry for session/job execution, plus session-facing adapter tools in the runtime registry
-- pure-Python typed security tools: `dns_lookup`, `http_probe`, `tls_inspect`, `banner_grab`, and `port_scan`
-- session-facing typed security tools accept native port arrays, single-port values, comma-separated strings, and JSON-style list strings such as `"[80,443]"`; recoverable validation errors are rendered as failed steps instead of successful completions
-- `dns_lookup` validates both the resolver egress target and the queried logical name against scope
-- `http_probe` captures only the first HTTP response and does not auto-follow redirects
-- structured typed-tool outputs that expose normalized payloads plus artifact and finding candidates
-- isolated subprocess execution for typed security tools so timed-out or cancelled jobs do not continue uncontrolled in the background
-- automatic persistence of successful typed-job artifacts into `.red-code/sessions/<session_id>/artifacts/`
-- automatic persistence of finding candidates plus finding-to-artifact traceability links
-- indexed report generation under `.red-code/sessions/<session_id>/reports/`
-- atomic report creation that rolls back metadata and output files on failure
-- structured report-creation errors with user-facing messages plus AI-ready prompt/context fields
-- CLI inspection and lifecycle flows for `/finding`, `/artifact`, `/report`, and `/dashboard`
-- persisted planner plans and proposal application flows for `/planner`
-- planner write-back of newly derived stable facts into structured memory
-- foreground execution closure for session-first requests via `ExecutionService` and `ForegroundRunner`
-- structured execution progress events for in-session rendering (`execution_started`, step events, terminal events)
-- explicit `/redteam` mode switching for foreground redteam execution in the current session (no manual secondary run stage)
-- deterministic risk policy loading from `.red-code/config/risk-policy.json` with built-in defaults
-- structured confirmation events (`confirmation_required`, `confirmation_approved`, `confirmation_denied`) and execution blocking on denied confirmations
-- adapter-neutral conversation binding through `ConversationContext` instead of CLI-only shell state
-- shared interaction orchestration through `SessionInteractionService`, with CLI and Web-style adapters on the same controller path
-- explicit Web serialization contracts under `src/web/` for conversation snapshots, interactive stream events, session resources, reports, and dashboards
+Activate a prompt-assist skill:
 
-The current runtime still intentionally does not yet deliver:
+```text
+/skill list
+/skill use security-audit
+```
 
-- natural-language retrieval over persisted artifacts/findings/reports
-- planner-driven use of the structured artifact and finding store
+Run a one-shot skill without changing the active shell skill:
 
-Phase 5 now also delivers:
+```text
+/security-audit Review src/app/session_service.py
+```
 
-- a unified `capability.json` contract for prompt-assist skills and executable modules
-- manifest discovery from `src/capabilities/` with local `.red-code/capabilities/` overrides
-- `CapabilityService` and `ModuleService` validation for kind, mode, parameters, risk hints, and session support
-- explicit `/module` advanced/debug commands for listing, inspecting, and running modules
-- built-in `surface-recon` and `web-enum` modules that execute typed-tool workflows without requiring `operation_id`
+Switch into redteam mode:
 
-## Session Storage Layout
+```text
+/redteam
+```
 
-Successful v2 typed security jobs now write structured session-owned runtime records under:
+Run a built-in module:
+
+```text
+/module list
+/module show surface-recon
+/module run surface-recon example.com {"include_tls": true}
+```
+
+Inspect records from the active or latest session:
+
+```text
+/status latest
+/artifacts latest
+/findings latest
+/show A0001 latest
+/why F0001 latest
+```
+
+When there is no active session, record lookup commands require an explicit scope such as `latest` or `S0001`.
+
+Generate and inspect reports:
+
+```text
+/reports generate session_summary latest
+/reports generate findings_summary latest
+/reports generate operator_report latest
+/reports latest
+/reports show R0001
+```
+
+Create and apply planner proposals:
+
+```text
+/planner plan S0001
+/planner apply PLN0001
+/planner apply PLN0001 1,3
+```
+
+## Storage Layout
+
+Runtime state is stored under `.red-code/` in the current working directory.
 
 ```text
 .red-code/
+  agent.db
+  config/
+    risk-policy.json
+  capabilities/
   sessions/
     <session_id>/
       memory/
@@ -176,31 +286,39 @@ Successful v2 typed security jobs now write structured session-owned runtime rec
             MM/
               chk_<checkpoint_id>.json.gz
       artifacts/
-        ...
       findings/
       reports/
-        ...
 ```
 
-Each artifact payload is stored on disk under the owning session, while SQLite keeps only structured metadata and link tables. Report generation now persists indexed `Report` rows plus report-to-artifact and report-to-finding links. `ReportService.create_report(...)` validates linked records before commit and rolls back both database writes and output files if creation fails. The failure path exposes a user-facing error message together with AI-ready prompt/context fields for future assistant-driven remediation. Session-first export/report generation now lives under `SessionReportExportService`, which writes `session_summary`, `findings`, and `artifact_index` outputs under the owning session.
+SQLite stores structured metadata and relationships. Larger checkpoint and artifact payloads are stored as files under the owning session directory. Public IDs such as `S0001`, `A0001`, `F0001`, and `R0001` are for CLI display and lookup; internal storage uses stable session IDs.
 
-Internal persisted session storage now uses the raw `session.id` directory name. Public IDs remain for user-facing commands and displays only. Checkpoint blobs are written under the owning session directory, and on startup the checkpoint runtime repairs older mistaken `.red-code/memory/checkpoints/...` and `.red-code/sessions/<session_public_id>/memory/checkpoints/...` blob paths by migrating them into `.red-code/sessions/<session_id>/memory/checkpoints/...` before checkpoint access continues.
+## Capabilities and Modules
 
-Artifact public IDs now use the Phase 6 `A0001` format. During repository initialization, historical `Exxxx` artifact rows are renumbered into a stable, continuous `Axxxx` sequence before artifact reads and writes continue.
-
-`SessionRecordLocator.get_layer_summary(...)` now returns exact per-layer counts backed by repository `COUNT(*)` queries. It is intended for accurate session health and retrieval summaries, while the separate `list_*` helpers remain available for preview-style record inspection.
-
-## Capability Locations
+Skills and modules are both loaded as capabilities. The registry scans capability roots for directories that contain a `capability.json` manifest.
 
 Built-in capabilities live under:
 
-- `src/capabilities/`
+```text
+src/capabilities/
+```
 
 User-local capabilities live under:
 
-- `.red-code/capabilities/`
+```text
+.red-code/capabilities/
+```
 
-Example:
+Loading order:
+
+- Built-in capabilities are loaded first from `src/capabilities/`.
+- User-local capabilities are loaded second from `.red-code/capabilities/`.
+- If a local capability uses the same `name` and directory name as a built-in capability, the local capability overrides the built-in one.
+- The loaded capability list is cached for the running CLI process.
+- Use `/skill reload` to clear the cache and rescan capability directories after adding or editing local capabilities.
+
+Each capability directory must be named exactly the same as the manifest `name` field. For example, a skill with `"name": "my-skill"` must live in a directory named `my-skill`.
+
+A prompt-assist skill is a capability with `"kind": "skill"`. It must contain both `capability.json` and a non-empty `prompt.md` file:
 
 ```text
 .red-code/
@@ -210,7 +328,7 @@ Example:
       prompt.md
 ```
 
-Executable modules omit `prompt.md` and use only `capability.json`:
+An executable module is a capability with `"kind": "module"`. It uses `capability.json` only and declares workflow execution metadata:
 
 ```text
 .red-code/
@@ -219,60 +337,86 @@ Executable modules omit `prompt.md` and use only `capability.json`:
       capability.json
 ```
 
-If a local capability has the same name as a built-in capability, the local capability overrides it after the capability registry is reloaded.
+Minimal local skill example:
 
-## Current Architecture
+```json
+{
+  "version": 1,
+  "name": "my-skill",
+  "kind": "skill",
+  "display_name": "My Skill",
+  "description": "A local prompt-assist skill.",
+  "modes": ["normal"],
+  "parameters": [],
+  "tools": {
+    "allowed": ["read_file", "search"]
+  },
+  "risk": {
+    "default": "safe",
+    "actions": []
+  },
+  "execution": {
+    "style": "prompt_assist",
+    "profile": "my-skill"
+  },
+  "session": {
+    "supports_one_shot": true,
+    "supports_persistent": true,
+    "result_layers": []
+  }
+}
+```
 
-Core source areas:
+Optional capability folders:
 
-- `src/main.py`
-- `src/agent/`
-- `src/app/`
-- `src/web/`
-- `src/runtime/`
-- `src/models/`
-- `src/capabilities/`
-- `src/storage/`
-- `src/tools/`
-- `src/utils/`
+- `references/`: static files that belong to the capability.
+- `scripts/`: helper scripts shipped with the capability.
 
-## Documentation
+The loader records files from these folders so services can expose them with the loaded capability metadata. The loader does not recursively scan nested directories inside `references/` or `scripts/`.
 
-Current docs:
-
-- `docs/architecture/architecture.md`
-- `docs/architecture/task-runtime.md`
-- `docs/architecture/prompt-runtime-contract.md`
-- `docs/architecture/skill-system-standard.md`
-- `docs/architecture/checkpoint-storage-evolution.md`
-- `docs/development/engineering-development-plan.en.md`
-- `docs/development/red-team-agent-srs.md`
-- `docs/development/red-team-agent-roadmap.md`
-
-The docs index is at `docs/README.md`.
-
-## Built-In Capabilities
-
-Prompt-assist skills:
+Built-in prompt-assist skills:
 
 - `development-default`
 - `git-auto-commit`
 - `security-audit`
 - `weather-query-example`
 
-Executable modules:
+Built-in executable modules:
 
 - `surface-recon`
 - `web-enum`
 
-## Tests
+## Development and Tests
+
+Run the test suite:
+
+```bash
+.venv/bin/python -m pytest
+```
 
 ```powershell
-# Windows
 .venv\Scripts\python -m pytest
 ```
 
+Useful focused checks:
+
 ```bash
-# macOS / Linux
-.venv/bin/python -m pytest
+.venv/bin/python -m pytest tests/test_session_public_exports.py tests/test_module_service.py tests/test_capability_service.py
 ```
+
+## Project Structure
+
+Core source areas:
+
+- `src/main.py`: CLI entrypoint and command routing
+- `src/agent/`: model loop, prompt, context, settings, and local agent state
+- `src/controller/`: natural-language controller contracts and routing helpers
+- `src/app/`: application services for sessions, execution, reports, records, and capabilities
+- `src/models/`: domain models
+- `src/orchestration/`: admission, scope validation, scheduler, worker-facing job orchestration, and planner runtime
+- `src/runtime/`: execution runtime, worker runtime, leases, isolation, and timeouts
+- `src/storage/`: SQLite repositories and file path helpers
+- `src/tools/`: file, shell, web, and typed security tools
+- `src/capabilities/`: built-in skill and module manifests
+- `src/web/`: transport-neutral DTOs and interaction adapter contracts
+- `docs/`: maintained architecture and development documentation
