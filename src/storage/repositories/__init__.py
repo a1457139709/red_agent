@@ -4,6 +4,12 @@ from importlib import import_module
 
 __all__ = [
     "ArtifactRepository",
+    "AttackPathNodeRepository",
+    "CommandRunRepository",
+    "ControlCenterSchemaRepository",
+    "EventRepository",
+    "EvidenceRepository",
+    "FlagRepository",
     "FindingRepository",
     "FindingArtifactLinkRepository",
     "JobRepository",
@@ -14,10 +20,19 @@ __all__ = [
     "SessionRepository",
     "SessionEventRepository",
     "ScopePolicyRepository",
+    "ProjectRepository",
+    "TargetSessionRepository",
+    "TaskRepository",
 ]
 
 _EXPORTS = {
     "ArtifactRepository": ".artifacts",
+    "AttackPathNodeRepository": ".control_center",
+    "CommandRunRepository": ".control_center",
+    "ControlCenterSchemaRepository": ".control_center",
+    "EventRepository": ".control_center",
+    "EvidenceRepository": ".control_center",
+    "FlagRepository": ".control_center",
     "FindingRepository": ".findings",
     "FindingArtifactLinkRepository": ".finding_artifact_links",
     "JobRepository": ".jobs",
@@ -28,6 +43,9 @@ _EXPORTS = {
     "SessionRepository": ".sessions",
     "SessionEventRepository": ".session_events",
     "ScopePolicyRepository": ".scope_policies",
+    "ProjectRepository": ".control_center",
+    "TargetSessionRepository": ".control_center",
+    "TaskRepository": ".control_center",
 }
 
 

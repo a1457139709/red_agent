@@ -1,7 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
-import { Activity, FolderKanban, RefreshCcw, Server, Wifi, WifiOff } from "lucide-react";
-import { fetchHealth, getBackendUrl, type HealthStatus } from "./lib/api";
+import type { FormEvent, ReactNode } from "react";
+import { Activity, FolderKanban, RefreshCcw, Server, Target, Wifi, WifiOff } from "lucide-react";
+import {
+  createProject,
+  createTargetSession,
+  fetchHealth,
+  getBackendUrl,
+  getSessionDashboard,
+  listProjectSessions,
+  listProjects,
+  type HealthStatus,
+  type ProjectDto,
+  type SessionDashboardDto,
+  type TargetSessionDto,
+  type TargetType,
+} from "./lib/api";
+import { TARGET_TYPE_OPTIONS, validateProjectForm, validateTargetSessionForm } from "./lib/forms";
+import { parseWorkspaceHash, projectHash, sessionHash } from "./lib/routes";
 import {
   backendHttpToWebSocketUrl,
   connectEventSocket,
@@ -11,18 +26,38 @@ import {
 
 const MAX_EVENTS = 20;
 
+type LoadState = "idle" | "loading" | "error";
+
 export function App() {
   const backendUrl = useMemo(() => getBackendUrl(), []);
   const wsUrl = useMemo(() => backendHttpToWebSocketUrl(backendUrl), [backendUrl]);
-  const [health, setHealth] = useState<HealthStatus>({ state: "checking" });
+  const [health, setHealth] = useState<HealthStatus>({state: "checking"});
   const [wsStatus, setWsStatus] = useState<WebSocketStatus>("connecting");
   const [events, setEvents] = useState<ServerEventEnvelope[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [projects, setProjects] = useState<ProjectDto[]>([]);
+  const [sessions, setSessions] = useState<TargetSessionDto[]>([]);
+  const [dashboard, setDashboard] = useState<SessionDashboardDto | null>(null);
+  const [route, setRoute] = useState(() => parseWorkspaceHash(window.location.hash));
+  const [projectLoadState, setProjectLoadState] = useState<LoadState>("idle");
+  const [sessionLoadState, setSessionLoadState] = useState<LoadState>("idle");
+  const [projectForm, setProjectForm] = useState({name: "", description: ""});
+  const [sessionForm, setSessionForm] = useState({
+    name: "",
+    target_value: "",
+    target_type: "ip" as TargetType,
+    summary: "",
+  });
+  const [projectFormError, setProjectFormError] = useState<string | null>(null);
+  const [sessionFormError, setSessionFormError] = useState<string | null>(null);
+
+  const selectedProject = projects.find((project) => project.id === route.projectId || project.public_id === route.projectId) ?? null;
+  const selectedSession = sessions.find((session) => session.id === route.sessionId || session.public_id === route.sessionId) ?? null;
 
   const refreshHealth = useCallback(async () => {
-    setHealth({ state: "checking" });
+    setHealth({state: "checking"});
     try {
-      setHealth({ state: "online", payload: await fetchHealth(backendUrl) });
+      setHealth({state: "online", payload: await fetchHealth(backendUrl)});
     } catch (healthError) {
       setHealth({
         state: "offline",
@@ -31,9 +66,73 @@ export function App() {
     }
   }, [backendUrl]);
 
+  const refreshProjects = useCallback(async () => {
+    setProjectLoadState("loading");
+    try {
+      const loadedProjects = await listProjects(backendUrl);
+      setProjects(loadedProjects);
+      setProjectLoadState("idle");
+      if (!route.projectId && loadedProjects.length > 0) {
+        window.location.hash = projectHash(loadedProjects[0].id);
+      }
+    } catch (projectError) {
+      setProjectLoadState("error");
+      setError(projectError instanceof Error ? projectError.message : "Failed to load projects.");
+    }
+  }, [backendUrl, route.projectId]);
+
+  const refreshSessions = useCallback(async () => {
+    if (!selectedProject) {
+      setSessions([]);
+      setDashboard(null);
+      return;
+    }
+    setSessionLoadState("loading");
+    try {
+      const loadedSessions = await listProjectSessions(backendUrl, selectedProject.id);
+      setSessions(loadedSessions);
+      setSessionLoadState("idle");
+    } catch (sessionError) {
+      setSessionLoadState("error");
+      setError(sessionError instanceof Error ? sessionError.message : "Failed to load sessions.");
+    }
+  }, [backendUrl, selectedProject]);
+
+  const refreshDashboard = useCallback(async () => {
+    if (!selectedSession) {
+      setDashboard(null);
+      return;
+    }
+    try {
+      setDashboard(await getSessionDashboard(backendUrl, selectedSession.id));
+    } catch (dashboardError) {
+      setDashboard(null);
+      setError(dashboardError instanceof Error ? dashboardError.message : "Failed to load dashboard.");
+    }
+  }, [backendUrl, selectedSession]);
+
   useEffect(() => {
     void refreshHealth();
   }, [refreshHealth]);
+
+  useEffect(() => {
+    const updateRoute = () => setRoute(parseWorkspaceHash(window.location.hash));
+    window.addEventListener("hashchange", updateRoute);
+    updateRoute();
+    return () => window.removeEventListener("hashchange", updateRoute);
+  }, []);
+
+  useEffect(() => {
+    void refreshProjects();
+  }, [refreshProjects]);
+
+  useEffect(() => {
+    void refreshSessions();
+  }, [refreshSessions]);
+
+  useEffect(() => {
+    void refreshDashboard();
+  }, [refreshDashboard]);
 
   useEffect(() => {
     const controller = connectEventSocket(wsUrl, {
@@ -52,6 +151,53 @@ export function App() {
     };
   }, [wsUrl]);
 
+  const submitProject = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const validationError = validateProjectForm(projectForm);
+    if (validationError) {
+      setProjectFormError(validationError);
+      return;
+    }
+    setProjectFormError(null);
+    try {
+      const project = await createProject(backendUrl, {
+        name: projectForm.name.trim(),
+        description: projectForm.description.trim() || null,
+      });
+      setProjects((current) => [project, ...current]);
+      setProjectForm({name: "", description: ""});
+      window.location.hash = projectHash(project.id);
+    } catch (submitError) {
+      setProjectFormError(submitError instanceof Error ? submitError.message : "Failed to create project.");
+    }
+  };
+
+  const submitSession = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedProject) {
+      return;
+    }
+    const validationError = validateTargetSessionForm(sessionForm);
+    if (validationError) {
+      setSessionFormError(validationError);
+      return;
+    }
+    setSessionFormError(null);
+    try {
+      const session = await createTargetSession(backendUrl, selectedProject.id, {
+        name: sessionForm.name.trim(),
+        target_value: sessionForm.target_value.trim(),
+        target_type: sessionForm.target_type,
+        summary: sessionForm.summary.trim() || null,
+      });
+      setSessions((current) => [session, ...current]);
+      setSessionForm({name: "", target_value: "", target_type: "ip", summary: ""});
+      window.location.hash = sessionHash(selectedProject.id, session.id);
+    } catch (submitError) {
+      setSessionFormError(submitError instanceof Error ? submitError.message : "Failed to create session.");
+    }
+  };
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -62,14 +208,99 @@ export function App() {
             <span>Control Center</span>
           </div>
         </div>
+
         <section className="panel project-panel" aria-labelledby="projects-heading">
           <div className="panel-title">
             <FolderKanban aria-hidden="true" size={18} />
             <h2 id="projects-heading">Projects</h2>
           </div>
-          <div className="empty-list">
-            <span>Project list placeholder</span>
+          <form className="stack-form" onSubmit={submitProject}>
+            <label>
+              <span>Name</span>
+              <input
+                value={projectForm.name}
+                onChange={(event) => setProjectForm((current) => ({...current, name: event.target.value}))}
+              />
+            </label>
+            <label>
+              <span>Description</span>
+              <textarea
+                rows={2}
+                value={projectForm.description}
+                onChange={(event) => setProjectForm((current) => ({...current, description: event.target.value}))}
+              />
+            </label>
+            {projectFormError ? <p className="error-line compact">{projectFormError}</p> : null}
+            <button type="submit" className="primary-button">Create Project</button>
+          </form>
+          <NavList
+            emptyLabel={projectLoadState === "loading" ? "Loading projects" : "No projects"}
+            items={projects.map((project) => ({
+              id: project.id,
+              label: project.name,
+              meta: project.public_id,
+              selected: selectedProject?.id === project.id,
+              onClick: () => {
+                window.location.hash = projectHash(project.id);
+              },
+            }))}
+          />
+        </section>
+
+        <section className="panel" aria-labelledby="sessions-heading">
+          <div className="panel-title">
+            <Target aria-hidden="true" size={18} />
+            <h2 id="sessions-heading">Sessions</h2>
           </div>
+          {selectedProject ? (
+            <>
+              <form className="stack-form" onSubmit={submitSession}>
+                <label>
+                  <span>Name</span>
+                  <input
+                    value={sessionForm.name}
+                    onChange={(event) => setSessionForm((current) => ({...current, name: event.target.value}))}
+                  />
+                </label>
+                <label>
+                  <span>Target</span>
+                  <input
+                    value={sessionForm.target_value}
+                    onChange={(event) => setSessionForm((current) => ({...current, target_value: event.target.value}))}
+                  />
+                </label>
+                <label>
+                  <span>Type</span>
+                  <select
+                    value={sessionForm.target_type}
+                    onChange={(event) =>
+                      setSessionForm((current) => ({...current, target_type: event.target.value as TargetType}))
+                    }
+                  >
+                    {TARGET_TYPE_OPTIONS.map((targetType) => (
+                      <option value={targetType} key={targetType}>{targetType}</option>
+                    ))}
+                  </select>
+                </label>
+                {sessionFormError ? <p className="error-line compact">{sessionFormError}</p> : null}
+                <button type="submit" className="primary-button">Create Session</button>
+              </form>
+              <NavList
+                emptyLabel={sessionLoadState === "loading" ? "Loading sessions" : "No sessions"}
+                items={sessions.map((session) => ({
+                  id: session.id,
+                  label: session.name,
+                  meta: `${session.target_type} ${session.target_value}`,
+                  selected: selectedSession?.id === session.id,
+                  onClick: () => {
+                    window.location.hash = sessionHash(selectedProject.id, session.id);
+                  },
+                }))}
+              />
+            </>
+          ) : (
+            <div className="empty-list"><span>No project selected</span></div>
+          )}
         </section>
       </aside>
 
@@ -105,29 +336,43 @@ export function App() {
           />
         </section>
 
-        <section className="panel event-panel" aria-labelledby="events-heading">
-          <div className="panel-title">
-            <Activity aria-hidden="true" size={18} />
-            <h2 id="events-heading">Event log</h2>
-          </div>
-          {error ? <p className="error-line">{error}</p> : null}
-          <div className="event-list">
-            {events.length === 0 ? (
-              <div className="empty-list">
-                <span>No server events yet</span>
-              </div>
+        <section className="workspace-grid">
+          <section className="panel dashboard-panel" aria-labelledby="dashboard-heading">
+            <div className="panel-title">
+              <Target aria-hidden="true" size={18} />
+              <h2 id="dashboard-heading">Workspace</h2>
+            </div>
+            {dashboard ? (
+              <DashboardView dashboard={dashboard} />
+            ) : selectedProject ? (
+              <ProjectEmptyState project={selectedProject} />
             ) : (
-              events.map((event) => (
-                <article className="event-row" key={event.event_id}>
-                  <span className="sequence">#{event.sequence}</span>
-                  <div>
-                    <strong>{event.event_kind}</strong>
-                    <p>{event.timestamp}</p>
-                  </div>
-                </article>
-              ))
+              <div className="empty-list"><span>Create or select a project</span></div>
             )}
-          </div>
+          </section>
+
+          <section className="panel event-panel" aria-labelledby="events-heading">
+            <div className="panel-title">
+              <Activity aria-hidden="true" size={18} />
+              <h2 id="events-heading">Event log</h2>
+            </div>
+            {error ? <p className="error-line">{error}</p> : null}
+            <div className="event-list">
+              {events.length === 0 ? (
+                <div className="empty-list"><span>No server events yet</span></div>
+              ) : (
+                events.map((event) => (
+                  <article className="event-row" key={event.event_id}>
+                    <span className="sequence">#{event.sequence}</span>
+                    <div>
+                      <strong>{event.event_kind}</strong>
+                      <p>{event.timestamp}</p>
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+          </section>
         </section>
       </section>
     </main>
@@ -143,7 +388,7 @@ type StatusPanelProps = {
   onAction?: () => void;
 };
 
-function StatusPanel({ icon, title, status, detail, actionLabel, onAction }: StatusPanelProps) {
+function StatusPanel({icon, title, status, detail, actionLabel, onAction}: StatusPanelProps) {
   return (
     <article className="panel status-panel">
       <div className="status-heading">
@@ -153,10 +398,86 @@ function StatusPanel({ icon, title, status, detail, actionLabel, onAction }: Sta
       <strong className={`status-value status-${status}`}>{status}</strong>
       <p>{detail}</p>
       {actionLabel && onAction ? (
-        <button type="button" className="text-button" onClick={onAction}>
-          {actionLabel}
-        </button>
+        <button type="button" className="text-button" onClick={onAction}>{actionLabel}</button>
       ) : null}
     </article>
+  );
+}
+
+type NavListItem = {
+  id: string;
+  label: string;
+  meta: string;
+  selected: boolean;
+  onClick: () => void;
+};
+
+function NavList({items, emptyLabel}: { items: NavListItem[]; emptyLabel: string }) {
+  if (items.length === 0) {
+    return <div className="empty-list compact-empty"><span>{emptyLabel}</span></div>;
+  }
+  return (
+    <div className="nav-list">
+      {items.map((item) => (
+        <button
+          type="button"
+          className={`nav-row ${item.selected ? "selected" : ""}`}
+          key={item.id}
+          onClick={item.onClick}
+        >
+          <strong>{item.label}</strong>
+          <span>{item.meta}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ProjectEmptyState({project}: { project: ProjectDto }) {
+  return (
+    <div className="dashboard-body">
+      <div>
+        <p className="eyebrow">Project</p>
+        <h3>{project.name}</h3>
+        <p>{project.description ?? "No description"}</p>
+      </div>
+      <MetricGrid metrics={[["Sessions", "0"], ["Tasks", "0"], ["Findings", "0"], ["Flags", "0"]]} />
+    </div>
+  );
+}
+
+function DashboardView({dashboard}: { dashboard: SessionDashboardDto }) {
+  return (
+    <div className="dashboard-body">
+      <div>
+        <p className="eyebrow">Target</p>
+        <h3>{dashboard.session.name}</h3>
+        <p>{dashboard.target.type} {dashboard.target.value}</p>
+      </div>
+      <MetricGrid
+        metrics={[
+          ["Open ports", String(dashboard.open_ports.length)],
+          ["Web entries", String(dashboard.web_entries.length)],
+          ["Evidence", String(dashboard.evidence_count)],
+          ["Flags", String(dashboard.flag_count)],
+        ]}
+      />
+      <div className="empty-list dashboard-empty">
+        <span>Empty session dashboard</span>
+      </div>
+    </div>
+  );
+}
+
+function MetricGrid({metrics}: { metrics: [string, string][] }) {
+  return (
+    <div className="metric-grid">
+      {metrics.map(([label, value]) => (
+        <div className="metric" key={label}>
+          <strong>{value}</strong>
+          <span>{label}</span>
+        </div>
+      ))}
+    </div>
   );
 }

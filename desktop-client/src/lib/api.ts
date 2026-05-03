@@ -41,9 +41,260 @@ export function parseHealthResponse(payload: unknown): HealthResponse {
 }
 
 export async function fetchHealth(baseUrl: string): Promise<HealthResponse> {
-  const response = await fetch(`${baseUrl}/api/health`);
-  if (!response.ok) {
-    throw new Error(`Health check failed: ${response.status}`);
+  return parseHealthResponse(await requestJson(`${baseUrl}/api/health`));
+}
+
+export type ProjectDto = {
+  id: string;
+  public_id: string;
+  name: string;
+  description: string | null;
+  root_path: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  metadata: Record<string, unknown>;
+};
+
+export type TargetType = "ip" | "domain" | "url" | "host" | "note";
+
+export type TargetSessionDto = {
+  id: string;
+  public_id: string;
+  project_id: string;
+  name: string;
+  target_value: string;
+  target_type: TargetType;
+  status: string;
+  summary: string | null;
+  created_at: string;
+  updated_at: string;
+  metadata: Record<string, unknown>;
+};
+
+export type SessionDashboardDto = {
+  project: ProjectDto;
+  session: TargetSessionDto;
+  target: {
+    value: string;
+    type: TargetType;
+    summary: string | null;
+  };
+  task_counts: Record<string, number>;
+  finding_counts: Record<string, number>;
+  evidence_count: number;
+  flag_count: number;
+  open_ports: Record<string, unknown>[];
+  web_entries: Record<string, unknown>[];
+  directory_findings: Record<string, unknown>[];
+  poc_hits: Record<string, unknown>[];
+  attack_path: Record<string, unknown>[];
+  recent_commands: Record<string, unknown>[];
+  evidence: Record<string, unknown>[];
+  flags: Record<string, unknown>[];
+  next_actions: Record<string, unknown>[];
+};
+
+export type CreateProjectInput = {
+  name: string;
+  description?: string | null;
+};
+
+export type CreateTargetSessionInput = {
+  name: string;
+  target_value: string;
+  target_type: TargetType;
+  summary?: string | null;
+};
+
+const TARGET_TYPES = new Set<TargetType>(["ip", "domain", "url", "host", "note"]);
+
+export function parseProject(payload: unknown): ProjectDto {
+  const record = requireRecord(payload, "Invalid project.");
+  return {
+    id: requireString(record.id, "Invalid project id."),
+    public_id: requireString(record.public_id, "Invalid project public id."),
+    name: requireString(record.name, "Invalid project name."),
+    description: requireNullableString(record.description, "Invalid project description."),
+    root_path: requireString(record.root_path, "Invalid project root path."),
+    status: requireString(record.status, "Invalid project status."),
+    created_at: requireString(record.created_at, "Invalid project created_at."),
+    updated_at: requireString(record.updated_at, "Invalid project updated_at."),
+    metadata: requireRecord(record.metadata, "Invalid project metadata."),
+  };
+}
+
+export function parseTargetSession(payload: unknown): TargetSessionDto {
+  const record = requireRecord(payload, "Invalid target session.");
+  const targetType = requireString(record.target_type, "Invalid target type.");
+  if (!TARGET_TYPES.has(targetType as TargetType)) {
+    throw new Error("Invalid target type.");
   }
-  return parseHealthResponse(await response.json());
+  return {
+    id: requireString(record.id, "Invalid session id."),
+    public_id: requireString(record.public_id, "Invalid session public id."),
+    project_id: requireString(record.project_id, "Invalid session project id."),
+    name: requireString(record.name, "Invalid session name."),
+    target_value: requireString(record.target_value, "Invalid target value."),
+    target_type: targetType as TargetType,
+    status: requireString(record.status, "Invalid session status."),
+    summary: requireNullableString(record.summary, "Invalid session summary."),
+    created_at: requireString(record.created_at, "Invalid session created_at."),
+    updated_at: requireString(record.updated_at, "Invalid session updated_at."),
+    metadata: requireRecord(record.metadata, "Invalid session metadata."),
+  };
+}
+
+export function parseSessionDashboard(payload: unknown): SessionDashboardDto {
+  const record = requireRecord(payload, "Invalid session dashboard.");
+  const target = requireRecord(record.target, "Invalid dashboard target.");
+  const targetType = requireString(target.type, "Invalid dashboard target type.");
+  if (!TARGET_TYPES.has(targetType as TargetType)) {
+    throw new Error("Invalid dashboard target type.");
+  }
+  return {
+    project: parseProject(record.project),
+    session: parseTargetSession(record.session),
+    target: {
+      value: requireString(target.value, "Invalid dashboard target value."),
+      type: targetType as TargetType,
+      summary: requireNullableString(target.summary, "Invalid dashboard target summary."),
+    },
+    task_counts: requireNumberRecord(record.task_counts, "Invalid task counts."),
+    finding_counts: requireNumberRecord(record.finding_counts, "Invalid finding counts."),
+    evidence_count: requireNumber(record.evidence_count, "Invalid evidence count."),
+    flag_count: requireNumber(record.flag_count, "Invalid flag count."),
+    open_ports: requireRecordArray(record.open_ports, "Invalid open ports."),
+    web_entries: requireRecordArray(record.web_entries, "Invalid web entries."),
+    directory_findings: requireRecordArray(record.directory_findings, "Invalid directory findings."),
+    poc_hits: requireRecordArray(record.poc_hits, "Invalid POC hits."),
+    attack_path: requireRecordArray(record.attack_path, "Invalid attack path."),
+    recent_commands: requireRecordArray(record.recent_commands, "Invalid recent commands."),
+    evidence: requireRecordArray(record.evidence, "Invalid evidence."),
+    flags: requireRecordArray(record.flags, "Invalid flags."),
+    next_actions: requireRecordArray(record.next_actions, "Invalid next actions."),
+  };
+}
+
+export async function listProjects(baseUrl: string): Promise<ProjectDto[]> {
+  const payload = requireRecord(await requestJson(`${baseUrl}/api/projects`), "Invalid projects response.");
+  const projects = payload.projects;
+  if (!Array.isArray(projects)) {
+    throw new Error("Invalid projects response.");
+  }
+  return projects.map(parseProject);
+}
+
+export async function createProject(baseUrl: string, input: CreateProjectInput): Promise<ProjectDto> {
+  const payload = requireRecord(
+    await requestJson(`${baseUrl}/api/projects`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(input),
+    }),
+    "Invalid project response.",
+  );
+  return parseProject(payload.project);
+}
+
+export async function getProject(baseUrl: string, projectId: string): Promise<ProjectDto> {
+  const payload = requireRecord(await requestJson(`${baseUrl}/api/projects/${projectId}`), "Invalid project response.");
+  return parseProject(payload.project);
+}
+
+export async function listProjectSessions(baseUrl: string, projectId: string): Promise<TargetSessionDto[]> {
+  const payload = requireRecord(
+    await requestJson(`${baseUrl}/api/projects/${projectId}/sessions`),
+    "Invalid sessions response.",
+  );
+  const sessions = payload.sessions;
+  if (!Array.isArray(sessions)) {
+    throw new Error("Invalid sessions response.");
+  }
+  return sessions.map(parseTargetSession);
+}
+
+export async function createTargetSession(
+  baseUrl: string,
+  projectId: string,
+  input: CreateTargetSessionInput,
+): Promise<TargetSessionDto> {
+  const payload = requireRecord(
+    await requestJson(`${baseUrl}/api/projects/${projectId}/sessions`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(input),
+    }),
+    "Invalid session response.",
+  );
+  return parseTargetSession(payload.session);
+}
+
+export async function getTargetSession(baseUrl: string, sessionId: string): Promise<TargetSessionDto> {
+  const payload = requireRecord(await requestJson(`${baseUrl}/api/sessions/${sessionId}`), "Invalid session response.");
+  return parseTargetSession(payload.session);
+}
+
+export async function getSessionDashboard(baseUrl: string, sessionId: string): Promise<SessionDashboardDto> {
+  const payload = requireRecord(
+    await requestJson(`${baseUrl}/api/sessions/${sessionId}/dashboard`),
+    "Invalid dashboard response.",
+  );
+  return parseSessionDashboard(payload.dashboard);
+}
+
+async function requestJson(url: string, init?: RequestInit): Promise<unknown> {
+  const response = await fetch(url, init);
+  if (!response.ok) {
+    throw new Error(`Request failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+function requireRecord(payload: unknown, message: string): Record<string, unknown> {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    throw new Error(message);
+  }
+  return payload as Record<string, unknown>;
+}
+
+function requireRecordArray(payload: unknown, message: string): Record<string, unknown>[] {
+  if (!Array.isArray(payload)) {
+    throw new Error(message);
+  }
+  return payload.map((item) => requireRecord(item, message));
+}
+
+function requireNumberRecord(payload: unknown, message: string): Record<string, number> {
+  const record = requireRecord(payload, message);
+  for (const value of Object.values(record)) {
+    if (typeof value !== "number") {
+      throw new Error(message);
+    }
+  }
+  return record as Record<string, number>;
+}
+
+function requireString(payload: unknown, message: string): string {
+  if (typeof payload !== "string") {
+    throw new Error(message);
+  }
+  return payload;
+}
+
+function requireNullableString(payload: unknown, message: string): string | null {
+  if (payload === null) {
+    return null;
+  }
+  if (typeof payload !== "string") {
+    throw new Error(message);
+  }
+  return payload;
+}
+
+function requireNumber(payload: unknown, message: string): number {
+  if (typeof payload !== "number") {
+    throw new Error(message);
+  }
+  return payload;
 }
