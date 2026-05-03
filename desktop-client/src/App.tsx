@@ -36,7 +36,7 @@ export function App() {
   }, [refreshHealth]);
 
   useEffect(() => {
-    const socket = connectEventSocket(wsUrl, {
+    const controller = connectEventSocket(wsUrl, {
       onStatusChange: setWsStatus,
       onEvent: (event) => {
         setError(null);
@@ -44,7 +44,12 @@ export function App() {
       },
       onError: setError,
     });
-    return () => socket.close();
+    const reconnect = () => controller.reconnect();
+    window.addEventListener("red-code:ws-reconnect", reconnect);
+    return () => {
+      window.removeEventListener("red-code:ws-reconnect", reconnect);
+      controller.close();
+    };
   }, [wsUrl]);
 
   return (
@@ -74,9 +79,11 @@ export function App() {
             <p className="eyebrow">Backend</p>
             <strong>{backendUrl}</strong>
           </div>
-          <button type="button" className="icon-button" onClick={refreshHealth} aria-label="Refresh health">
-            <RefreshCcw aria-hidden="true" size={18} />
-          </button>
+          <div className="toolbar">
+            <button type="button" className="icon-button" onClick={refreshHealth} aria-label="Refresh health">
+              <RefreshCcw aria-hidden="true" size={18} />
+            </button>
+          </div>
         </header>
 
         <section className="status-grid" aria-label="Connection status">
@@ -91,6 +98,10 @@ export function App() {
             title="WebSocket"
             status={wsStatus}
             detail={wsUrl}
+            actionLabel="Reconnect"
+            onAction={() => {
+              window.dispatchEvent(new CustomEvent("red-code:ws-reconnect"));
+            }}
           />
         </section>
 
@@ -128,9 +139,11 @@ type StatusPanelProps = {
   title: string;
   status: string;
   detail: string;
+  actionLabel?: string;
+  onAction?: () => void;
 };
 
-function StatusPanel({ icon, title, status, detail }: StatusPanelProps) {
+function StatusPanel({ icon, title, status, detail, actionLabel, onAction }: StatusPanelProps) {
   return (
     <article className="panel status-panel">
       <div className="status-heading">
@@ -139,6 +152,11 @@ function StatusPanel({ icon, title, status, detail }: StatusPanelProps) {
       </div>
       <strong className={`status-value status-${status}`}>{status}</strong>
       <p>{detail}</p>
+      {actionLabel && onAction ? (
+        <button type="button" className="text-button" onClick={onAction}>
+          {actionLabel}
+        </button>
+      ) : null}
     </article>
   );
 }

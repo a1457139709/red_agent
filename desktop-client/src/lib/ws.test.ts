@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { backendHttpToWebSocketUrl, connectEventSocket, parseServerEventEnvelope } from "./ws";
 
 class FakeSocket extends EventTarget {
@@ -39,22 +39,31 @@ describe("parseServerEventEnvelope", () => {
 });
 
 describe("connectEventSocket", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("reports connect, event, and disconnect states", () => {
     const statuses: string[] = [];
     const events: string[] = [];
     const errors: string[] = [];
-    const socket = connectEventSocket(
+    const sockets: FakeSocket[] = [];
+    const controller = connectEventSocket(
       "ws://127.0.0.1:8000/ws/events",
       {
         onStatusChange: (status) => statuses.push(status),
         onEvent: (event) => events.push(event.event_kind),
         onError: (message) => errors.push(message),
       },
-      (url) => new FakeSocket(url) as unknown as WebSocket,
-    ) as unknown as FakeSocket;
+      (url) => {
+        const socket = new FakeSocket(url);
+        sockets.push(socket);
+        return socket as unknown as WebSocket;
+      },
+    );
 
-    socket.dispatchEvent(new Event("open"));
-    socket.dispatchEvent(
+    sockets[0].dispatchEvent(new Event("open"));
+    sockets[0].dispatchEvent(
       new MessageEvent("message", {
         data: JSON.stringify({
           event_id: "event-1",
@@ -68,10 +77,90 @@ describe("connectEventSocket", () => {
         }),
       }),
     );
-    socket.close();
+    controller.close();
 
     expect(statuses).toEqual(["connecting", "connected", "disconnected"]);
     expect(events).toEqual(["connection.connected"]);
     expect(errors).toEqual([]);
+  });
+
+  it("automatically reconnects after an unexpected close", () => {
+    vi.useFakeTimers();
+    const statuses: string[] = [];
+    const sockets: FakeSocket[] = [];
+    connectEventSocket(
+      "ws://127.0.0.1:8000/ws/events",
+      {
+        onStatusChange: (status) => statuses.push(status),
+        onEvent: vi.fn(),
+        onError: vi.fn(),
+      },
+      (url) => {
+        const socket = new FakeSocket(url);
+        sockets.push(socket);
+        return socket as unknown as WebSocket;
+      },
+      { reconnectDelaysMs: [25] },
+    );
+
+    sockets[0].dispatchEvent(new Event("open"));
+    sockets[0].dispatchEvent(new Event("close"));
+    vi.advanceTimersByTime(25);
+
+    expect(sockets).toHaveLength(2);
+    expect(statuses).toEqual(["connecting", "connected", "reconnecting", "reconnecting"]);
+  });
+
+  it("supports manual reconnect", () => {
+    const sockets: FakeSocket[] = [];
+    const controller = connectEventSocket(
+      "ws://127.0.0.1:8000/ws/events",
+      {
+        onStatusChange: vi.fn(),
+        onEvent: vi.fn(),
+        onError: vi.fn(),
+      },
+      (url) => {
+        const socket = new FakeSocket(url);
+        sockets.push(socket);
+        return socket as unknown as WebSocket;
+      },
+    );
+
+    controller.reconnect();
+
+    expect(sockets).toHaveLength(2);
+    expect(sockets[0].close).toHaveBeenCalled();
+  });
+
+  it("does not let a stale manual-reconnect close clear the active socket", () => {
+    class AsyncCloseSocket extends FakeSocket {
+      close = vi.fn();
+      emitClose() {
+        this.dispatchEvent(new Event("close"));
+      }
+    }
+    const sockets: AsyncCloseSocket[] = [];
+    const controller = connectEventSocket(
+      "ws://127.0.0.1:8000/ws/events",
+      {
+        onStatusChange: vi.fn(),
+        onEvent: vi.fn(),
+        onError: vi.fn(),
+      },
+      (url) => {
+        const socket = new AsyncCloseSocket(url);
+        sockets.push(socket);
+        return socket as unknown as WebSocket;
+      },
+    );
+
+    controller.reconnect();
+    sockets[0].emitClose();
+    controller.close();
+
+    expect(sockets).toHaveLength(2);
+    expect(sockets[0].close).toHaveBeenCalledTimes(1);
+    expect(sockets[1].close).toHaveBeenCalledTimes(1);
   });
 });

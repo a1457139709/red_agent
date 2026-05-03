@@ -70,6 +70,12 @@ button {
   margin: 0;
 }
 
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .icon-button {
   display: inline-grid;
   place-items: center;
@@ -150,6 +156,7 @@ button {
 
 .status-checking,
 .status-connecting,
+.status-reconnecting,
 .status-disconnected {
   color: #9a6500;
 }
@@ -159,6 +166,21 @@ button {
   overflow-wrap: anywhere;
   color: #676a60;
   font-size: 13px;
+}
+
+.text-button {
+  margin-top: 14px;
+  border: 1px solid #c9c8bd;
+  border-radius: 6px;
+  background: #fffef8;
+  color: #20221f;
+  cursor: pointer;
+  padding: 7px 10px;
+}
+
+.text-button:hover {
+  border-color: #8a8f7f;
+  background: #f2f0e8;
 }
 
 .event-panel {

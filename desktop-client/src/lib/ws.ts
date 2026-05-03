@@ -9,7 +9,9 @@ export type ServerEventEnvelope = {
   payload: Record<string, unknown>;
 };
 
-export type WebSocketStatus = "connecting" | "connected" | "disconnected" | "error";
+export type WebSocketStatus = "connecting" | "connected" | "reconnecting" | "disconnected" | "error";
+
+const DEFAULT_RECONNECT_DELAYS_MS = [500, 1000, 2000, 5000];
 
 export function backendHttpToWebSocketUrl(baseUrl: string): string {
   const url = new URL(baseUrl);
@@ -44,27 +46,119 @@ export type EventSocketHandlers = {
   onError: (message: string) => void;
 };
 
+export type EventSocketOptions = {
+  reconnectDelaysMs?: number[];
+};
+
+export type EventSocketController = {
+  reconnect: () => void;
+  close: () => void;
+};
+
 export function connectEventSocket(
   url: string,
   handlers: EventSocketHandlers,
   socketFactory: (url: string) => WebSocket = (targetUrl) => new WebSocket(targetUrl),
-): WebSocket {
-  handlers.onStatusChange("connecting");
-  const socket = socketFactory(url);
+  options: EventSocketOptions = {},
+): EventSocketController {
+  const reconnectDelaysMs = options.reconnectDelaysMs?.length
+    ? options.reconnectDelaysMs
+    : DEFAULT_RECONNECT_DELAYS_MS;
+  let socket: WebSocket | null = null;
+  let closedByClient = false;
+  const ignoredCloseSockets = new WeakSet<WebSocket>();
+  let reconnectAttempt = 0;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-  socket.addEventListener("open", () => handlers.onStatusChange("connected"));
-  socket.addEventListener("close", () => handlers.onStatusChange("disconnected"));
-  socket.addEventListener("error", () => {
-    handlers.onStatusChange("error");
-    handlers.onError("WebSocket connection failed.");
-  });
-  socket.addEventListener("message", (event) => {
-    try {
-      handlers.onEvent(parseServerEventEnvelope(JSON.parse(event.data)));
-    } catch (error) {
-      handlers.onError(error instanceof Error ? error.message : "Invalid WebSocket message.");
+  const clearReconnectTimer = () => {
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
     }
-  });
+  };
 
-  return socket;
+  const openSocket = (status: WebSocketStatus) => {
+    clearReconnectTimer();
+    handlers.onStatusChange(status);
+    const currentSocket = socketFactory(url);
+    socket = currentSocket;
+
+    currentSocket.addEventListener("open", () => {
+      if (socket !== currentSocket) {
+        return;
+      }
+      reconnectAttempt = 0;
+      handlers.onStatusChange("connected");
+    });
+    currentSocket.addEventListener("close", () => {
+      if (socket === currentSocket) {
+        socket = null;
+      }
+      if (ignoredCloseSockets.has(currentSocket)) {
+        return;
+      }
+      if (socket !== null) {
+        return;
+      }
+      if (closedByClient) {
+        handlers.onStatusChange("disconnected");
+        return;
+      }
+      scheduleReconnect();
+    });
+    currentSocket.addEventListener("error", () => {
+      if (socket !== currentSocket) {
+        return;
+      }
+      handlers.onStatusChange("error");
+      handlers.onError("WebSocket connection failed.");
+    });
+    currentSocket.addEventListener("message", (event) => {
+      if (socket !== currentSocket) {
+        return;
+      }
+      try {
+        handlers.onEvent(parseServerEventEnvelope(JSON.parse(event.data)));
+      } catch (error) {
+        handlers.onError(error instanceof Error ? error.message : "Invalid WebSocket message.");
+      }
+    });
+  };
+
+  const scheduleReconnect = () => {
+    const delayIndex = Math.min(reconnectAttempt, reconnectDelaysMs.length - 1);
+    const delayMs = reconnectDelaysMs[delayIndex];
+    reconnectAttempt += 1;
+    handlers.onStatusChange("reconnecting");
+    reconnectTimer = setTimeout(() => openSocket("reconnecting"), delayMs);
+  };
+
+  const closeCurrentSocket = (ignoreCloseEvent: boolean) => {
+    if (socket !== null) {
+      const currentSocket = socket;
+      socket = null;
+      if (ignoreCloseEvent) {
+        ignoredCloseSockets.add(currentSocket);
+      }
+      currentSocket.close();
+    }
+  };
+
+  openSocket("connecting");
+
+  return {
+    reconnect: () => {
+      closedByClient = false;
+      reconnectAttempt = 0;
+      clearReconnectTimer();
+      closeCurrentSocket(true);
+      openSocket("connecting");
+    },
+    close: () => {
+      closedByClient = true;
+      clearReconnectTimer();
+      closeCurrentSocket(true);
+      handlers.onStatusChange("disconnected");
+    },
+  };
 }
