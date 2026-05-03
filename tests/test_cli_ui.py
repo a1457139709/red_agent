@@ -212,7 +212,7 @@ def test_presenter_detail_views_include_key_fields_without_blob_internals():
     assert "Result Layers:" in merged
     assert "Skill Workflow Plan" in merged
     assert "Metadata" in merged and "category: security" in merged
-    assert "Final Answer" in merged and "Completed successfully." in merged
+    assert "FINAL ANSWER" in merged and "Completed successfully." in merged
     assert "Error" in merged and "Something failed." in merged
     assert "Success" in merged and "Saved." in merged
 
@@ -336,6 +336,6 @@ def test_presenter_renders_structured_execution_progress_events():
     assert "session S0001 | http_probe started" in merged
     assert "Step Completed (S0001)" in merged
     assert "STEP COMPLETED: port_scan" in merged
-    assert "Port Scan Result" in merged
+    assert "端口扫描结果" in merged
     assert "closed" in merged
-    assert "Execution Failed" in merged
+    assert "EXECUTION FAILED" in merged

@@ -95,6 +95,31 @@ export type SessionDashboardDto = {
   next_actions: Record<string, unknown>[];
 };
 
+export type ToolStatusDto = {
+  name: "nmap" | "ffuf" | "nuclei";
+  available: boolean;
+  path: string | null;
+  version: string | null;
+  error: string | null;
+};
+
+export type ScanTaskDto = {
+  id: string;
+  public_id: string;
+  project_id: string;
+  session_id: string;
+  task_type: string;
+  executor: string;
+  status: string;
+  input: Record<string, unknown>;
+  result: Record<string, unknown>;
+  started_at: string | null;
+  ended_at: string | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type CreateProjectInput = {
   name: string;
   description?: string | null;
@@ -107,7 +132,13 @@ export type CreateTargetSessionInput = {
   summary?: string | null;
 };
 
+export type CreateScanTaskInput = {
+  task_type: "port_scan" | "dir_scan" | "poc_scan";
+  input: Record<string, unknown>;
+};
+
 const TARGET_TYPES = new Set<TargetType>(["ip", "domain", "url", "host", "note"]);
+const TOOL_NAMES = new Set(["nmap", "ffuf", "nuclei"]);
 
 export function parseProject(payload: unknown): ProjectDto {
   const record = requireRecord(payload, "Invalid project.");
@@ -173,6 +204,41 @@ export function parseSessionDashboard(payload: unknown): SessionDashboardDto {
     evidence: requireRecordArray(record.evidence, "Invalid evidence."),
     flags: requireRecordArray(record.flags, "Invalid flags."),
     next_actions: requireRecordArray(record.next_actions, "Invalid next actions."),
+  };
+}
+
+export function parseToolStatus(payload: unknown): ToolStatusDto {
+  const record = requireRecord(payload, "Invalid tool status.");
+  const name = requireString(record.name, "Invalid tool name.");
+  if (!TOOL_NAMES.has(name)) {
+    throw new Error("Invalid tool name.");
+  }
+  return {
+    name: name as ToolStatusDto["name"],
+    available: requireBoolean(record.available, "Invalid tool availability."),
+    path: requireNullableString(record.path, "Invalid tool path."),
+    version: requireNullableString(record.version, "Invalid tool version."),
+    error: requireNullableString(record.error, "Invalid tool error."),
+  };
+}
+
+export function parseScanTask(payload: unknown): ScanTaskDto {
+  const record = requireRecord(payload, "Invalid scan task.");
+  return {
+    id: requireString(record.id, "Invalid task id."),
+    public_id: requireString(record.public_id, "Invalid task public id."),
+    project_id: requireString(record.project_id, "Invalid task project id."),
+    session_id: requireString(record.session_id, "Invalid task session id."),
+    task_type: requireString(record.task_type, "Invalid task type."),
+    executor: requireString(record.executor, "Invalid task executor."),
+    status: requireString(record.status, "Invalid task status."),
+    input: requireRecord(record.input, "Invalid task input."),
+    result: requireRecord(record.result, "Invalid task result."),
+    started_at: requireNullableString(record.started_at, "Invalid task started_at."),
+    ended_at: requireNullableString(record.ended_at, "Invalid task ended_at."),
+    error: requireNullableString(record.error, "Invalid task error."),
+    created_at: requireString(record.created_at, "Invalid task created_at."),
+    updated_at: requireString(record.updated_at, "Invalid task updated_at."),
   };
 }
 
@@ -243,6 +309,57 @@ export async function getSessionDashboard(baseUrl: string, sessionId: string): P
   return parseSessionDashboard(payload.dashboard);
 }
 
+export async function listToolStatus(baseUrl: string): Promise<ToolStatusDto[]> {
+  const payload = requireRecord(await requestJson(`${baseUrl}/api/tools/status`), "Invalid tool status response.");
+  if (!Array.isArray(payload.tools)) {
+    throw new Error("Invalid tool status response.");
+  }
+  return payload.tools.map(parseToolStatus);
+}
+
+export async function listSessionTasks(baseUrl: string, sessionId: string): Promise<ScanTaskDto[]> {
+  const payload = requireRecord(
+    await requestJson(`${baseUrl}/api/sessions/${sessionId}/tasks`),
+    "Invalid tasks response.",
+  );
+  if (!Array.isArray(payload.tasks)) {
+    throw new Error("Invalid tasks response.");
+  }
+  return payload.tasks.map(parseScanTask);
+}
+
+export async function createScanTask(
+  baseUrl: string,
+  sessionId: string,
+  input: CreateScanTaskInput,
+): Promise<ScanTaskDto> {
+  const payload = requireRecord(
+    await requestJson(`${baseUrl}/api/sessions/${sessionId}/tasks`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(input),
+    }),
+    "Invalid task response.",
+  );
+  return parseScanTask(payload.task);
+}
+
+export async function cancelScanTask(baseUrl: string, taskId: string): Promise<ScanTaskDto> {
+  const payload = requireRecord(
+    await requestJson(`${baseUrl}/api/tasks/${taskId}/cancel`, {method: "POST"}),
+    "Invalid task response.",
+  );
+  return parseScanTask(payload.task);
+}
+
+export async function rerunScanTask(baseUrl: string, taskId: string): Promise<ScanTaskDto> {
+  const payload = requireRecord(
+    await requestJson(`${baseUrl}/api/tasks/${taskId}/rerun`, {method: "POST"}),
+    "Invalid task response.",
+  );
+  return parseScanTask(payload.task);
+}
+
 async function requestJson(url: string, init?: RequestInit): Promise<unknown> {
   const response = await fetch(url, init);
   if (!response.ok) {
@@ -294,6 +411,13 @@ function requireNullableString(payload: unknown, message: string): string | null
 
 function requireNumber(payload: unknown, message: string): number {
   if (typeof payload !== "number") {
+    throw new Error(message);
+  }
+  return payload;
+}
+
+function requireBoolean(payload: unknown, message: string): boolean {
+  if (typeof payload !== "boolean") {
     throw new Error(message);
   }
   return payload;

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+import pytest
 
 from agent.settings import Settings
 from app.project_service import ProjectService
@@ -195,6 +196,50 @@ def test_phase2_supporting_repositories_persist_session_entities(tmp_path):
     assert [item.id for item in FlagRepository(storage).list(session_id=session.id)] == [flag.id]
 
 
+def test_event_sequence_is_global_and_project_history_is_ordered(tmp_path):
+    settings = build_settings(tmp_path)
+    storage = SQLiteStorage(settings.sqlite_path)
+    project = ProjectService.from_settings(settings).create_project(name="Ordering Lab")
+    session_service = TargetSessionService.from_settings(settings)
+    first_session = session_service.create_session(
+        project_identifier=project.id,
+        name="First target",
+        target_value="10.10.10.10",
+        target_type=TargetType.IP,
+    )
+    second_session = session_service.create_session(
+        project_identifier=project.id,
+        name="Second target",
+        target_value="10.10.10.11",
+        target_type=TargetType.IP,
+    )
+
+    first_event = EventRepository(storage).create(
+        Event.create(
+            project_id=project.id,
+            session_id=first_session.id,
+            event_kind="task.started",
+            level="info",
+            payload={"session": "first"},
+        )
+    )
+    second_event = EventRepository(storage).create(
+        Event.create(
+            project_id=project.id,
+            session_id=second_session.id,
+            event_kind="task.completed",
+            level="info",
+            payload={"session": "second"},
+        )
+    )
+
+    project_history = EventRepository(storage).list(project_id=project.id, limit=None)
+
+    assert first_event.sequence == 1
+    assert second_event.sequence == 2
+    assert [item.id for item in project_history] == [second_event.id, first_event.id]
+
+
 def test_session_dashboard_empty_state(tmp_path):
     settings = build_settings(tmp_path)
     project = ProjectService.from_settings(settings).create_project(name="Local Lab")
@@ -214,6 +259,133 @@ def test_session_dashboard_empty_state(tmp_path):
     assert dashboard.task_counts == {}
     assert dashboard.evidence_count == 0
     assert dashboard.flag_count == 0
+
+
+def test_session_dashboard_includes_workspace_sections(tmp_path):
+    settings = build_settings(tmp_path)
+    project = ProjectService.from_settings(settings).create_project(name="Web Lab")
+    session = TargetSessionService.from_settings(settings).create_session(
+        project_identifier=project.id,
+        name="Portal",
+        target_value="portal.local",
+        target_type=TargetType.HOST,
+    )
+    storage = SQLiteStorage(settings.sqlite_path)
+    task = TaskRepository(storage).create(
+        Task.create(
+            project_id=project.id,
+            session_id=session.id,
+            task_type="port_scan",
+            executor="nmap",
+            result_json={
+                "structured": {
+                    "open_ports": [
+                        {"port": 80, "protocol": "tcp", "service": "http"},
+                        {"port": 443, "protocol": "tcp", "service": "https"},
+                    ]
+                }
+            },
+        )
+    )
+    TaskRepository(storage).create(
+        Task.create(
+            project_id=project.id,
+            session_id=session.id,
+            task_type="dir_scan",
+            executor="ffuf",
+            input_json={"base_url": "http://portal.local"},
+            result_json={"structured": {"results": [{"status": 200, "url": "http://portal.local/admin"}]}},
+        )
+    )
+    evidence = EvidenceRepository(storage).create(
+        Evidence.create(
+            project_id=project.id,
+            session_id=session.id,
+            source_task_id=task.id,
+            evidence_type="service",
+            title="HTTP reachable",
+            summary="Landing page responds.",
+        )
+    )
+    AttackPathNodeRepository(storage).create(
+        AttackPathNode.create(
+            project_id=project.id,
+            session_id=session.id,
+            stage="web-enum",
+            title="Inspect admin login",
+            status="open",
+            next_action="Probe authentication and default creds.",
+        )
+    )
+    CommandRunRepository(storage).create(
+        CommandRun.create(
+            project_id=project.id,
+            session_id=session.id,
+            terminal_id="term-1",
+            command="curl -i http://portal.local/admin",
+            exit_code=0,
+            tags=["manual", "http"],
+        )
+    )
+    FlagRepository(storage).create(
+        Flag.create(
+            project_id=project.id,
+            session_id=session.id,
+            flag_type="loot",
+            value="admin:admin",
+            source_evidence_id=evidence.id,
+        )
+    )
+
+    dashboard = TargetSessionService.from_settings(settings).build_dashboard(session.public_id)
+
+    assert {entry["url"] for entry in dashboard.web_entries} == {"http://portal.local", "https://portal.local"}
+    assert dashboard.recent_commands[0]["command"] == "curl -i http://portal.local/admin"
+    assert dashboard.next_actions[0]["next_action"] == "Probe authentication and default creds."
+    assert dashboard.evidence[0]["title"] == "HTTP reachable"
+    assert dashboard.flags[0]["value"] == "admin:admin"
+
+
+def test_project_creation_rolls_back_when_manifest_write_fails(tmp_path, monkeypatch):
+    settings = build_settings(tmp_path)
+    service = ProjectService.from_settings(settings)
+
+    def fail_manifest(self, project):
+        raise RuntimeError("manifest write failed")
+
+    monkeypatch.setattr(ProjectService, "_prepare_project_manifest", fail_manifest)
+
+    with pytest.raises(RuntimeError, match="manifest write failed"):
+        service.create_project(name="Broken Project")
+
+    assert service.list_projects(limit=None) == []
+    if settings.projects_dir.exists():
+        assert list(settings.projects_dir.iterdir()) == []
+
+
+def test_session_creation_rolls_back_when_workspace_prep_fails(tmp_path, monkeypatch):
+    settings = build_settings(tmp_path)
+    project = ProjectService.from_settings(settings).create_project(name="Rollback Lab")
+    service = TargetSessionService.from_settings(settings)
+    original = TargetSessionService._prepare_session_files
+
+    def fail_prepare(self, project_arg, session_arg):
+        original(self, project_arg, session_arg)
+        raise RuntimeError("session prep failed")
+
+    monkeypatch.setattr(TargetSessionService, "_prepare_session_files", fail_prepare)
+
+    with pytest.raises(RuntimeError, match="session prep failed"):
+        service.create_session(
+            project_identifier=project.id,
+            name="Broken session",
+            target_value="10.10.10.12",
+            target_type=TargetType.IP,
+        )
+
+    assert service.list_sessions(project_identifier=project.id, limit=None) == []
+    session_roots = list(project_sessions_dir(settings, project.id).iterdir())
+    assert session_roots == []
 
 
 def test_phase2_project_and_session_api_routes(tmp_path, monkeypatch):
@@ -265,3 +437,39 @@ def test_phase2_project_and_session_api_routes(tmp_path, monkeypatch):
         assert payload["open_ports"] == []
         assert payload["attack_path"] == []
         assert payload["next_actions"] == []
+
+
+def test_event_websocket_replays_persisted_session_history(tmp_path, monkeypatch):
+    settings = build_settings(tmp_path)
+    project = ProjectService.from_settings(settings).create_project(name="Replay Lab")
+    session = TargetSessionService.from_settings(settings).create_session(
+        project_identifier=project.id,
+        name="Replay target",
+        target_value="10.10.10.15",
+        target_type=TargetType.IP,
+    )
+    storage = SQLiteStorage(settings.sqlite_path)
+    event = EventRepository(storage).create(
+        Event.create(
+            project_id=project.id,
+            session_id=session.id,
+            event_kind="task.completed",
+            level="info",
+            payload={"message": "scan finished"},
+        )
+    )
+
+    monkeypatch.setattr("server.lifecycle.get_settings", lambda: settings)
+    monkeypatch.setattr("server.ws.get_settings", lambda: settings)
+
+    with TestClient(create_app()) as client:
+        with client.websocket_connect(f"/ws/events?session_id={session.public_id}&limit=10") as websocket:
+            replayed = websocket.receive_json()
+            connected = websocket.receive_json()
+
+    assert replayed["event_id"] == event.id
+    assert replayed["timestamp"] == event.created_at
+    assert replayed["sequence"] == event.sequence
+    assert replayed["event_kind"] == "task.completed"
+    assert connected["event_kind"] == "connection.connected"
+    assert connected["sequence"] == event.sequence + 1

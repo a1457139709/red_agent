@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { parseHealthResponse, parseProject, parseSessionDashboard, parseTargetSession } from "./api";
+import {
+  parseHealthResponse,
+  parseProject,
+  parseScanTask,
+  parseSessionDashboard,
+  parseTargetSession,
+  parseToolStatus,
+} from "./api";
 
 describe("parseHealthResponse", () => {
   it("parses the backend health response", () => {
@@ -18,6 +25,36 @@ describe("parseHealthResponse", () => {
 
   it("rejects malformed payloads", () => {
     expect(() => parseHealthResponse({ status: "ok" })).toThrow("Invalid health response");
+  });
+});
+
+describe("phase 3 DTO parsers", () => {
+  it("parses tool status and scan task DTOs", () => {
+    expect(parseToolStatus({name: "nmap", available: false, path: null, version: null, error: "missing"})).toEqual({
+      name: "nmap",
+      available: false,
+      path: null,
+      version: null,
+      error: "missing",
+    });
+    expect(
+      parseScanTask({
+        id: "task-1",
+        public_id: "TASK0001",
+        project_id: "project-1",
+        session_id: "session-1",
+        task_type: "port_scan",
+        executor: "nmap",
+        status: "succeeded",
+        input: {target_host: "10.10.10.5"},
+        result: {structured: {open_ports: []}},
+        started_at: null,
+        ended_at: null,
+        error: null,
+        created_at: "2026-05-03T00:00:00+00:00",
+        updated_at: "2026-05-03T00:00:00+00:00",
+      }).executor,
+    ).toBe("nmap");
   });
 });
 

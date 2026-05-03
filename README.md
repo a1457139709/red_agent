@@ -236,6 +236,8 @@ npm run tauri dev
 
 The desktop shell defaults to `http://127.0.0.1:8000` and can be pointed at another backend with `VITE_BACKEND_URL`.
 
+The Control Center event socket is `ws://127.0.0.1:8000/ws/events` by default. It accepts optional replay scope parameters such as `session_id`, `project_id`, `limit`, and `since_sequence` so the desktop client can restore persisted session history after reconnect or backend restart.
+
 ## Usage Examples
 
 Activate a prompt-assist skill:

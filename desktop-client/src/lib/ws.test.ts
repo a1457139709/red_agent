@@ -19,6 +19,17 @@ describe("backendHttpToWebSocketUrl", () => {
   it("maps https backend URLs to wss event URLs", () => {
     expect(backendHttpToWebSocketUrl("https://example.test/api")).toBe("wss://example.test/ws/events");
   });
+
+  it("includes replay scope query parameters when provided", () => {
+    expect(
+      backendHttpToWebSocketUrl("http://127.0.0.1:8000", {
+        projectId: "project-1",
+        sessionId: "session-1",
+        replayLimit: 20,
+        sinceSequence: 9,
+      }),
+    ).toBe("ws://127.0.0.1:8000/ws/events?project_id=project-1&session_id=session-1&limit=20&since_sequence=9");
+  });
 });
 
 describe("parseServerEventEnvelope", () => {

@@ -36,6 +36,27 @@ from runtime.execution_events import ExecutionEventType, ExecutionProgressEvent
 SinkFn = Callable[[str], None]
 NONE_LABEL = "none"
 ASCII_BOX = box.ASCII
+TOOL_UI_BOX = box.ROUNDED
+TOOL_DESCRIPTIONS: dict[str, str] = {
+    "port_scan": "TCP端口扫描工具",
+    "dns_lookup": "DNS记录查询工具",
+    "http_probe": "HTTP探测工具",
+    "tls_inspect": "TLS证书检查工具",
+    "banner_grab": "服务Banner抓取工具",
+}
+TOOL_INPUT_LABELS: dict[str, tuple[str, str]] = {
+    "target": ("目标", "target"),
+    "ports": ("端口", "ports"),
+    "timeout_seconds": ("超时", "timeout_seconds"),
+    "record_type": ("记录类型", "record_type"),
+    "nameserver": ("解析器", "nameserver"),
+    "method": ("方法", "method"),
+    "headers": ("请求头", "headers"),
+    "port": ("端口", "port"),
+    "probe": ("探测模式", "probe"),
+    "max_read_bytes": ("读取上限", "max_read_bytes"),
+    "max_body_chars": ("响应上限", "max_body_chars"),
+}
 HELP_TOPIC_PURPOSES: tuple[tuple[str, str], ...] = (
     ("findings", "List, inspect, and update session findings"),
     ("artifacts", "List and inspect raw session artifacts"),
@@ -61,6 +82,7 @@ class CliPresenter:
     def __init__(self, console: Console | None = None, sinks: _PresenterSinks | None = None) -> None:
         self.console = console or Console(soft_wrap=True)
         self.sinks = sinks or _PresenterSinks()
+        self._open_tool_steps: set[tuple[str, str]] = set()
 
     @classmethod
     def for_callbacks(
@@ -203,6 +225,17 @@ class CliPresenter:
             return json.dumps(value, ensure_ascii=False)
         except TypeError:
             return str(value)
+
+    def _format_tool_display_value(self, key: str, value: object) -> str:
+        if value is None:
+            return "-"
+        if key == "timeout_seconds":
+            return f"{value} 秒"
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (list, tuple, dict)):
+            return json.dumps(value, ensure_ascii=False)
+        return str(value)
 
     def _render_skill_name(self, skill_name: str | None) -> str:
         return skill_name or NONE_LABEL
@@ -1317,11 +1350,29 @@ class CliPresenter:
             )
             return
 
+        if event.event_type == ExecutionEventType.EXECUTION_COMPLETED:
+            self._emit(
+                Group(
+                    Rule(" EXECUTION COMPLETED ", style="bold cyan", characters="-"),
+                    self._execution_detail_panel(event, border_style="cyan"),
+                ),
+                kind="success",
+            )
+            return
+
+        if event.event_type == ExecutionEventType.EXECUTION_FAILED:
+            self._emit(
+                Group(
+                    Rule(" EXECUTION FAILED ", style="bold red", characters="-"),
+                    self._execution_detail_panel(event, border_style="red"),
+                ),
+                kind="error",
+            )
+            return
+
         title_style = {
             ExecutionEventType.EXECUTION_STARTED: ("Execution Started", "blue", "info"),
             ExecutionEventType.EXECUTION_PAUSED: ("Execution Paused", "yellow", "info"),
-            ExecutionEventType.EXECUTION_COMPLETED: ("Execution Completed", "green", "success"),
-            ExecutionEventType.EXECUTION_FAILED: ("Execution Failed", "red", "error"),
         }.get(event.event_type, ("Execution Event", "blue", "info"))
         title, border_style, sink_kind = title_style
         details = [
@@ -1338,9 +1389,30 @@ class CliPresenter:
                 Text("\n".join(details)),
                 title=title,
                 border_style=border_style,
-                box=ASCII_BOX,
+                box=TOOL_UI_BOX,
             ),
             kind=sink_kind,
+        )
+
+    def _execution_detail_panel(
+        self,
+        event: ExecutionProgressEvent,
+        *,
+        border_style: str,
+    ) -> Panel:
+        details = [
+            f"Session: {event.session_public_id}",
+            f"Event: {event.event_type.value}",
+        ]
+        if event.target_summary:
+            details.append(f"Target: {event.target_summary}")
+        if event.message:
+            details.append(f"Message: {event.message}")
+        details.append(f"At: {self._format_timestamp_compact(event.timestamp)}")
+        return Panel(
+            Text("\n".join(details)),
+            border_style=border_style,
+            box=TOOL_UI_BOX,
         )
 
     def _emit_tool_progress_panel(
@@ -1359,34 +1431,151 @@ class CliPresenter:
             ExecutionEventType.STEP_COMPLETED: "green",
             ExecutionEventType.STEP_FAILED: "red",
         }[event.event_type]
-        renderables: list[RenderableType] = [
-            Rule(f" {status_label}: {tool_name} ", style=border_style, characters="-")
-        ]
-        input_payload = tool_event.get("input")
-        if isinstance(input_payload, dict) and input_payload:
-            renderables.append(
-                self._dict_table("Tool Input", input_payload, key_style="bold cyan")
-            )
         output_payload = tool_event.get("output")
-        if isinstance(output_payload, dict) and output_payload:
-            specialized = self._tool_result_renderable(tool_name, output_payload)
+        presentation = (
+            output_payload.get("presentation")
+            if isinstance(output_payload, dict)
+            else None
+        )
+        tool_step_key = (event.session_public_id, tool_name)
+        should_show_header = (
+            event.event_type == ExecutionEventType.STEP_STARTED
+            or tool_step_key not in self._open_tool_steps
+        )
+        renderables: list[RenderableType] = []
+        if should_show_header:
             renderables.append(
-                specialized
-                or self._dict_table("Tool Output", output_payload, key_style="bold green")
-            )
-        summary = tool_event.get("error") or tool_event.get("result_summary") or event.message
-        if summary:
-            renderables.append(
-                Panel(
-                    Text(str(summary)),
-                    title=f"{tool_name} ({event.session_public_id})",
-                    border_style=border_style,
-                    box=ASCII_BOX,
+                self._tool_header(
+                    tool_name=tool_name,
+                    session_public_id=event.session_public_id,
+                    timestamp=event.timestamp,
+                    presentation=presentation if isinstance(presentation, dict) else None,
                 )
             )
+        input_payload = tool_event.get("input")
+        if event.event_type == ExecutionEventType.STEP_STARTED:
+            self._open_tool_steps.add(tool_step_key)
+            renderables.append(
+                Rule(f" ▶ STEP: {tool_name} ", style="bold green", characters="-")
+            )
+            if isinstance(input_payload, dict) and input_payload:
+                renderables.append(self._tool_input_panel(tool_name, input_payload))
+        elif event.event_type == ExecutionEventType.STEP_COMPLETED:
+            self._open_tool_steps.discard(tool_step_key)
+            renderables.append(
+                Rule(
+                    f" ✓ {status_label}: {tool_name} ",
+                    style=border_style,
+                    characters="-",
+                )
+            )
+            if should_show_header and isinstance(input_payload, dict) and input_payload:
+                renderables.append(self._tool_input_panel(tool_name, input_payload))
+            summary = tool_event.get("result_summary") or event.message
+            if summary:
+                renderables.append(
+                    self._tool_summary_panel(
+                        tool_name,
+                        event.session_public_id,
+                        str(summary),
+                    )
+                )
+            if isinstance(output_payload, dict) and output_payload:
+                specialized = self._tool_result_renderable(tool_name, output_payload)
+                renderables.append(
+                    specialized
+                    or self._dict_table("Tool Output", output_payload, key_style="bold green")
+                )
+        else:
+            self._open_tool_steps.discard(tool_step_key)
+            renderables.append(
+                Rule(
+                    f" ! {status_label}: {tool_name} ",
+                    style=border_style,
+                    characters="-",
+                )
+            )
+            summary = tool_event.get("error") or tool_event.get("result_summary") or event.message
+            if summary:
+                renderables.append(
+                    self._tool_summary_panel(
+                        tool_name,
+                        event.session_public_id,
+                        str(summary),
+                        style="red",
+                    )
+                )
         self._emit(
             Group(*renderables),
             kind="error" if event.event_type == ExecutionEventType.STEP_FAILED else "info",
+        )
+
+    def _tool_header(
+        self,
+        *,
+        tool_name: str,
+        session_public_id: str,
+        timestamp: str,
+        presentation: dict | None,
+    ) -> RenderableType:
+        title = self._tool_title(tool_name, presentation)
+        description = TOOL_DESCRIPTIONS.get(tool_name, "工具执行")
+        header = Table.grid(expand=True)
+        header.add_column(ratio=3, overflow="fold")
+        header.add_column(justify="center", ratio=1, no_wrap=True)
+        header.add_column(justify="right", ratio=1, no_wrap=True)
+        name = Text()
+        name.append("◎ ", style="bold cyan")
+        name.append(title, style="bold cyan")
+        name.append(f"  {description}", style="bold bright_black")
+        header.add_row(
+            name,
+            Text(f"Session: {session_public_id}", style="bold magenta"),
+            Text(self._format_timestamp_compact(timestamp), style="bright_black"),
+        )
+        return header
+
+    def _tool_title(self, tool_name: str, presentation: dict | None) -> str:
+        raw_title = presentation.get("title") if presentation else None
+        return str(raw_title or tool_name.replace("_", " ").upper())
+
+    def _tool_input_panel(self, tool_name: str, input_payload: dict) -> Panel:
+        title = (
+            "扫描参数"
+            if tool_name in {"port_scan", "dns_lookup", "http_probe", "tls_inspect", "banner_grab"}
+            else "工具参数"
+        )
+        table = Table(box=box.SIMPLE, expand=True, show_header=False, padding=(0, 1))
+        table.add_column("Field", ratio=2, overflow="fold")
+        table.add_column("Value", ratio=3, overflow="fold")
+        for key, value in input_payload.items():
+            zh_label, raw_label = TOOL_INPUT_LABELS.get(str(key), (str(key), str(key)))
+            label = Text()
+            label.append(f"{zh_label} ", style="bold white")
+            label.append(f"({raw_label})", style="bright_black")
+            table.add_row(
+                label,
+                Text(self._format_tool_display_value(str(key), value), style="white"),
+            )
+        return Panel(table, title=title, border_style="bright_black", box=TOOL_UI_BOX)
+
+    def _tool_summary_panel(
+        self,
+        tool_name: str,
+        session_public_id: str,
+        summary: str,
+        *,
+        style: str = "green",
+    ) -> Panel:
+        text = Text()
+        text.append("✓ " if style == "green" else "! ", style=f"bold {style}")
+        text.append(f"{tool_name}: ", style="bold white")
+        text.append(summary, style="white")
+        return Panel(
+            text,
+            title=f"{tool_name} ({session_public_id})",
+            border_style=style,
+            box=TOOL_UI_BOX,
         )
 
     def _dict_table(self, title: str, values: dict, *, key_style: str) -> Table:
@@ -1401,12 +1590,14 @@ class CliPresenter:
 
     def _tool_result_renderable(self, tool_name: str, output_payload: dict) -> RenderableType | None:
         data = output_payload.get("data")
-        if not isinstance(data, dict):
-            return None
         presentation = output_payload.get("presentation")
         group = presentation.get("group") if isinstance(presentation, dict) else None
-        if group == "security":
+        if group == "security" and isinstance(data, dict):
             return self._security_tool_result_table(tool_name, data)
+        if self._looks_like_security_result(output_payload):
+            return self._security_tool_result_table(tool_name, output_payload)
+        if not isinstance(data, dict):
+            return None
         if group == "file":
             return self._dict_table("File Tool Result", data, key_style="bold cyan")
         if group == "web":
@@ -1414,6 +1605,11 @@ class CliPresenter:
         if group == "shell":
             return self._dict_table("Shell Result", data, key_style="bold yellow")
         return None
+
+    def _looks_like_security_result(self, output_payload: dict) -> bool:
+        return isinstance(output_payload.get("payload"), dict) and (
+            "tool_name" in output_payload or "summary" in output_payload
+        )
 
     def _security_tool_result_table(self, tool_name: str, data: dict) -> RenderableType | None:
         payload = data.get("payload")
@@ -1424,19 +1620,28 @@ class CliPresenter:
         ports = payload.get("ports")
         if not isinstance(ports, list):
             return self._dict_table("Security Tool Result", payload, key_style="bold green")
-        table = Table(title="Port Scan Result", box=ASCII_BOX, expand=True)
+        table = Table(title="端口扫描结果", box=TOOL_UI_BOX, expand=True, header_style="bold")
         table.add_column("Port", style="bold yellow", no_wrap=True)
         table.add_column("Status", no_wrap=True)
-        table.add_column("Error", overflow="fold")
+        table.add_column("说明", overflow="fold")
         for entry in ports:
             if not isinstance(entry, dict):
                 continue
+            status = str(entry.get("status", "-"))
+            error = entry.get("error")
             table.add_row(
                 str(entry.get("port", "-")),
-                str(entry.get("status", "-")),
-                str(entry.get("error") or "-"),
+                Text(status, style="bold red" if status == "closed" else "bold green"),
+                self._port_scan_description(status=status, error=error),
             )
         return table
+
+    def _port_scan_description(self, *, status: str, error: object) -> str:
+        if status == "open":
+            return "端口开放"
+        if error in (None, "", "-"):
+            return "端口已关闭"
+        return f"端口已关闭（错误码 {error}）"
 
     def show_info(self, message: str) -> None:
         self._emit(Panel(Text(message), title="Info", border_style="blue", box=ASCII_BOX), kind="info")
@@ -1451,7 +1656,13 @@ class CliPresenter:
         self._emit(Rule(f" {title} ", style="bright_blue", characters="-"), kind="header")
 
     def show_final_answer(self, text: str) -> None:
-        self._emit(Panel(Text(text), title="Final Answer", border_style="green", box=ASCII_BOX), kind="final_answer")
+        self._emit(
+            Group(
+                Rule(" FINAL ANSWER ", style="bold magenta", characters="-"),
+                Panel(Text(text), border_style="magenta", box=TOOL_UI_BOX),
+            ),
+            kind="final_answer",
+        )
 
     def show_step_start(self, step_num: int, total_steps: int | None = None) -> None:
         label = f"Step {step_num}/{total_steps}" if total_steps is not None else f"Step {step_num}"

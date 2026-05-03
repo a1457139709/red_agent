@@ -178,6 +178,11 @@ Frontend:
 - `GET /api/sessions/{session_id}`
 - `GET /api/sessions/{session_id}/dashboard`
 
+补充要求：
+
+- Session dashboard 需要完整填充目标摘要、开放端口、Web 入口、目录发现、POC 命中、攻击路径、下一步建议、最近命令、证据和 flag。
+- `ws/events` 需要支持按 `session_id` / `project_id` 回放持久化事件，便于重连或后端重启后恢复历史事件。
+
 实现文件布局：
 
 ```text

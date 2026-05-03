@@ -13,12 +13,35 @@ export type WebSocketStatus = "connecting" | "connected" | "reconnecting" | "dis
 
 const DEFAULT_RECONNECT_DELAYS_MS = [500, 1000, 2000, 5000];
 
-export function backendHttpToWebSocketUrl(baseUrl: string): string {
+export type EventSocketUrlOptions = {
+  projectId?: string | null;
+  sessionId?: string | null;
+  replay?: boolean;
+  replayLimit?: number;
+  sinceSequence?: number | null;
+};
+
+export function backendHttpToWebSocketUrl(baseUrl: string, options: EventSocketUrlOptions = {}): string {
   const url = new URL(baseUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.pathname = "/ws/events";
   url.search = "";
   url.hash = "";
+  if (options.projectId) {
+    url.searchParams.set("project_id", options.projectId);
+  }
+  if (options.sessionId) {
+    url.searchParams.set("session_id", options.sessionId);
+  }
+  if (options.replay === false) {
+    url.searchParams.set("replay", "0");
+  }
+  if (typeof options.replayLimit === "number") {
+    url.searchParams.set("limit", String(options.replayLimit));
+  }
+  if (typeof options.sinceSequence === "number") {
+    url.searchParams.set("since_sequence", String(options.sinceSequence));
+  }
   return url.toString();
 }
 

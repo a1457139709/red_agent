@@ -1,21 +1,28 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import { Activity, FolderKanban, RefreshCcw, Server, Target, Wifi, WifiOff } from "lucide-react";
+import { Activity, FolderKanban, ListChecks, Play, RefreshCcw, Server, Target, Wifi, WifiOff, Wrench } from "lucide-react";
 import {
+  cancelScanTask,
   createProject,
+  createScanTask,
   createTargetSession,
   fetchHealth,
   getBackendUrl,
   getSessionDashboard,
+  listSessionTasks,
+  listToolStatus,
   listProjectSessions,
   listProjects,
+  rerunScanTask,
   type HealthStatus,
   type ProjectDto,
+  type ScanTaskDto,
   type SessionDashboardDto,
   type TargetSessionDto,
   type TargetType,
+  type ToolStatusDto,
 } from "./lib/api";
-import { TARGET_TYPE_OPTIONS, validateProjectForm, validateTargetSessionForm } from "./lib/forms";
+import { SCAN_TASK_OPTIONS, TARGET_TYPE_OPTIONS, validateProjectForm, validateScanTaskForm, validateTargetSessionForm } from "./lib/forms";
 import { parseWorkspaceHash, projectHash, sessionHash } from "./lib/routes";
 import {
   backendHttpToWebSocketUrl,
@@ -30,7 +37,6 @@ type LoadState = "idle" | "loading" | "error";
 
 export function App() {
   const backendUrl = useMemo(() => getBackendUrl(), []);
-  const wsUrl = useMemo(() => backendHttpToWebSocketUrl(backendUrl), [backendUrl]);
   const [health, setHealth] = useState<HealthStatus>({state: "checking"});
   const [wsStatus, setWsStatus] = useState<WebSocketStatus>("connecting");
   const [events, setEvents] = useState<ServerEventEnvelope[]>([]);
@@ -38,9 +44,13 @@ export function App() {
   const [projects, setProjects] = useState<ProjectDto[]>([]);
   const [sessions, setSessions] = useState<TargetSessionDto[]>([]);
   const [dashboard, setDashboard] = useState<SessionDashboardDto | null>(null);
+  const [toolStatus, setToolStatus] = useState<ToolStatusDto[]>([]);
+  const [tasks, setTasks] = useState<ScanTaskDto[]>([]);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [route, setRoute] = useState(() => parseWorkspaceHash(window.location.hash));
   const [projectLoadState, setProjectLoadState] = useState<LoadState>("idle");
   const [sessionLoadState, setSessionLoadState] = useState<LoadState>("idle");
+  const [taskLoadState, setTaskLoadState] = useState<LoadState>("idle");
   const [projectForm, setProjectForm] = useState({name: "", description: ""});
   const [sessionForm, setSessionForm] = useState({
     name: "",
@@ -48,11 +58,30 @@ export function App() {
     target_type: "ip" as TargetType,
     summary: "",
   });
+  const [scanForm, setScanForm] = useState({
+    task_type: "port_scan",
+    target: "",
+    ports: "1,22,80,443,8080",
+    wordlist: "",
+    templates: "",
+  });
   const [projectFormError, setProjectFormError] = useState<string | null>(null);
   const [sessionFormError, setSessionFormError] = useState<string | null>(null);
+  const [scanFormError, setScanFormError] = useState<string | null>(null);
 
   const selectedProject = projects.find((project) => project.id === route.projectId || project.public_id === route.projectId) ?? null;
   const selectedSession = sessions.find((session) => session.id === route.sessionId || session.public_id === route.sessionId) ?? null;
+  const selectedTask = tasks.find((task) => task.id === selectedTaskId || task.public_id === selectedTaskId) ?? tasks[0] ?? null;
+  const wsUrl = useMemo(
+    () =>
+      backendHttpToWebSocketUrl(backendUrl, {
+        projectId: selectedProject?.id ?? null,
+        sessionId: selectedSession?.id ?? null,
+        replay: selectedSession !== null,
+        replayLimit: MAX_EVENTS,
+      }),
+    [backendUrl, selectedProject?.id, selectedSession?.id],
+  );
 
   const refreshHealth = useCallback(async () => {
     setHealth({state: "checking"});
@@ -111,9 +140,39 @@ export function App() {
     }
   }, [backendUrl, selectedSession]);
 
+  const refreshTools = useCallback(async () => {
+    try {
+      setToolStatus(await listToolStatus(backendUrl));
+    } catch (toolError) {
+      setError(toolError instanceof Error ? toolError.message : "Failed to load tool status.");
+    }
+  }, [backendUrl]);
+
+  const refreshTasks = useCallback(async () => {
+    if (!selectedSession) {
+      setTasks([]);
+      setSelectedTaskId(null);
+      return;
+    }
+    setTaskLoadState("loading");
+    try {
+      const loadedTasks = await listSessionTasks(backendUrl, selectedSession.id);
+      setTasks(loadedTasks);
+      setTaskLoadState("idle");
+      setSelectedTaskId((current) => current ?? loadedTasks[0]?.id ?? null);
+    } catch (taskError) {
+      setTaskLoadState("error");
+      setError(taskError instanceof Error ? taskError.message : "Failed to load tasks.");
+    }
+  }, [backendUrl, selectedSession]);
+
   useEffect(() => {
     void refreshHealth();
   }, [refreshHealth]);
+
+  useEffect(() => {
+    void refreshTools();
+  }, [refreshTools]);
 
   useEffect(() => {
     const updateRoute = () => setRoute(parseWorkspaceHash(window.location.hash));
@@ -135,11 +194,16 @@ export function App() {
   }, [refreshDashboard]);
 
   useEffect(() => {
+    void refreshTasks();
+  }, [refreshTasks]);
+
+  useEffect(() => {
+    setEvents([]);
     const controller = connectEventSocket(wsUrl, {
       onStatusChange: setWsStatus,
       onEvent: (event) => {
         setError(null);
-        setEvents((current) => [event, ...current].slice(0, MAX_EVENTS));
+        setEvents((current) => mergeEvents(current, event));
       },
       onError: setError,
     });
@@ -195,6 +259,60 @@ export function App() {
       window.location.hash = sessionHash(selectedProject.id, session.id);
     } catch (submitError) {
       setSessionFormError(submitError instanceof Error ? submitError.message : "Failed to create session.");
+    }
+  };
+
+  const submitScanTask = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedSession) {
+      return;
+    }
+    const validationError = validateScanTaskForm(scanForm);
+    if (validationError) {
+      setScanFormError(validationError);
+      return;
+    }
+    setScanFormError(null);
+    try {
+      const task = await createScanTask(backendUrl, selectedSession.id, {
+        task_type: scanForm.task_type as "port_scan" | "dir_scan" | "poc_scan",
+        input: buildScanInput(scanForm),
+      });
+      setTasks((current) => [task, ...current]);
+      setSelectedTaskId(task.id);
+      await refreshDashboard();
+    } catch (submitError) {
+      setScanFormError(submitError instanceof Error ? submitError.message : "Failed to create scan task.");
+    }
+  };
+
+  const updateTask = (updated: ScanTaskDto) => {
+    setTasks((current) => current.map((task) => (task.id === updated.id ? updated : task)));
+    setSelectedTaskId(updated.id);
+  };
+
+  const cancelSelectedTask = async () => {
+    if (!selectedTask) {
+      return;
+    }
+    try {
+      updateTask(await cancelScanTask(backendUrl, selectedTask.id));
+    } catch (cancelError) {
+      setError(cancelError instanceof Error ? cancelError.message : "Failed to cancel task.");
+    }
+  };
+
+  const rerunSelectedTask = async () => {
+    if (!selectedTask) {
+      return;
+    }
+    try {
+      const task = await rerunScanTask(backendUrl, selectedTask.id);
+      setTasks((current) => [task, ...current]);
+      setSelectedTaskId(task.id);
+      await refreshDashboard();
+    } catch (rerunError) {
+      setError(rerunError instanceof Error ? rerunError.message : "Failed to rerun task.");
     }
   };
 
@@ -337,6 +455,75 @@ export function App() {
         </section>
 
         <section className="workspace-grid">
+          <section className="panel scan-panel" aria-labelledby="scan-heading">
+            <div className="panel-title">
+              <Play aria-hidden="true" size={18} />
+              <h2 id="scan-heading">Scan Tasks</h2>
+            </div>
+            {selectedSession ? (
+              <form className="scan-form" onSubmit={submitScanTask}>
+                <label>
+                  <span>Type</span>
+                  <select
+                    value={scanForm.task_type}
+                    onChange={(event) => setScanForm((current) => ({...current, task_type: event.target.value}))}
+                  >
+                    {SCAN_TASK_OPTIONS.map((taskType) => (
+                      <option value={taskType} key={taskType}>{taskType}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Target</span>
+                  <input
+                    value={scanForm.target}
+                    placeholder={selectedSession.target_value}
+                    onChange={(event) => setScanForm((current) => ({...current, target: event.target.value}))}
+                  />
+                </label>
+                {scanForm.task_type === "port_scan" ? (
+                  <label>
+                    <span>Ports</span>
+                    <input
+                      value={scanForm.ports}
+                      onChange={(event) => setScanForm((current) => ({...current, ports: event.target.value}))}
+                    />
+                  </label>
+                ) : null}
+                {scanForm.task_type === "dir_scan" ? (
+                  <label>
+                    <span>Wordlist</span>
+                    <input
+                      value={scanForm.wordlist}
+                      onChange={(event) => setScanForm((current) => ({...current, wordlist: event.target.value}))}
+                    />
+                  </label>
+                ) : null}
+                {scanForm.task_type === "poc_scan" ? (
+                  <label>
+                    <span>Templates</span>
+                    <input
+                      value={scanForm.templates}
+                      onChange={(event) => setScanForm((current) => ({...current, templates: event.target.value}))}
+                    />
+                  </label>
+                ) : null}
+                {scanFormError ? <p className="error-line compact">{scanFormError}</p> : null}
+                <button type="submit" className="primary-button">Start Scan</button>
+              </form>
+            ) : (
+              <div className="empty-list"><span>Select a session to create scan tasks</span></div>
+            )}
+          </section>
+
+          <section className="panel tool-panel" aria-labelledby="tools-heading">
+            <div className="panel-title">
+              <Wrench aria-hidden="true" size={18} />
+              <h2 id="tools-heading">Tool Status</h2>
+            </div>
+            <ToolStatusList tools={toolStatus} />
+          </section>
+
           <section className="panel dashboard-panel" aria-labelledby="dashboard-heading">
             <div className="panel-title">
               <Target aria-hidden="true" size={18} />
@@ -349,6 +536,21 @@ export function App() {
             ) : (
               <div className="empty-list"><span>Create or select a project</span></div>
             )}
+          </section>
+
+          <section className="panel task-panel" aria-labelledby="tasks-heading">
+            <div className="panel-title">
+              <ListChecks aria-hidden="true" size={18} />
+              <h2 id="tasks-heading">Task Queue</h2>
+            </div>
+            <TaskQueue
+              tasks={tasks}
+              selectedTask={selectedTask}
+              emptyLabel={taskLoadState === "loading" ? "Loading tasks" : "No scan tasks"}
+              onSelect={(task) => setSelectedTaskId(task.id)}
+              onCancel={cancelSelectedTask}
+              onRerun={rerunSelectedTask}
+            />
           </section>
 
           <section className="panel event-panel" aria-labelledby="events-heading">
@@ -367,6 +569,7 @@ export function App() {
                     <div>
                       <strong>{event.event_kind}</strong>
                       <p>{event.timestamp}</p>
+                      <p>{formatEventPayload(event.payload)}</p>
                     </div>
                   </article>
                 ))
@@ -447,6 +650,18 @@ function ProjectEmptyState({project}: { project: ProjectDto }) {
 }
 
 function DashboardView({dashboard}: { dashboard: SessionDashboardDto }) {
+  const hasDashboardContent = [
+    dashboard.open_ports.length,
+    dashboard.web_entries.length,
+    dashboard.directory_findings.length,
+    dashboard.poc_hits.length,
+    dashboard.attack_path.length,
+    dashboard.recent_commands.length,
+    dashboard.evidence.length,
+    dashboard.flags.length,
+    dashboard.next_actions.length,
+  ].some((count) => count > 0);
+
   return (
     <div className="dashboard-body">
       <div>
@@ -463,8 +678,126 @@ function DashboardView({dashboard}: { dashboard: SessionDashboardDto }) {
         ]}
       />
       <div className="empty-list dashboard-empty">
-        <span>Empty session dashboard</span>
+        {!hasDashboardContent ? (
+          <span>Empty session dashboard</span>
+        ) : (
+          <ResultTables dashboard={dashboard} />
+        )}
       </div>
+    </div>
+  );
+}
+
+function ToolStatusList({tools}: { tools: ToolStatusDto[] }) {
+  if (tools.length === 0) {
+    return <div className="empty-list compact-empty"><span>No tool status loaded</span></div>;
+  }
+  return (
+    <div className="tool-list">
+      {tools.map((tool) => (
+        <div className="tool-row" key={tool.name}>
+          <strong>{tool.name}</strong>
+          <span className={tool.available ? "status-online" : "status-offline"}>
+            {tool.available ? "available" : "missing"}
+          </span>
+          <p>{tool.version ?? tool.error ?? tool.path ?? "No details"}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+type TaskQueueProps = {
+  tasks: ScanTaskDto[];
+  selectedTask: ScanTaskDto | null;
+  emptyLabel: string;
+  onSelect: (task: ScanTaskDto) => void;
+  onCancel: () => void;
+  onRerun: () => void;
+};
+
+function TaskQueue({tasks, selectedTask, emptyLabel, onSelect, onCancel, onRerun}: TaskQueueProps) {
+  if (tasks.length === 0) {
+    return <div className="empty-list"><span>{emptyLabel}</span></div>;
+  }
+  return (
+    <div className="task-layout">
+      <div className="task-list">
+        {tasks.map((task) => (
+          <button
+            type="button"
+            className={`task-row ${selectedTask?.id === task.id ? "selected" : ""}`}
+            key={task.id}
+            onClick={() => onSelect(task)}
+          >
+            <strong>{task.task_type}</strong>
+            <span>{task.executor} · {task.status}</span>
+          </button>
+        ))}
+      </div>
+      {selectedTask ? <TaskDetail task={selectedTask} onCancel={onCancel} onRerun={onRerun} /> : null}
+    </div>
+  );
+}
+
+function TaskDetail({task, onCancel, onRerun}: { task: ScanTaskDto; onCancel: () => void; onRerun: () => void }) {
+  const result = task.result;
+  const structured = isRecord(result.structured) ? result.structured : {};
+  const artifacts = Array.isArray(result.artifacts) ? result.artifacts.filter(isRecord) : [];
+  return (
+    <div className="task-detail">
+      <div className="task-actions">
+        <button type="button" className="text-button" onClick={onRerun}>Rerun</button>
+        <button type="button" className="text-button" onClick={onCancel}>Cancel</button>
+      </div>
+      <p>{typeof result.summary === "string" ? result.summary : task.error ?? "No summary"}</p>
+      <pre>{JSON.stringify(structured, null, 2)}</pre>
+      <div className="artifact-list">
+        {artifacts.map((artifact) => (
+          <a href={`file://${String(artifact.path)}`} key={`${artifact.kind}-${artifact.path}`}>
+            {String(artifact.kind)}: {String(artifact.path)}
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ResultTables({dashboard}: { dashboard: SessionDashboardDto }) {
+  return (
+    <div className="result-tables">
+      <MiniTable title="Open Ports" rows={dashboard.open_ports} columns={["port", "protocol", "service"]} />
+      <MiniTable title="Web Entries" rows={dashboard.web_entries} columns={["url", "scheme", "source"]} />
+      <MiniTable title="Web Paths" rows={dashboard.directory_findings} columns={["status", "url"]} />
+      <MiniTable title="POC Hits" rows={dashboard.poc_hits} columns={["severity", "template_id", "matched_url"]} />
+      <MiniTable title="Attack Path" rows={dashboard.attack_path} columns={["stage", "title", "status", "next_action"]} />
+      <MiniTable title="Next Actions" rows={dashboard.next_actions} columns={["stage", "title", "next_action"]} />
+      <MiniTable title="Recent Commands" rows={dashboard.recent_commands} columns={["command", "exit_code", "terminal_id", "created_at"]} />
+      <MiniTable title="Evidence" rows={dashboard.evidence} columns={["evidence_type", "title", "summary", "created_at"]} />
+      <MiniTable title="Flags" rows={dashboard.flags} columns={["flag_type", "value", "created_at"]} />
+    </div>
+  );
+}
+
+function MiniTable({title, rows, columns}: { title: string; rows: Record<string, unknown>[]; columns: string[] }) {
+  if (rows.length === 0) {
+    return null;
+  }
+  return (
+    <div className="mini-table">
+      <strong>{title}</strong>
+      <table>
+        <thead>
+          <tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr>
+        </thead>
+        <tbody>
+          {rows.map((row, index) => (
+            <tr key={`${title}-${index}`}>
+              {columns.map((column) => <td key={column}>{String(row[column] ?? "")}</td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -480,4 +813,44 @@ function MetricGrid({metrics}: { metrics: [string, string][] }) {
       ))}
     </div>
   );
+}
+
+function buildScanInput(input: {
+  task_type: string;
+  target: string;
+  ports: string;
+  wordlist: string;
+  templates: string;
+}): Record<string, unknown> {
+  const target = input.target.trim();
+  if (input.task_type === "port_scan") {
+    return {
+      target_host: target,
+      ports: input.ports.trim() ? input.ports.split(",").map((port) => Number(port.trim())) : [],
+    };
+  }
+  if (input.task_type === "dir_scan") {
+    return {base_url: target, wordlist: input.wordlist.trim(), filters: {}};
+  }
+  return {
+    target_url: target,
+    templates: input.templates.trim() ? input.templates.split(",").map((template) => template.trim()) : undefined,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function mergeEvents(current: ServerEventEnvelope[], incoming: ServerEventEnvelope): ServerEventEnvelope[] {
+  const deduped = [incoming, ...current.filter((event) => event.event_id !== incoming.event_id)];
+  return deduped.slice(0, MAX_EVENTS);
+}
+
+function formatEventPayload(payload: Record<string, unknown>): string {
+  if (typeof payload.message === "string" && payload.message.trim()) {
+    return payload.message;
+  }
+  const serialized = JSON.stringify(payload);
+  return serialized === "{}" ? "No payload" : serialized;
 }

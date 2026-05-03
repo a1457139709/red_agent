@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sqlite3
+
 from models.control_center import (
     AttackPathNode,
     CommandRun,
@@ -13,6 +15,7 @@ from models.control_center import (
     Task,
     TaskStatus,
 )
+from models.run import utc_now_iso
 from storage.sqlite import SQLiteStorage
 
 from ._common import allocate_public_id, get_row_by_identifier
@@ -91,6 +94,7 @@ CREATE TABLE IF NOT EXISTS ctf_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ctf_events_session_sequence ON ctf_events(session_id, sequence);
+CREATE INDEX IF NOT EXISTS idx_ctf_events_project_sequence ON ctf_events(project_id, sequence);
 CREATE INDEX IF NOT EXISTS idx_ctf_events_created_at ON ctf_events(created_at DESC);
 
 CREATE TABLE IF NOT EXISTS ctf_evidence (
@@ -174,7 +178,34 @@ class ControlCenterSchemaRepository:
     def ensure_schema(self) -> None:
         with self.storage.connect() as connection:
             connection.executescript(CONTROL_CENTER_SCHEMA)
+            self._normalize_event_sequences(connection)
+            connection.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_ctf_events_sequence_unique
+                ON ctf_events(sequence)
+                """
+            )
+            connection.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_ctf_events_session_sequence_unique
+                ON ctf_events(session_id, sequence)
+                """
+            )
             connection.commit()
+
+    def _normalize_event_sequences(self, connection: sqlite3.Connection) -> None:
+        rows = connection.execute(
+            """
+            SELECT id
+            FROM ctf_events
+            ORDER BY sequence ASC, created_at ASC, id ASC
+            """
+        ).fetchall()
+        for index, row in enumerate(rows, start=1):
+            connection.execute(
+                "UPDATE ctf_events SET sequence = ? WHERE id = ?",
+                (index, row["id"]),
+            )
 
 
 class ProjectRepository:
@@ -184,21 +215,25 @@ class ProjectRepository:
 
     def create(self, project: Project) -> Project:
         with self.storage.connect() as connection:
-            if not project.public_id:
-                project.public_id = allocate_public_id(connection, table_name="ctf_projects", prefix="P")
-            connection.execute(
-                """
-                INSERT INTO ctf_projects (
-                    id, public_id, name, description, root_path, status,
-                    created_at, updated_at, metadata
-                ) VALUES (
-                    :id, :public_id, :name, :description, :root_path, :status,
-                    :created_at, :updated_at, :metadata
-                )
-                """,
-                project.to_row(),
-            )
+            self.create_in_connection(connection, project)
             connection.commit()
+        return project
+
+    def create_in_connection(self, connection: sqlite3.Connection, project: Project) -> Project:
+        if not project.public_id:
+            project.public_id = allocate_public_id(connection, table_name="ctf_projects", prefix="P")
+        connection.execute(
+            """
+            INSERT INTO ctf_projects (
+                id, public_id, name, description, root_path, status,
+                created_at, updated_at, metadata
+            ) VALUES (
+                :id, :public_id, :name, :description, :root_path, :status,
+                :created_at, :updated_at, :metadata
+            )
+            """,
+            project.to_row(),
+        )
         return project
 
     def get(self, identifier: str) -> Project | None:
@@ -265,25 +300,29 @@ class TargetSessionRepository:
 
     def create(self, session: TargetSession) -> TargetSession:
         with self.storage.connect() as connection:
-            if not session.public_id:
-                session.public_id = allocate_public_id(
-                    connection,
-                    table_name="ctf_target_sessions",
-                    prefix="T",
-                )
-            connection.execute(
-                """
-                INSERT INTO ctf_target_sessions (
-                    id, public_id, project_id, name, target_value, target_type, status,
-                    summary, created_at, updated_at, metadata
-                ) VALUES (
-                    :id, :public_id, :project_id, :name, :target_value, :target_type, :status,
-                    :summary, :created_at, :updated_at, :metadata
-                )
-                """,
-                session.to_row(),
-            )
+            self.create_in_connection(connection, session)
             connection.commit()
+        return session
+
+    def create_in_connection(self, connection: sqlite3.Connection, session: TargetSession) -> TargetSession:
+        if not session.public_id:
+            session.public_id = allocate_public_id(
+                connection,
+                table_name="ctf_target_sessions",
+                prefix="T",
+            )
+        connection.execute(
+            """
+            INSERT INTO ctf_target_sessions (
+                id, public_id, project_id, name, target_value, target_type, status,
+                summary, created_at, updated_at, metadata
+            ) VALUES (
+                :id, :public_id, :project_id, :name, :target_value, :target_type, :status,
+                :summary, :created_at, :updated_at, :metadata
+            )
+            """,
+            session.to_row(),
+        )
         return session
 
     def get(self, identifier: str) -> TargetSession | None:
@@ -406,6 +445,33 @@ class TaskRepository:
             rows = connection.execute(query, params).fetchall()
         return [Task.from_row(dict(row)) for row in rows]
 
+    def update(self, task: Task) -> Task:
+        task.updated_at = utc_now_iso()
+        with self.storage.connect() as connection:
+            connection.execute(
+                """
+                UPDATE ctf_tasks
+                SET
+                    public_id = :public_id,
+                    project_id = :project_id,
+                    session_id = :session_id,
+                    task_type = :task_type,
+                    executor = :executor,
+                    status = :status,
+                    input_json = :input_json,
+                    result_json = :result_json,
+                    started_at = :started_at,
+                    ended_at = :ended_at,
+                    error = :error,
+                    created_at = :created_at,
+                    updated_at = :updated_at
+                WHERE id = :id
+                """,
+                task.to_row(),
+            )
+            connection.commit()
+        return task
+
 
 class EventRepository:
     def __init__(self, storage: SQLiteStorage) -> None:
@@ -414,8 +480,9 @@ class EventRepository:
 
     def create(self, event: Event) -> Event:
         with self.storage.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             if event.sequence <= 0:
-                event.sequence = self._next_sequence(connection, session_id=event.session_id)
+                event.sequence = self._next_sequence(connection)
             connection.execute(
                 """
                 INSERT INTO ctf_events (
@@ -447,7 +514,9 @@ class EventRepository:
         *,
         session_id: str | None = None,
         project_id: str | None = None,
+        since_sequence: int | None = None,
         limit: int | None = 50,
+        descending: bool = True,
     ) -> list[Event]:
         filters: list[str] = []
         params: list[object] = []
@@ -457,10 +526,14 @@ class EventRepository:
         if project_id is not None:
             filters.append("project_id = ?")
             params.append(project_id)
+        if since_sequence is not None:
+            filters.append("sequence > ?")
+            params.append(since_sequence)
         query = "SELECT * FROM ctf_events"
         if filters:
             query += " WHERE " + " AND ".join(filters)
-        query += " ORDER BY sequence DESC"
+        direction = "DESC" if descending else "ASC"
+        query += f" ORDER BY sequence {direction}, created_at {direction}, id {direction}"
         if limit is not None:
             query += " LIMIT ?"
             params.append(limit)
@@ -468,14 +541,8 @@ class EventRepository:
             rows = connection.execute(query, params).fetchall()
         return [Event.from_row(dict(row)) for row in rows]
 
-    def _next_sequence(self, connection, *, session_id: str | None) -> int:
-        if session_id is None:
-            row = connection.execute("SELECT COALESCE(MAX(sequence), 0) AS sequence FROM ctf_events").fetchone()
-        else:
-            row = connection.execute(
-                "SELECT COALESCE(MAX(sequence), 0) AS sequence FROM ctf_events WHERE session_id = ?",
-                (session_id,),
-            ).fetchone()
+    def _next_sequence(self, connection: sqlite3.Connection) -> int:
+        row = connection.execute("SELECT COALESCE(MAX(sequence), 0) AS sequence FROM ctf_events").fetchone()
         return int(row["sequence"]) + 1
 
 

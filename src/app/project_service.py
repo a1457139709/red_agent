@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 
 from agent.settings import Settings, get_settings
 from models.control_center import Project, ProjectStatus
@@ -38,12 +39,23 @@ class ProjectService(ControlCenterService):
             description=description,
             root_path=str(self.settings.projects_dir),
         )
-        project.root_path = str(project_root(self.settings, project.id))
-        project_sessions_dir(self.settings, project.id).mkdir(parents=True, exist_ok=True)
-        project_reports_dir(self.settings, project.id).mkdir(parents=True, exist_ok=True)
-        created = self.repository.create(project)
-        self._prepare_project_manifest(created)
-        return created
+        root = project_root(self.settings, project.id)
+        project.root_path = str(root)
+        sessions_dir = project_sessions_dir(self.settings, project.id)
+        reports_dir = project_reports_dir(self.settings, project.id)
+        storage = SQLiteStorage(self.settings.sqlite_path)
+        with storage.connect() as connection:
+            try:
+                self.repository.create_in_connection(connection, project)
+                sessions_dir.mkdir(parents=True, exist_ok=True)
+                reports_dir.mkdir(parents=True, exist_ok=True)
+                self._prepare_project_manifest(project)
+            except Exception:
+                connection.rollback()
+                self._cleanup_path(root)
+                raise
+            connection.commit()
+        return project
 
     def list_projects(
         self,
@@ -77,3 +89,7 @@ class ProjectService(ControlCenterService):
     def _write_manifest(self, path: Path, payload: dict[str, object]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _cleanup_path(self, path: Path) -> None:
+        if path.exists():
+            shutil.rmtree(path, ignore_errors=True)

@@ -28,15 +28,17 @@ class ServerEventEnvelope:
         project_id: str | None = None,
         session_id: str | None = None,
         task_id: str | None = None,
+        event_id: str | None = None,
+        timestamp: str | None = None,
     ) -> "ServerEventEnvelope":
         return cls(
-            event_id=str(uuid4()),
+            event_id=event_id or str(uuid4()),
             project_id=project_id,
             session_id=session_id,
             task_id=task_id,
             sequence=sequence,
             event_kind=event_kind,
-            timestamp=utc_now_iso(),
+            timestamp=timestamp or utc_now_iso(),
             payload=dict(payload or {}),
         )
 

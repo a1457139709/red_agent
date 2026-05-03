@@ -318,6 +318,53 @@ graph TD
 - 中间：Agent Chat、实时工具调用、扫描进度、终端切换
 - 右侧：攻击路径、证据、flag、下一步建议、writeup 摘要
 
+推荐最终布局采用 `Attack Decision Cockpit` 方案：
+
+- 顶栏
+  - 展示 Project、Session、目标范围、后端连接状态和全局搜索
+  - 提供 `Recon`、`Exploit`、`Report` 模式切换
+  - 展示 `Risk Score` 和 `Critical Path`
+- 左侧操作栏
+  - 保留 Project / Session 导航
+  - 展示当前目标摘要
+  - 展示任务队列、运行中数量、排队数量、工具状态、基础 ETA
+- 中央决策区
+  - 顶部固定 `Agent Loop`，展示 `Plan -> Act -> Observe -> Reflect`
+  - 展示当前阶段、迭代次数和是否正在收敛
+  - Agent Console 不只显示聊天文本，还要显示 tool call cards、task progress cards、decision summary、next command suggestion
+  - 底部采用 `Scans / Terminal` 切换或上下分区，保证工具结果与交互终端始终可达
+- 右侧情报栏
+  - 顶部固定 `Attack Reasoning Panel`
+  - 中部展示双层 `Attack Graph`
+  - 下部展示 `Structured Evidence`、`Flags / Loot`、`Writeup Progress`
+
+`Attack Decision Cockpit` 的目标不是堆叠工具面板，而是把 Agent 的判断过程显式化。UI 必须优先回答：
+
+- 当前 Agent 为什么做这个动作
+- 这个建议来自哪些证据和发现
+- 当前攻击路径走到了哪一步
+- 下一步动作的置信度和策略是什么
+
+推荐视觉层级：
+
+- 中央 Agent 决策区是默认视觉焦点
+- 右侧推理与攻击图是次焦点，但必须始终可见
+- 左侧导航和任务区密度可以高，但不应抢占主视线
+
+推荐信息模型：
+
+- `Attack Reasoning`
+  - 展示由服务、证据、finding 推导出的推理链
+  - 每条建议可包含 `confidence`、`strategy`、`why this next`
+- `Attack Graph`
+  - 同时保留操作级节点和阶段级标签
+  - 示例：`Nmap Scan -> Found SMB 445 -> Anonymous Shares -> Credential Candidate -> SSH Login`
+  - 阶段标签可映射 `recon`、`service-enum`、`web-enum`、`poc-verified` 等抽象阶段
+- `Structured Evidence`
+  - 默认不是文件列表视图
+  - 应优先按 `Credentials`、`Services`、`Vulns`、`Files` 分类展示
+  - 原始 artifact 作为 drill-down 明细，而不是首页主视图
+
 设计要求：
 
 - 扫描任务必须可见，不隐藏在聊天文本中。
@@ -325,6 +372,10 @@ graph TD
 - 攻击路径节点必须能展开查看证据。
 - 终端输出必须可标记为 evidence。
 - UI 必须支持在 Project、Session 和 Task 之间快速跳转。
+- Agent Console 必须展示 reasoning，而不是只展示 tool log。
+- Attack Path 必须支持从抽象阶段视图切换到操作级 attack graph。
+- Evidence 首页必须优先展示结构化情报，而不是原始文件树。
+- Workspace 必须支持 `Recon`、`Exploit`、`Report` 模式切换，避免所有信息同时争抢注意力。
 
 ### 5.3 Client State
 
