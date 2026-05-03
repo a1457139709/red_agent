@@ -103,6 +103,21 @@ Development docs describe planning, review, and iteration guidance.
 23. `development/control-center-migration-plan.zh.md`
    Detailed migration plan for turning the current session-centric agent into a desktop control center
    with an App Server, realtime interaction channel, detached/background execution, and GUI-oriented APIs.
+24. `development/control-center-platform-development.md`
+   Development plan for the CTF Control Center platform phases, from foundation alignment through
+   desktop packaging.
+25. `development/control-center-phase-0-foundation-alignment.md`
+   Phase 0 implementation baseline for CTF Control Center service boundaries, `.red-code/projects/`
+   filesystem layout, and persistence migration direction.
+
+### `design/`
+
+Design docs describe approved target product and subsystem structure that is not necessarily fully
+implemented yet.
+
+1. `design/control-center-platform-design.md`
+   Target design for the CTF Control Center platform, including desktop client, App Server,
+   domain model, scanner adapter layer, terminal runtime, persistence, and reporting flow.
 
 ## Read These First
 

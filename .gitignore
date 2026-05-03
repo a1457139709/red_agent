@@ -24,3 +24,10 @@ tests_acl_backup_*/
 src/mini_claude_code.egg-info/*
 review/
 review/
+
+# Frontend dependencies and build output
+desktop-client/node_modules/
+desktop-client/dist/
+desktop-client/.npm-cache/
+desktop-client/src-tauri/target/
+desktop-client/src-tauri/gen/

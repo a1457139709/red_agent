@@ -209,6 +209,33 @@ Modules:
 - `/module show <name>`
 - `/module run <name> <target> [json_overrides]`
 
+## Control Center Development
+
+Phase 1 adds a local App Server and a desktop shell for the CTF Control Center direction.
+
+Start the backend from the repository root:
+
+```bash
+.venv/bin/python -m uvicorn server.app:create_app --factory --reload
+```
+
+Start the desktop shell:
+
+```bash
+cd desktop-client
+npm install
+npm run dev
+```
+
+Run the Tauri desktop app when Rust/Cargo is installed:
+
+```bash
+cd desktop-client
+npm run tauri dev
+```
+
+The desktop shell defaults to `http://127.0.0.1:8000` and can be pointed at another backend with `VITE_BACKEND_URL`.
+
 ## Usage Examples
 
 Activate a prompt-assist skill:

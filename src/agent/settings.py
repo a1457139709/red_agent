@@ -42,6 +42,10 @@ class Settings:
         return self.app_data_dir / "sessions"
 
     @property
+    def projects_dir(self) -> Path:
+        return self.app_data_dir / "projects"
+
+    @property
     def operations_dir(self) -> Path:
         return self.app_data_dir / "operations"
 

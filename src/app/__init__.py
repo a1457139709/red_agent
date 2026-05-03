@@ -4,6 +4,7 @@ from importlib import import_module
 
 __all__ = [
     "ArtifactService",
+    "AttackPathService",
     "CheckpointService",
     "ConfirmationPolicyService",
     "DashboardService",
@@ -12,19 +13,25 @@ __all__ = [
     "FindingService",
     "JobService",
     "MemoryService",
+    "ProjectService",
     "ReportService",
     "RedteamSessionService",
     "RunService",
+    "ScannerService",
     "SessionEventService",
     "SessionInteractionService",
     "SessionRecordLocator",
     "SessionService",
     "ScopePolicyService",
+    "TargetSessionService",
+    "TerminalService",
     "ToolAccessPolicyService",
+    "WriteupService",
 ]
 
 _EXPORTS = {
     "ArtifactService": ".artifact_service",
+    "AttackPathService": ".attack_path_service",
     "CheckpointService": ".checkpoint_service",
     "ConfirmationPolicyService": ".confirmation_policy_service",
     "DashboardService": ".dashboard_service",
@@ -33,15 +40,20 @@ _EXPORTS = {
     "FindingService": ".finding_service",
     "JobService": ".job_service",
     "MemoryService": ".memory_service",
+    "ProjectService": ".project_service",
     "ReportService": ".report_service",
     "RedteamSessionService": ".redteam_session_service",
     "RunService": ".run_service",
+    "ScannerService": ".scanner_service",
     "SessionEventService": ".session_event_service",
     "SessionInteractionService": ".session_interaction_service",
     "SessionRecordLocator": ".session_record_locator",
     "SessionService": ".session_service",
     "ScopePolicyService": ".scope_policy_service",
+    "TargetSessionService": ".target_session_service",
+    "TerminalService": ".terminal_service",
     "ToolAccessPolicyService": ".tool_access_policy_service",
+    "WriteupService": ".writeup_service",
 }
 
 
