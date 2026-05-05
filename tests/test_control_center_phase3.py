@@ -195,6 +195,56 @@ def test_successful_nmap_task_persists_structured_results_and_candidates(tmp_pat
     assert AttackPathNodeRepository(storage).list(session_id=session.id)[0].stage == "enumeration"
 
 
+def test_scan_task_rejects_target_outside_selected_session(tmp_path):
+    settings = build_settings(tmp_path)
+    _project, session = prepare_session(settings)
+    service = ScannerService.from_settings(settings)
+
+    try:
+        service.create_scan_task(
+            session_identifier=session.id,
+            task_type="port_scan",
+            input_data={"target_host": "10.10.10.6"},
+        )
+    except ValueError as exc:
+        assert "outside the selected session target" in str(exc)
+    else:
+        raise AssertionError("Expected scanner target validation failure.")
+
+
+def test_ffuf_uses_configured_default_wordlist_and_extra_args(tmp_path):
+    settings = build_settings(tmp_path)
+    wordlist = tmp_path / "words.txt"
+    wordlist.write_text("admin\n", encoding="utf-8")
+    binary = tmp_path / "ffuf"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    _project, session = prepare_session(settings)
+    runner = FakeRunner(ProcessResult(argv=[str(binary)], return_code=0, stdout=FFUF_JSON, stderr=""))
+    service = ScannerService(settings=settings, runner=runner)
+    service.update_config(
+        {
+            "tools": {
+                "ffuf": {
+                    "binary_path": str(binary),
+                    "default_wordlist": str(wordlist),
+                    "extra_args": ["-rate", "25"],
+                }
+            }
+        }
+    )
+
+    task = service.create_scan_task(
+        session_identifier=session.id,
+        task_type="dir_scan",
+        input_data={"base_url": "http://10.10.10.5"},
+    )
+
+    assert task.status.value == "succeeded"
+    assert task.input_json["wordlist"] == str(wordlist)
+    assert runner.argv is not None
+    assert runner.argv[-2:] == ["-rate", "25"]
+
+
 def test_phase3_api_routes_expose_tools_and_tasks(tmp_path, monkeypatch):
     settings = build_settings(tmp_path)
     _project, session = prepare_session(settings)

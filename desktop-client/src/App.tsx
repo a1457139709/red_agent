@@ -267,7 +267,11 @@ export function App() {
     if (!selectedSession) {
       return;
     }
-    const validationError = validateScanTaskForm(scanForm);
+    const effectiveScanForm = {
+      ...scanForm,
+      target: scanForm.target.trim() || selectedSession.target_value,
+    };
+    const validationError = validateScanTaskForm(effectiveScanForm);
     if (validationError) {
       setScanFormError(validationError);
       return;
@@ -275,8 +279,8 @@ export function App() {
     setScanFormError(null);
     try {
       const task = await createScanTask(backendUrl, selectedSession.id, {
-        task_type: scanForm.task_type as "port_scan" | "dir_scan" | "poc_scan",
-        input: buildScanInput(scanForm),
+        task_type: effectiveScanForm.task_type as "port_scan" | "dir_scan" | "poc_scan",
+        input: buildScanInput(effectiveScanForm),
       });
       setTasks((current) => [task, ...current]);
       setSelectedTaskId(task.id);

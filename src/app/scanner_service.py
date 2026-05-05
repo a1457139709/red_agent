@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 import json
+from urllib.parse import urlsplit
 
 from agent.settings import Settings, get_settings
 from models.control_center import AttackPathNode, Evidence, Task, TaskStatus
@@ -147,7 +148,9 @@ class ScannerService(ControlCenterService):
         session = self.session_repository.require(session_identifier)
         project = self.project_repository.require(session.project_id)
         adapter = self.registry.require_by_task_type(task_type)
-        normalized_input = adapter.validate_input(input_data)
+        tool_config = self.get_config().for_tool(adapter.name)
+        normalized_input = adapter.validate_input(_apply_config_defaults(adapter.name, input_data, tool_config))
+        _validate_session_target(session.target_value, normalized_input, adapter=adapter)
         task = Task.create(
             project_id=project.id,
             session_id=session.id,
@@ -234,6 +237,7 @@ class ScannerService(ControlCenterService):
         stderr_path = work_dir / "stderr.txt"
         output_path = work_dir / adapter.output_filename
         argv = adapter.build_argv(binary_path=binary_path, input_data=task.input_json, output_path=output_path)
+        argv = _with_extra_args(adapter.name, argv, config.extra_args)
         process = self.runner.run(argv=argv, cwd=work_dir, timeout_seconds=config.timeout_seconds)
         stdout_path.write_text(process.stdout, encoding="utf-8")
         stderr_path.write_text(process.stderr, encoding="utf-8")
@@ -359,3 +363,49 @@ def _string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         raise ValueError("extra_args must be a list.")
     return [str(item) for item in value if str(item).strip()]
+
+
+def _apply_config_defaults(tool_name: str, input_data: dict[str, Any], config: ToolConfig) -> dict[str, Any]:
+    normalized = dict(input_data)
+    if tool_name == "ffuf" and not normalized.get("wordlist") and config.default_wordlist:
+        normalized["wordlist"] = config.default_wordlist
+    if tool_name == "nuclei" and not normalized.get("templates") and config.templates_path:
+        normalized["templates"] = [config.templates_path]
+    return normalized
+
+
+def _with_extra_args(tool_name: str, argv: list[str], extra_args: list[str]) -> list[str]:
+    if not extra_args:
+        return argv
+    if tool_name == "nmap" and len(argv) > 1:
+        return [*argv[:-1], *extra_args, argv[-1]]
+    return [*argv, *extra_args]
+
+
+def _validate_session_target(session_target: str, input_data: dict[str, Any], *, adapter: ScannerAdapter) -> None:
+    requested = _scanner_target_value(input_data, adapter=adapter)
+    requested_host = _host_identity(requested)
+    session_host = _host_identity(session_target)
+    if requested_host != session_host:
+        raise ValueError(
+            f"scan target {requested_host} is outside the selected session target {session_host}."
+        )
+
+
+def _scanner_target_value(input_data: dict[str, Any], *, adapter: ScannerAdapter) -> str:
+    if adapter.name == "nmap":
+        return str(input_data.get("target_host") or "")
+    if adapter.name == "ffuf":
+        return str(input_data.get("base_url") or input_data.get("url") or "")
+    if adapter.name == "nuclei":
+        return str(input_data.get("target_url") or "")
+    return str(input_data.get("target") or "")
+
+
+def _host_identity(value: str) -> str:
+    normalized = value.strip().lower()
+    if not normalized:
+        raise ValueError("scan target must be non-empty.")
+    parsed = urlsplit(normalized if "://" in normalized else f"//{normalized}")
+    host = parsed.hostname or normalized
+    return host.rstrip(".")

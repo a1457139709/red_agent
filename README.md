@@ -211,7 +211,8 @@ Modules:
 
 ## Control Center Development
 
-Phase 1 adds a local App Server and a desktop shell for the CTF Control Center direction.
+The CTF Control Center currently includes the local App Server, desktop shell, Project/Session
+persistence, and the Phase 3 scanner adapter layer.
 
 Start the backend from the repository root:
 
@@ -237,6 +238,13 @@ npm run tauri dev
 The desktop shell defaults to `http://127.0.0.1:8000` and can be pointed at another backend with `VITE_BACKEND_URL`.
 
 The Control Center event socket is `ws://127.0.0.1:8000/ws/events` by default. It accepts optional replay scope parameters such as `session_id`, `project_id`, `limit`, and `since_sequence` so the desktop client can restore persisted session history after reconnect or backend restart.
+
+Phase 3 scanner endpoints are available under `/api/tools` and `/api/sessions/{session_id}/tasks`.
+They expose local `nmap`, `ffuf`, and `nuclei` status/configuration, create scan tasks with
+structured results, preserve stdout/stderr plus raw scanner output under the session artifact
+directory, and generate evidence plus attack-path candidates from successful scans. Scanner tasks
+are constrained to the selected Session target; ffuf can use a configured default wordlist, nuclei
+can use a configured templates path, and each tool can receive configured extra argv entries.
 
 ## Usage Examples
 
