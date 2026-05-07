@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Any
 import json
 from urllib.parse import urlsplit
 
 from agent.settings import Settings, get_settings
-from models.control_center import AttackPathNode, Evidence, Task, TaskStatus
+from models.control_center import AttackPathNode, Event, Evidence, Task, TaskStatus
 from models.run import utc_now_iso
 from scanners.contracts import ScanExecutionResult, ScannerArtifact, ScannerAdapter, ToolConfig, ToolStatus
 from scanners.process_runner import ProcessRunner, read_version, resolve_binary
@@ -16,6 +17,7 @@ from storage.project_paths import project_session_artifacts_dir
 from storage.repositories.control_center import (
     AttackPathNodeRepository,
     EvidenceRepository,
+    EventRepository,
     ProjectRepository,
     TargetSessionRepository,
     TaskRepository,
@@ -83,6 +85,7 @@ class ScannerService(ControlCenterService):
         object.__setattr__(self, "project_repository", ProjectRepository(storage))
         object.__setattr__(self, "session_repository", TargetSessionRepository(storage))
         object.__setattr__(self, "task_repository", TaskRepository(storage))
+        object.__setattr__(self, "event_repository", EventRepository(storage))
         object.__setattr__(self, "evidence_repository", EvidenceRepository(storage))
         object.__setattr__(self, "attack_path_repository", AttackPathNodeRepository(storage))
 
@@ -145,6 +148,23 @@ class ScannerService(ControlCenterService):
         return statuses
 
     def create_scan_task(self, *, session_identifier: str, task_type: str, input_data: dict[str, Any]) -> Task:
+        created = self.enqueue_scan_task(
+            session_identifier=session_identifier,
+            task_type=task_type,
+            input_data=input_data,
+            emit_queued_event=False,
+        )
+        adapter = self.registry.require_by_task_type(created.task_type)
+        return self._execute_task(created, adapter=adapter)
+
+    def enqueue_scan_task(
+        self,
+        *,
+        session_identifier: str,
+        task_type: str,
+        input_data: dict[str, Any],
+        emit_queued_event: bool = True,
+    ) -> Task:
         session = self.session_repository.require(session_identifier)
         project = self.project_repository.require(session.project_id)
         adapter = self.registry.require_by_task_type(task_type)
@@ -159,7 +179,9 @@ class ScannerService(ControlCenterService):
             input_json=normalized_input,
         )
         created = self.task_repository.create(task)
-        return self._execute_task(created, adapter=adapter)
+        if emit_queued_event:
+            self._record_task_event(created, "task.queued", level="info", payload={"task_type": created.task_type})
+        return created
 
     def list_tasks(self, *, session_identifier: str, limit: int | None = 50) -> list[Task]:
         session = self.session_repository.require(session_identifier)
@@ -175,7 +197,9 @@ class ScannerService(ControlCenterService):
             task.ended_at = utc_now_iso()
             task.error = "Task cancelled."
             task.result_json = {"ok": False, "summary": "Task cancelled.", "error": task.error}
-            return self.task_repository.update(task)
+            updated = self.task_repository.update(task)
+            self._record_task_event(updated, "task.cancelled", level="warning", payload={"reason": updated.error})
+            return updated
         raise ValueError(f"Task cannot be cancelled from status {task.status.value}.")
 
     def rerun_task(self, task_identifier: str) -> Task:
@@ -187,10 +211,32 @@ class ScannerService(ControlCenterService):
             input_data=task.input_json,
         )
 
+    def enqueue_rerun_task(self, task_identifier: str) -> Task:
+        task = self.task_repository.require(task_identifier)
+        self.registry.require_by_task_type(task.task_type)
+        return self.enqueue_scan_task(
+            session_identifier=task.session_id,
+            task_type=task.task_type,
+            input_data=task.input_json,
+        )
+
+    def execute_pending_task(self, task_identifier: str) -> Task:
+        task = self.task_repository.require(task_identifier)
+        if task.status == TaskStatus.CANCELLED:
+            return task
+        if task.status != TaskStatus.PENDING:
+            raise ValueError(f"Task cannot be executed from status {task.status.value}.")
+        adapter = self.registry.require_by_task_type(task.task_type)
+        return self._execute_task(task, adapter=adapter)
+
     def _execute_task(self, task: Task, *, adapter: ScannerAdapter) -> Task:
+        current = self.task_repository.require(task.id)
+        if current.status == TaskStatus.CANCELLED:
+            return current
         task.status = TaskStatus.RUNNING
         task.started_at = utc_now_iso()
         self.task_repository.update(task)
+        self._record_task_event(task, "task.started", level="info", payload={"executor": task.executor})
 
         try:
             result = self._run_adapter(task, adapter=adapter)
@@ -207,13 +253,26 @@ class ScannerService(ControlCenterService):
                 error=str(exc),
             )
 
+        current = self.task_repository.require(task.id)
         task.ended_at = utc_now_iso()
-        task.status = TaskStatus.SUCCEEDED if result.ok else TaskStatus.FAILED
+        task.status = TaskStatus.CANCELLED if current.status == TaskStatus.CANCELLED else (
+            TaskStatus.SUCCEEDED if result.ok else TaskStatus.FAILED
+        )
         task.error = result.error
         task.result_json = result.to_task_result()
         updated = self.task_repository.update(task)
         if result.ok:
             self._persist_candidates(updated, result)
+        self._record_task_event(
+            updated,
+            _terminal_task_event_kind(updated.status),
+            level=_terminal_task_event_level(updated.status),
+            payload={
+                "summary": result.summary,
+                "return_code": result.return_code,
+                "error": result.error,
+            },
+        )
         return updated
 
     def _run_adapter(self, task: Task, *, adapter: ScannerAdapter) -> ScanExecutionResult:
@@ -238,9 +297,45 @@ class ScannerService(ControlCenterService):
         output_path = work_dir / adapter.output_filename
         argv = adapter.build_argv(binary_path=binary_path, input_data=task.input_json, output_path=output_path)
         argv = _with_extra_args(adapter.name, argv, config.extra_args)
-        process = self.runner.run(argv=argv, cwd=work_dir, timeout_seconds=config.timeout_seconds)
-        stdout_path.write_text(process.stdout, encoding="utf-8")
-        stderr_path.write_text(process.stderr, encoding="utf-8")
+        process = self.runner.run(
+            argv=argv,
+            cwd=work_dir,
+            timeout_seconds=config.timeout_seconds,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            on_output=lambda stream_name, chunk: self._record_scanner_output(task, stream_name, chunk),
+            cancel_requested=lambda: self._is_task_cancelled(task.id),
+        )
+        _ensure_text_artifact(stdout_path, process.stdout)
+        _ensure_text_artifact(stderr_path, process.stderr)
+
+        if process.cancelled or self._is_task_cancelled(task.id):
+            return ScanExecutionResult(
+                ok=False,
+                argv=process.argv,
+                return_code=process.return_code,
+                stdout_path=str(stdout_path),
+                stderr_path=str(stderr_path),
+                output_path=str(output_path) if output_path.exists() else None,
+                summary="Task cancelled.",
+                structured={},
+                artifacts=_artifacts(stdout_path, stderr_path, output_path, adapter.output_content_type),
+                error="Task cancelled.",
+            )
+
+        if process.timed_out:
+            return ScanExecutionResult(
+                ok=False,
+                argv=process.argv,
+                return_code=process.return_code,
+                stdout_path=str(stdout_path),
+                stderr_path=str(stderr_path),
+                output_path=str(output_path) if output_path.exists() else None,
+                summary=f"{adapter.name} timed out.",
+                structured={},
+                artifacts=_artifacts(stdout_path, stderr_path, output_path, adapter.output_content_type),
+                error=process.stderr.strip() or f"{adapter.name} timed out after {config.timeout_seconds} seconds.",
+            )
 
         if process.return_code != 0:
             return ScanExecutionResult(
@@ -277,6 +372,40 @@ class ScannerService(ControlCenterService):
             evidence=evidence,
             attack_path=attack_path,
             artifacts=_artifacts(stdout_path, stderr_path, output_path, adapter.output_content_type),
+        )
+
+    def _is_task_cancelled(self, task_identifier: str) -> bool:
+        task = self.task_repository.require(task_identifier)
+        return task.status == TaskStatus.CANCELLED
+
+    def _record_scanner_output(self, task: Task, stream_name: str, chunk: str) -> None:
+        self._record_task_event(
+            task,
+            "scanner.output",
+            level="info",
+            payload={
+                "stream": stream_name,
+                "chunk": chunk,
+            },
+        )
+
+    def _record_task_event(
+        self,
+        task: Task,
+        event_kind: str,
+        *,
+        level: str,
+        payload: dict[str, Any],
+    ) -> Event:
+        return self.event_repository.create(
+            Event.create(
+                project_id=task.project_id,
+                session_id=task.session_id,
+                task_id=task.id,
+                event_kind=event_kind,
+                level=level,
+                payload=payload,
+            )
         )
 
     def _task_work_dir(self, task: Task) -> Path:
@@ -339,6 +468,28 @@ def _summary(tool_name: str, structured: dict[str, Any]) -> str:
     if tool_name == "nuclei":
         return f"nuclei found {len(structured.get('matches', []))} match(es)."
     return f"{tool_name} scan completed."
+
+
+def _terminal_task_event_kind(status: TaskStatus) -> str:
+    if status == TaskStatus.SUCCEEDED:
+        return "task.completed"
+    if status == TaskStatus.CANCELLED:
+        return "task.cancelled"
+    return "task.failed"
+
+
+def _terminal_task_event_level(status: TaskStatus) -> str:
+    if status == TaskStatus.SUCCEEDED:
+        return "info"
+    if status == TaskStatus.CANCELLED:
+        return "warning"
+    return "error"
+
+
+def _ensure_text_artifact(path: Path, content: str) -> None:
+    if path.exists():
+        return
+    path.write_text(content, encoding="utf-8")
 
 
 def _optional_text(value: object) -> str | None:
@@ -406,6 +557,31 @@ def _host_identity(value: str) -> str:
     normalized = value.strip().lower()
     if not normalized:
         raise ValueError("scan target must be non-empty.")
-    parsed = urlsplit(normalized if "://" in normalized else f"//{normalized}")
+    parsed = urlsplit(_urlsplit_target(normalized))
     host = parsed.hostname or normalized
-    return host.rstrip(".")
+    return _normalize_host_identity(host)
+
+
+def _urlsplit_target(normalized: str) -> str:
+    if "://" in normalized:
+        return normalized
+    bare = normalized[1:-1] if normalized.startswith("[") and normalized.endswith("]") else normalized
+    if _is_ip_literal(bare) and ":" in bare:
+        return f"//[{bare}]"
+    return f"//{normalized}"
+
+
+def _normalize_host_identity(host: str) -> str:
+    normalized = host.strip().lower().strip("[]").rstrip(".")
+    try:
+        return ip_address(normalized).compressed
+    except ValueError:
+        return normalized
+
+
+def _is_ip_literal(value: str) -> bool:
+    try:
+        ip_address(value)
+    except ValueError:
+        return False
+    return True

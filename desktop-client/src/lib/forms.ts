@@ -36,9 +36,6 @@ export function validateScanTaskForm(input: {
   if (!input.target.trim()) {
     return "Scan target is required.";
   }
-  if (input.task_type === "dir_scan" && !input.wordlist?.trim()) {
-    return "Wordlist is required for directory scans.";
-  }
   if (input.task_type === "port_scan" && input.ports?.trim()) {
     for (const part of input.ports.split(",")) {
       const port = Number(part.trim());
@@ -48,4 +45,8 @@ export function validateScanTaskForm(input: {
     }
   }
   return null;
+}
+
+export function validateAgentMessageForm(input: { message: string }) {
+  return input.message.trim() ? null : "Agent message is required.";
 }

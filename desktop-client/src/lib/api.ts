@@ -137,6 +137,10 @@ export type CreateScanTaskInput = {
   input: Record<string, unknown>;
 };
 
+export type AgentMessageInput = {
+  message: string;
+};
+
 const TARGET_TYPES = new Set<TargetType>(["ip", "domain", "url", "host", "note"]);
 const TOOL_NAMES = new Set(["nmap", "ffuf", "nuclei"]);
 
@@ -356,6 +360,22 @@ export async function rerunScanTask(baseUrl: string, taskId: string): Promise<Sc
   const payload = requireRecord(
     await requestJson(`${baseUrl}/api/tasks/${taskId}/rerun`, {method: "POST"}),
     "Invalid task response.",
+  );
+  return parseScanTask(payload.task);
+}
+
+export async function sendAgentMessage(
+  baseUrl: string,
+  sessionId: string,
+  input: AgentMessageInput,
+): Promise<ScanTaskDto> {
+  const payload = requireRecord(
+    await requestJson(`${baseUrl}/api/sessions/${sessionId}/agent/messages`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(input),
+    }),
+    "Invalid agent task response.",
   );
   return parseScanTask(payload.task);
 }

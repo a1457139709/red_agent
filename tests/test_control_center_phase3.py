@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 from fastapi.testclient import TestClient
 
 from agent.settings import Settings
@@ -10,9 +12,14 @@ from models.control_center import TargetType
 from scanners.ffuf_adapter import FfufAdapter
 from scanners.nmap_adapter import NmapAdapter
 from scanners.nuclei_adapter import NucleiAdapter
-from scanners.process_runner import ProcessResult
+from scanners.process_runner import ProcessResult, ProcessRunner
 from server.app import create_app
-from storage.repositories.control_center import AttackPathNodeRepository, EvidenceRepository, TaskRepository
+from storage.repositories.control_center import (
+    AttackPathNodeRepository,
+    EventRepository,
+    EvidenceRepository,
+    TaskRepository,
+)
 from storage.sqlite import SQLiteStorage
 
 
@@ -56,8 +63,26 @@ class FakeRunner:
         self.result = result
         self.argv: list[str] | None = None
 
-    def run(self, *, argv, cwd, timeout_seconds):
+    def run(
+        self,
+        *,
+        argv,
+        cwd,
+        timeout_seconds,
+        stdout_path=None,
+        stderr_path=None,
+        on_output=None,
+        cancel_requested=None,
+    ):
         self.argv = list(argv)
+        if stdout_path is not None:
+            stdout_path.write_text(self.result.stdout, encoding="utf-8")
+        if stderr_path is not None:
+            stderr_path.write_text(self.result.stderr, encoding="utf-8")
+        if on_output is not None and self.result.stdout:
+            on_output("stdout", self.result.stdout)
+        if on_output is not None and self.result.stderr:
+            on_output("stderr", self.result.stderr)
         return self.result
 
 
@@ -193,6 +218,8 @@ def test_successful_nmap_task_persists_structured_results_and_candidates(tmp_pat
     assert TaskRepository(storage).get(task.public_id).id == task.id
     assert EvidenceRepository(storage).list(session_id=session.id)[0].evidence_type == "service"
     assert AttackPathNodeRepository(storage).list(session_id=session.id)[0].stage == "enumeration"
+    events = EventRepository(storage).list(session_id=session.id, limit=None, descending=False)
+    assert [event.event_kind for event in events] == ["task.started", "scanner.output", "task.completed"]
 
 
 def test_scan_task_rejects_target_outside_selected_session(tmp_path):
@@ -208,6 +235,30 @@ def test_scan_task_rejects_target_outside_selected_session(tmp_path):
         )
     except ValueError as exc:
         assert "outside the selected session target" in str(exc)
+    else:
+        raise AssertionError("Expected scanner target validation failure.")
+
+
+def test_scan_task_rejects_bare_ipv6_target_outside_selected_session(tmp_path):
+    settings = build_settings(tmp_path)
+    project = ProjectService.from_settings(settings).create_project(name="IPv6")
+    session = TargetSessionService.from_settings(settings).create_session(
+        project_identifier=project.id,
+        name="IPv6 target",
+        target_value="2001:db8::1",
+        target_type=TargetType.IP,
+    )
+    service = ScannerService.from_settings(settings)
+
+    try:
+        service.create_scan_task(
+            session_identifier=session.id,
+            task_type="port_scan",
+            input_data={"target_host": "2001:dead::2"},
+        )
+    except ValueError as exc:
+        assert "2001:dead::2" in str(exc)
+        assert "2001:db8::1" in str(exc)
     else:
         raise AssertionError("Expected scanner target validation failure.")
 
@@ -245,6 +296,85 @@ def test_ffuf_uses_configured_default_wordlist_and_extra_args(tmp_path):
     assert runner.argv[-2:] == ["-rate", "25"]
 
 
+def test_process_runner_streams_stdout_and_stderr_to_artifacts(tmp_path):
+    stdout_path = tmp_path / "stdout.txt"
+    stderr_path = tmp_path / "stderr.txt"
+    observed: list[tuple[str, str, str]] = []
+
+    result = ProcessRunner().run(
+        argv=[
+            sys.executable,
+            "-c",
+            (
+                "import sys, time; "
+                "print('first', flush=True); "
+                "print('warn', file=sys.stderr, flush=True); "
+                "time.sleep(0.1); "
+                "print('second', flush=True)"
+            ),
+        ],
+        cwd=tmp_path,
+        timeout_seconds=5,
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+        on_output=lambda stream_name, chunk: observed.append(
+            (stream_name, chunk, stdout_path.read_text(encoding="utf-8") if stdout_path.exists() else "")
+        ),
+    )
+
+    assert result.return_code == 0
+    assert result.stdout == "first\nsecond\n"
+    assert result.stderr == "warn\n"
+    assert stdout_path.read_text(encoding="utf-8") == "first\nsecond\n"
+    assert stderr_path.read_text(encoding="utf-8") == "warn\n"
+    assert ("stdout", "first\n", "first\n") in observed
+    assert ("stderr", "warn\n", "first\n") in observed
+
+
+def test_process_runner_terminates_when_cancel_requested(tmp_path):
+    cancel = {"requested": False}
+
+    result = ProcessRunner().run(
+        argv=[
+            sys.executable,
+            "-c",
+            "import time; print('ready', flush=True); time.sleep(10)",
+        ],
+        cwd=tmp_path,
+        timeout_seconds=20,
+        stdout_path=tmp_path / "stdout.txt",
+        stderr_path=tmp_path / "stderr.txt",
+        on_output=lambda _stream_name, _chunk: cancel.__setitem__("requested", True),
+        cancel_requested=lambda: cancel["requested"],
+    )
+
+    assert result.cancelled is True
+    assert "ready\n" == result.stdout
+    assert "Process cancelled." in result.stderr
+
+
+def test_enqueued_scan_task_executes_outside_creation_path(tmp_path):
+    settings = build_settings(tmp_path)
+    binary = tmp_path / "nmap"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    _project, session = prepare_session(settings)
+    runner = FakeRunner(ProcessResult(argv=[str(binary)], return_code=0, stdout=NMAP_XML, stderr=""))
+    service = ScannerService(settings=settings, runner=runner)
+    service.update_config({"tools": {"nmap": {"binary_path": str(binary)}}})
+
+    task = service.enqueue_scan_task(
+        session_identifier=session.id,
+        task_type="port_scan",
+        input_data={"target_host": "10.10.10.5"},
+    )
+
+    assert task.status.value == "pending"
+    assert runner.argv is None
+    executed = service.execute_pending_task(task.id)
+    assert executed.status.value == "succeeded"
+    assert runner.argv is not None
+
+
 def test_phase3_api_routes_expose_tools_and_tasks(tmp_path, monkeypatch):
     settings = build_settings(tmp_path)
     _project, session = prepare_session(settings)
@@ -269,7 +399,7 @@ def test_phase3_api_routes_expose_tools_and_tasks(tmp_path, monkeypatch):
         )
         assert created.status_code == 201
         task = created.json()["task"]
-        assert task["status"] == "failed"
+        assert task["status"] == "pending"
 
         listed = client.get(f"/api/sessions/{session.id}/tasks")
         assert listed.status_code == 200

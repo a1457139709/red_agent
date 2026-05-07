@@ -464,12 +464,13 @@ def test_event_websocket_replays_persisted_session_history(tmp_path, monkeypatch
 
     with TestClient(create_app()) as client:
         with client.websocket_connect(f"/ws/events?session_id={session.public_id}&limit=10") as websocket:
-            replayed = websocket.receive_json()
             connected = websocket.receive_json()
+            replayed = websocket.receive_json()
 
     assert replayed["event_id"] == event.id
     assert replayed["timestamp"] == event.created_at
     assert replayed["sequence"] == event.sequence
     assert replayed["event_kind"] == "task.completed"
     assert connected["event_kind"] == "connection.connected"
-    assert connected["sequence"] == event.sequence + 1
+    assert connected["sequence"] == 0
+    assert replayed["sequence"] > connected["sequence"]

@@ -212,7 +212,7 @@ Modules:
 ## Control Center Development
 
 The CTF Control Center currently includes the local App Server, desktop shell, Project/Session
-persistence, and the Phase 3 scanner adapter layer.
+persistence, the Phase 3 scanner adapter layer, and the Phase 4 Agent enumeration loop.
 
 Start the backend from the repository root:
 
@@ -240,11 +240,19 @@ The desktop shell defaults to `http://127.0.0.1:8000` and can be pointed at anot
 The Control Center event socket is `ws://127.0.0.1:8000/ws/events` by default. It accepts optional replay scope parameters such as `session_id`, `project_id`, `limit`, and `since_sequence` so the desktop client can restore persisted session history after reconnect or backend restart.
 
 Phase 3 scanner endpoints are available under `/api/tools` and `/api/sessions/{session_id}/tasks`.
-They expose local `nmap`, `ffuf`, and `nuclei` status/configuration, create scan tasks with
-structured results, preserve stdout/stderr plus raw scanner output under the session artifact
-directory, and generate evidence plus attack-path candidates from successful scans. Scanner tasks
-are constrained to the selected Session target; ffuf can use a configured default wordlist, nuclei
-can use a configured templates path, and each tool can receive configured extra argv entries.
+They expose local `nmap`, `ffuf`, and `nuclei` status/configuration, enqueue scan tasks for
+in-process background execution, stream stdout/stderr into persisted scanner output events and
+session artifacts, and generate structured results plus evidence and attack-path candidates from
+successful scans. Scanner tasks are constrained to the selected Session target; ffuf can use a
+configured default wordlist, nuclei can use a configured templates path, and each tool can receive
+configured extra argv entries.
+
+Phase 4 Agent messages are accepted at `/api/sessions/{session_id}/agent/messages`. Sending
+`枚举这台靶机`, `enumerate target`, or a similar scan request creates an `agent_analysis` task,
+starts a background port scan, summarizes the result, plans ffuf only for HTTP/HTTPS services,
+starts nuclei only when a candidate URL and templates path exist, and records next-action events
+for the desktop Agent Console. The WebSocket event stream also polls persisted events while
+connected so Agent, task, and scanner events appear without a manual reconnect.
 
 ## Usage Examples
 

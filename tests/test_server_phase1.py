@@ -28,7 +28,7 @@ def test_event_websocket_emits_connected_envelope():
             payload = websocket.receive_json()
 
     assert payload["event_kind"] == "connection.connected"
-    assert payload["sequence"] == 1
+    assert payload["sequence"] == 0
     assert payload["project_id"] is None
     assert payload["session_id"] is None
     assert payload["task_id"] is None
@@ -43,7 +43,7 @@ def test_event_websocket_rejects_non_object_messages_without_traceback():
             payload = websocket.receive_json()
 
     assert payload["event_kind"] == "error"
-    assert payload["sequence"] == 2
+    assert payload["sequence"] == 1
     assert payload["payload"]["code"] == "invalid_message"
 
 
@@ -56,8 +56,8 @@ def test_event_websocket_sequence_only_counts_sent_events():
             websocket.send_json({"event_kind": "ping"})
             pong = websocket.receive_json()
 
-    assert connected["sequence"] == 1
-    assert error["sequence"] == 2
+    assert connected["sequence"] == 0
+    assert error["sequence"] == 1
     assert error["event_kind"] == "error"
-    assert pong["sequence"] == 3
+    assert pong["sequence"] == 2
     assert pong["event_kind"] == "connection.pong"

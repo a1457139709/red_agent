@@ -246,6 +246,8 @@ Frontend:
 - raw output file persistence
 - structured parser result
 - evidence candidate generation
+- API task creation returns a queued task immediately; execution runs in the in-process scanner runtime
+- cancellation marks queued/running tasks cancelled and running processes observe the cancellation probe
 
 ### 7.3 nmap Adapter
 
@@ -387,6 +389,17 @@ Implement Agent Console:
 - 对 Web 服务自动生成目录扫描。
 - Agent 生成下一步建议。
 - UI 实时展示工具调用和任务结果。
+
+### 8.6 Current Implementation Notes
+
+当前 Phase 4 基线实现为本地确定性 Agent 编排，不依赖在线 LLM 调用：
+
+- `POST /api/sessions/{session_id}/agent/messages` 接收 Agent Console 消息。
+- `CTFAgentService` 创建 `agent_analysis` task，并在后台执行枚举工作流。
+- `EnumerationPlanner` 仅对 HTTP/HTTPS 服务规划 ffuf，并且只有存在候选 URL 时才规划 nuclei。
+- `EnumerationResultReducer` 将扫描 task 结果转换为 Agent 摘要；端口扫描失败会生成可恢复摘要和下一步建议。
+- WebSocket 连接期间会轮询持久化事件，向 UI 推送 Agent、task 和 scanner 事件。
+- 桌面端 Agent Console 展示工具调用、任务状态、下一步建议和错误类事件。
 
 ## 9. Phase 5: Attack Path and Evidence Workspace
 

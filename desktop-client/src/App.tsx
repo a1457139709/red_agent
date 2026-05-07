@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import { Activity, FolderKanban, ListChecks, Play, RefreshCcw, Server, Target, Wifi, WifiOff, Wrench } from "lucide-react";
+import { Activity, Bot, FolderKanban, ListChecks, Play, RefreshCcw, SendHorizontal, Server, Target, Wifi, WifiOff, Wrench } from "lucide-react";
 import {
   cancelScanTask,
   createProject,
@@ -14,6 +14,7 @@ import {
   listProjectSessions,
   listProjects,
   rerunScanTask,
+  sendAgentMessage,
   type HealthStatus,
   type ProjectDto,
   type ScanTaskDto,
@@ -22,7 +23,7 @@ import {
   type TargetType,
   type ToolStatusDto,
 } from "./lib/api";
-import { SCAN_TASK_OPTIONS, TARGET_TYPE_OPTIONS, validateProjectForm, validateScanTaskForm, validateTargetSessionForm } from "./lib/forms";
+import { SCAN_TASK_OPTIONS, TARGET_TYPE_OPTIONS, validateAgentMessageForm, validateProjectForm, validateScanTaskForm, validateTargetSessionForm } from "./lib/forms";
 import { parseWorkspaceHash, projectHash, sessionHash } from "./lib/routes";
 import {
   backendHttpToWebSocketUrl,
@@ -65,9 +66,11 @@ export function App() {
     wordlist: "",
     templates: "",
   });
+  const [agentForm, setAgentForm] = useState({message: "枚举这台靶机"});
   const [projectFormError, setProjectFormError] = useState<string | null>(null);
   const [sessionFormError, setSessionFormError] = useState<string | null>(null);
   const [scanFormError, setScanFormError] = useState<string | null>(null);
+  const [agentFormError, setAgentFormError] = useState<string | null>(null);
 
   const selectedProject = projects.find((project) => project.id === route.projectId || project.public_id === route.projectId) ?? null;
   const selectedSession = sessions.find((session) => session.id === route.sessionId || session.public_id === route.sessionId) ?? null;
@@ -204,6 +207,10 @@ export function App() {
       onEvent: (event) => {
         setError(null);
         setEvents((current) => mergeEvents(current, event));
+        if (event.session_id === selectedSession?.id && (event.event_kind.startsWith("agent.") || event.event_kind.startsWith("task."))) {
+          void refreshTasks();
+          void refreshDashboard();
+        }
       },
       onError: setError,
     });
@@ -213,7 +220,7 @@ export function App() {
       window.removeEventListener("red-code:ws-reconnect", reconnect);
       controller.close();
     };
-  }, [wsUrl]);
+  }, [refreshDashboard, refreshTasks, selectedSession?.id, wsUrl]);
 
   const submitProject = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -317,6 +324,28 @@ export function App() {
       await refreshDashboard();
     } catch (rerunError) {
       setError(rerunError instanceof Error ? rerunError.message : "Failed to rerun task.");
+    }
+  };
+
+  const submitAgentMessage = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedSession) {
+      return;
+    }
+    const validationError = validateAgentMessageForm(agentForm);
+    if (validationError) {
+      setAgentFormError(validationError);
+      return;
+    }
+    setAgentFormError(null);
+    try {
+      const task = await sendAgentMessage(backendUrl, selectedSession.id, {
+        message: agentForm.message.trim(),
+      });
+      setTasks((current) => [task, ...current]);
+      setSelectedTaskId(task.id);
+    } catch (submitError) {
+      setAgentFormError(submitError instanceof Error ? submitError.message : "Failed to send agent message.");
     }
   };
 
@@ -459,6 +488,24 @@ export function App() {
         </section>
 
         <section className="workspace-grid">
+          <section className="panel agent-panel" aria-labelledby="agent-heading">
+            <div className="panel-title">
+              <Bot aria-hidden="true" size={18} />
+              <h2 id="agent-heading">Agent Console</h2>
+            </div>
+            {selectedSession ? (
+              <AgentConsole
+                message={agentForm.message}
+                events={events}
+                error={agentFormError}
+                onMessageChange={(message) => setAgentForm({message})}
+                onSubmit={submitAgentMessage}
+              />
+            ) : (
+              <div className="empty-list"><span>Select a session to start Agent enumeration</span></div>
+            )}
+          </section>
+
           <section className="panel scan-panel" aria-labelledby="scan-heading">
             <div className="panel-title">
               <Play aria-hidden="true" size={18} />
@@ -583,6 +630,46 @@ export function App() {
         </section>
       </section>
     </main>
+  );
+}
+
+type AgentConsoleProps = {
+  message: string;
+  events: ServerEventEnvelope[];
+  error: string | null;
+  onMessageChange: (message: string) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+};
+
+function AgentConsole({message, events, error, onMessageChange, onSubmit}: AgentConsoleProps) {
+  const agentEvents = events.filter((event) => event.event_kind.startsWith("agent.") || event.event_kind.startsWith("task."));
+  return (
+    <div className="agent-console">
+      <form className="agent-form" onSubmit={onSubmit}>
+        <label>
+          <span>Message</span>
+          <input value={message} onChange={(event) => onMessageChange(event.target.value)} />
+        </label>
+        <button type="submit" className="primary-button icon-text-button">
+          <SendHorizontal aria-hidden="true" size={16} />
+          Send
+        </button>
+      </form>
+      {error ? <p className="error-line compact">{error}</p> : null}
+      <div className="agent-card-grid">
+        {agentEvents.length === 0 ? (
+          <div className="empty-list compact-empty"><span>No Agent events yet</span></div>
+        ) : (
+          agentEvents.slice(0, 6).map((event) => (
+            <article className={`agent-card ${agentEventTone(event.event_kind)}`} key={event.event_id}>
+              <strong>{event.event_kind}</strong>
+              <span>#{event.sequence}</span>
+              <p>{formatEventPayload(event.payload)}</p>
+            </article>
+          ))
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -834,7 +921,8 @@ function buildScanInput(input: {
     };
   }
   if (input.task_type === "dir_scan") {
-    return {base_url: target, wordlist: input.wordlist.trim(), filters: {}};
+    const wordlist = input.wordlist.trim();
+    return wordlist ? {base_url: target, wordlist, filters: {}} : {base_url: target, filters: {}};
   }
   return {
     target_url: target,
@@ -855,6 +943,25 @@ function formatEventPayload(payload: Record<string, unknown>): string {
   if (typeof payload.message === "string" && payload.message.trim()) {
     return payload.message;
   }
+  if (typeof payload.summary === "string" && payload.summary.trim()) {
+    return payload.summary;
+  }
+  if (typeof payload.command === "string" && payload.command.trim()) {
+    return payload.command;
+  }
   const serialized = JSON.stringify(payload);
   return serialized === "{}" ? "No payload" : serialized;
+}
+
+function agentEventTone(eventKind: string): string {
+  if (eventKind.includes("failed")) {
+    return "error";
+  }
+  if (eventKind.includes("suggested")) {
+    return "suggestion";
+  }
+  if (eventKind.includes("completed")) {
+    return "complete";
+  }
+  return "active";
 }

@@ -181,6 +181,14 @@ textarea {
   background: #174735;
 }
 
+.icon-text-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 38px;
+}
+
 .nav-list {
   display: flex;
   flex-direction: column;
@@ -285,6 +293,7 @@ textarea {
   align-items: start;
 }
 
+.agent-panel,
 .scan-panel,
 .dashboard-panel {
   grid-column: 1 / -1;
@@ -391,6 +400,72 @@ textarea {
 .artifact-list {
   display: flex;
   flex-direction: column;
+}
+
+.agent-console {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+}
+
+.agent-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.agent-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: #55594f;
+  font-size: 13px;
+}
+
+.agent-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.agent-card {
+  min-height: 104px;
+  border: 1px solid #e3e1d8;
+  border-left: 4px solid #8a8f7f;
+  border-radius: 6px;
+  padding: 11px;
+}
+
+.agent-card.complete {
+  border-left-color: #1f5e49;
+}
+
+.agent-card.suggestion {
+  border-left-color: #9a6500;
+}
+
+.agent-card.error {
+  border-left-color: #9b2f28;
+}
+
+.agent-card strong,
+.agent-card span,
+.agent-card p {
+  display: block;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.agent-card span,
+.agent-card p {
+  color: #676a60;
+  font-size: 12px;
+}
+
+.agent-card p {
+  margin-top: 8px;
 }
 
 .tool-row {
@@ -532,6 +607,8 @@ textarea {
   .workspace-grid,
   .metric-grid,
   .scan-form,
+  .agent-form,
+  .agent-card-grid,
   .task-layout {
     grid-template-columns: 1fr;
   }

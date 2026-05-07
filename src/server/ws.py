@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from agent.settings import get_settings
 from app.event_stream_service import EventStreamService
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -36,20 +38,8 @@ async def event_websocket(websocket: WebSocket) -> None:
         return
 
     stream_service = EventStreamService.from_settings(get_settings())
-    replayed = (
-        stream_service.list_event_envelopes(
-            project_id=project_id,
-            session_id=session_id,
-            since_sequence=since_sequence,
-            limit=limit,
-        )
-        if replay and (project_id is not None or session_id is not None)
-        else []
-    )
-    sequence = 0
-    for envelope in replayed:
-        sequence = envelope.sequence
-        await websocket.send_json(envelope.to_dict())
+    last_persisted_sequence = since_sequence or 0
+    sequence = last_persisted_sequence
 
     async def send_event(event_kind: str, payload: dict[str, object]) -> None:
         nonlocal sequence
@@ -62,14 +52,47 @@ async def event_websocket(websocket: WebSocket) -> None:
             ).to_dict()
         )
 
-    await send_event(
-        "connection.connected",
-        {"message": "connected", "channel": "events"},
-    )
+    try:
+        await websocket.send_json(
+            ServerEventEnvelope.create(
+                sequence=last_persisted_sequence,
+                event_kind="connection.connected",
+                payload={"message": "connected", "channel": "events"},
+            ).to_dict()
+        )
+
+        replayed = (
+            stream_service.list_event_envelopes(
+                project_id=project_id,
+                session_id=session_id,
+                since_sequence=since_sequence,
+                limit=limit,
+            )
+            if replay and (project_id is not None or session_id is not None)
+            else []
+        )
+        for envelope in replayed:
+            sequence = max(sequence, envelope.sequence)
+            last_persisted_sequence = max(last_persisted_sequence, envelope.sequence)
+            await websocket.send_json(envelope.to_dict())
+    except WebSocketDisconnect:
+        return
 
     try:
         while True:
-            message = await websocket.receive_json()
+            try:
+                message = await asyncio.wait_for(websocket.receive_json(), timeout=0.25)
+            except TimeoutError:
+                pending = stream_service.list_event_envelopes(
+                    project_id=project_id,
+                    session_id=session_id,
+                    since_sequence=last_persisted_sequence,
+                    limit=50,
+                )
+                for envelope in pending:
+                    last_persisted_sequence = max(last_persisted_sequence, envelope.sequence)
+                    await websocket.send_json(envelope.to_dict())
+                continue
             if not isinstance(message, dict):
                 await send_event(
                     "error",
