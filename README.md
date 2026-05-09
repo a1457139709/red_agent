@@ -213,6 +213,8 @@ Modules:
 
 The CTF Control Center currently includes the local App Server, desktop shell, Project/Session
 persistence, the Phase 3 scanner adapter layer, and the Phase 4 Agent enumeration loop.
+The current desktop UI iteration is a static immersive Agent prototype: it previews the
+conversation-first shell without connecting to backend tasks, findings, evidence, or graph views.
 
 Start the backend from the repository root:
 
@@ -236,6 +238,8 @@ npm run tauri dev
 ```
 
 The desktop shell defaults to `http://127.0.0.1:8000` and can be pointed at another backend with `VITE_BACKEND_URL`.
+The static immersive Agent prototype can be previewed without a running backend; backend wiring is
+intentionally deferred until the conversation surface is validated.
 
 The Control Center event socket is `ws://127.0.0.1:8000/ws/events` by default. It accepts optional replay scope parameters such as `session_id`, `project_id`, `limit`, and `since_sequence` so the desktop client can restore persisted session history after reconnect or backend restart.
 
