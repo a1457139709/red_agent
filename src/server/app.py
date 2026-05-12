@@ -9,6 +9,7 @@ from .routes.health import router as health_router
 from .routes.projects import router as projects_router
 from .routes.tasks import router as tasks_router
 from .routes.tools import router as tools_router
+from .routes.workspace import router as workspace_router
 from .ws import router as ws_router
 
 
@@ -37,5 +38,6 @@ def create_app() -> FastAPI:
     app.include_router(tasks_router)
     app.include_router(agent_router)
     app.include_router(tools_router)
+    app.include_router(workspace_router)
     app.include_router(ws_router)
     return app

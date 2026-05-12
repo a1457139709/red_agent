@@ -87,6 +87,19 @@ class NmapAdapter:
                     next_action=f"Probe {service} on port {port['port']}.",
                 )
             )
+            if _is_http_service(port):
+                scheme = "https" if str(service).lower() == "https" or port["port"] in {443, 8443, 9443} else "http"
+                host = input_data["target_host"]
+                default_port = 443 if scheme == "https" else 80
+                netloc = host if port["port"] == default_port else f"{host}:{port['port']}"
+                attack_path.append(
+                    AttackPathCandidate(
+                        stage="web-enum",
+                        title=f"Review web entry {scheme}://{netloc}",
+                        source_ref=str(output_path),
+                        next_action="Run HTTP probing and directory enumeration.",
+                    )
+                )
         return evidence, attack_path
 
 
@@ -113,3 +126,8 @@ def _normalize_ports(value: object) -> list[int]:
             raise ValueError("ports must be between 1 and 65535.")
         ports.append(port)
     return ports
+
+
+def _is_http_service(port: dict[str, Any]) -> bool:
+    service = str(port.get("service") or "").lower()
+    return "http" in service or port.get("port") in {80, 443, 8000, 8080, 8443, 8888, 9443}

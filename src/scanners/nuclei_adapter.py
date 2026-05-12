@@ -75,8 +75,9 @@ class NucleiAdapter:
         ]
         attack_path = [
             AttackPathCandidate(
-                stage="poc-validation",
+                stage="poc-verified",
                 title=f"Validate nuclei match {item.get('template_id')}",
+                status="verified",
                 source_ref=str(output_path),
                 next_action="Manually verify impact and exploitability.",
             )

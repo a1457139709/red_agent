@@ -120,6 +120,59 @@ export type ScanTaskDto = {
   updated_at: string;
 };
 
+export type EvidenceDto = {
+  id: string;
+  public_id: string;
+  project_id: string;
+  session_id: string;
+  source_task_id: string | null;
+  evidence_type: string;
+  title: string;
+  summary: string | null;
+  content_ref: string | null;
+  payload: Record<string, unknown>;
+  created_at: string;
+};
+
+export type AttackPathNodeDto = {
+  id: string;
+  public_id: string;
+  project_id: string;
+  session_id: string;
+  stage: string;
+  title: string;
+  status: string;
+  source_ref: string | null;
+  next_action: string | null;
+  created_at: string;
+  evidence: EvidenceDto[];
+};
+
+export type FindingDto = {
+  id: string;
+  public_id: string;
+  project_id: string;
+  session_id: string;
+  severity: string;
+  status: string;
+  title: string;
+  description: string | null;
+  evidence_refs: string[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type FlagDto = {
+  id: string;
+  public_id: string;
+  project_id: string;
+  session_id: string;
+  flag_type: string;
+  value: string;
+  source_evidence_id: string | null;
+  created_at: string;
+};
+
 export type CreateProjectInput = {
   name: string;
   description?: string | null;
@@ -139,6 +192,31 @@ export type CreateScanTaskInput = {
 
 export type AgentMessageInput = {
   message: string;
+};
+
+export type CreateEvidenceInput = {
+  evidence_type: string;
+  title: string;
+  summary?: string | null;
+  content_ref?: string | null;
+  payload?: Record<string, unknown>;
+  source_task_id?: string | null;
+  attack_path_node_id?: string | null;
+};
+
+export type CreateAttackPathNodeInput = {
+  stage: string;
+  title: string;
+  status?: string;
+  source_ref?: string | null;
+  next_action?: string | null;
+  evidence_ids?: string[];
+};
+
+export type CreateFlagInput = {
+  flag_type: string;
+  value: string;
+  source_evidence_id?: string | null;
 };
 
 const TARGET_TYPES = new Set<TargetType>(["ip", "domain", "url", "host", "note"]);
@@ -243,6 +321,71 @@ export function parseScanTask(payload: unknown): ScanTaskDto {
     error: requireNullableString(record.error, "Invalid task error."),
     created_at: requireString(record.created_at, "Invalid task created_at."),
     updated_at: requireString(record.updated_at, "Invalid task updated_at."),
+  };
+}
+
+export function parseEvidence(payload: unknown): EvidenceDto {
+  const record = requireRecord(payload, "Invalid evidence.");
+  return {
+    id: requireString(record.id, "Invalid evidence id."),
+    public_id: requireString(record.public_id, "Invalid evidence public id."),
+    project_id: requireString(record.project_id, "Invalid evidence project id."),
+    session_id: requireString(record.session_id, "Invalid evidence session id."),
+    source_task_id: requireNullableString(record.source_task_id, "Invalid evidence source task id."),
+    evidence_type: requireString(record.evidence_type, "Invalid evidence type."),
+    title: requireString(record.title, "Invalid evidence title."),
+    summary: requireNullableString(record.summary, "Invalid evidence summary."),
+    content_ref: requireNullableString(record.content_ref, "Invalid evidence content ref."),
+    payload: requireRecord(record.payload, "Invalid evidence payload."),
+    created_at: requireString(record.created_at, "Invalid evidence created_at."),
+  };
+}
+
+export function parseAttackPathNode(payload: unknown): AttackPathNodeDto {
+  const record = requireRecord(payload, "Invalid attack path node.");
+  return {
+    id: requireString(record.id, "Invalid attack path node id."),
+    public_id: requireString(record.public_id, "Invalid attack path node public id."),
+    project_id: requireString(record.project_id, "Invalid attack path node project id."),
+    session_id: requireString(record.session_id, "Invalid attack path node session id."),
+    stage: requireString(record.stage, "Invalid attack path node stage."),
+    title: requireString(record.title, "Invalid attack path node title."),
+    status: requireString(record.status, "Invalid attack path node status."),
+    source_ref: requireNullableString(record.source_ref, "Invalid attack path node source ref."),
+    next_action: requireNullableString(record.next_action, "Invalid attack path node next action."),
+    created_at: requireString(record.created_at, "Invalid attack path node created_at."),
+    evidence: requireArray(record.evidence, "Invalid attack path node evidence.").map(parseEvidence),
+  };
+}
+
+export function parseFinding(payload: unknown): FindingDto {
+  const record = requireRecord(payload, "Invalid finding.");
+  return {
+    id: requireString(record.id, "Invalid finding id."),
+    public_id: requireString(record.public_id, "Invalid finding public id."),
+    project_id: requireString(record.project_id, "Invalid finding project id."),
+    session_id: requireString(record.session_id, "Invalid finding session id."),
+    severity: requireString(record.severity, "Invalid finding severity."),
+    status: requireString(record.status, "Invalid finding status."),
+    title: requireString(record.title, "Invalid finding title."),
+    description: requireNullableString(record.description, "Invalid finding description."),
+    evidence_refs: requireStringArray(record.evidence_refs, "Invalid finding evidence refs."),
+    created_at: requireString(record.created_at, "Invalid finding created_at."),
+    updated_at: requireString(record.updated_at, "Invalid finding updated_at."),
+  };
+}
+
+export function parseFlag(payload: unknown): FlagDto {
+  const record = requireRecord(payload, "Invalid flag.");
+  return {
+    id: requireString(record.id, "Invalid flag id."),
+    public_id: requireString(record.public_id, "Invalid flag public id."),
+    project_id: requireString(record.project_id, "Invalid flag project id."),
+    session_id: requireString(record.session_id, "Invalid flag session id."),
+    flag_type: requireString(record.flag_type, "Invalid flag type."),
+    value: requireString(record.value, "Invalid flag value."),
+    source_evidence_id: requireNullableString(record.source_evidence_id, "Invalid flag source evidence id."),
+    created_at: requireString(record.created_at, "Invalid flag created_at."),
   };
 }
 
@@ -380,6 +523,86 @@ export async function sendAgentMessage(
   return parseScanTask(payload.task);
 }
 
+export async function listAttackPath(baseUrl: string, sessionId: string): Promise<AttackPathNodeDto[]> {
+  const payload = requireRecord(
+    await requestJson(`${baseUrl}/api/sessions/${sessionId}/attack-path`),
+    "Invalid attack path response.",
+  );
+  return requireArray(payload.nodes, "Invalid attack path response.").map(parseAttackPathNode);
+}
+
+export async function createAttackPathNode(
+  baseUrl: string,
+  sessionId: string,
+  input: CreateAttackPathNodeInput,
+): Promise<AttackPathNodeDto> {
+  const payload = requireRecord(
+    await requestJson(`${baseUrl}/api/sessions/${sessionId}/attack-path`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(input),
+    }),
+    "Invalid attack path node response.",
+  );
+  return parseAttackPathNode(payload.node);
+}
+
+export async function listEvidence(baseUrl: string, sessionId: string): Promise<EvidenceDto[]> {
+  const payload = requireRecord(
+    await requestJson(`${baseUrl}/api/sessions/${sessionId}/evidence`),
+    "Invalid evidence response.",
+  );
+  return requireArray(payload.evidence, "Invalid evidence response.").map(parseEvidence);
+}
+
+export async function createEvidence(
+  baseUrl: string,
+  sessionId: string,
+  input: CreateEvidenceInput,
+): Promise<{evidence: EvidenceDto; node: AttackPathNodeDto}> {
+  const payload = requireRecord(
+    await requestJson(`${baseUrl}/api/sessions/${sessionId}/evidence`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(input),
+    }),
+    "Invalid evidence response.",
+  );
+  return {evidence: parseEvidence(payload.evidence), node: parseAttackPathNode(payload.node)};
+}
+
+export async function listFindings(baseUrl: string, sessionId: string): Promise<FindingDto[]> {
+  const payload = requireRecord(
+    await requestJson(`${baseUrl}/api/sessions/${sessionId}/findings`),
+    "Invalid findings response.",
+  );
+  return requireArray(payload.findings, "Invalid findings response.").map(parseFinding);
+}
+
+export async function listFlags(baseUrl: string, sessionId: string): Promise<FlagDto[]> {
+  const payload = requireRecord(
+    await requestJson(`${baseUrl}/api/sessions/${sessionId}/flags`),
+    "Invalid flags response.",
+  );
+  return requireArray(payload.flags, "Invalid flags response.").map(parseFlag);
+}
+
+export async function createFlag(
+  baseUrl: string,
+  sessionId: string,
+  input: CreateFlagInput,
+): Promise<{flag: FlagDto; node: AttackPathNodeDto}> {
+  const payload = requireRecord(
+    await requestJson(`${baseUrl}/api/sessions/${sessionId}/flags`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(input),
+    }),
+    "Invalid flag response.",
+  );
+  return {flag: parseFlag(payload.flag), node: parseAttackPathNode(payload.node)};
+}
+
 async function requestJson(url: string, init?: RequestInit): Promise<unknown> {
   const response = await fetch(url, init);
   if (!response.ok) {
@@ -396,10 +619,7 @@ function requireRecord(payload: unknown, message: string): Record<string, unknow
 }
 
 function requireRecordArray(payload: unknown, message: string): Record<string, unknown>[] {
-  if (!Array.isArray(payload)) {
-    throw new Error(message);
-  }
-  return payload.map((item) => requireRecord(item, message));
+  return requireArray(payload, message).map((item) => requireRecord(item, message));
 }
 
 function requireNumberRecord(payload: unknown, message: string): Record<string, number> {
@@ -441,4 +661,15 @@ function requireBoolean(payload: unknown, message: string): boolean {
     throw new Error(message);
   }
   return payload;
+}
+
+function requireArray(payload: unknown, message: string): unknown[] {
+  if (!Array.isArray(payload)) {
+    throw new Error(message);
+  }
+  return payload;
+}
+
+function requireStringArray(payload: unknown, message: string): string[] {
+  return requireArray(payload, message).map((item) => requireString(item, message));
 }

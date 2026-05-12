@@ -452,6 +452,85 @@ class Evidence:
 
 
 @dataclass(slots=True)
+class Finding:
+    id: str
+    public_id: str
+    project_id: str
+    session_id: str
+    severity: str
+    status: str
+    title: str
+    description: str | None = None
+    evidence_refs: list[str] = field(default_factory=list)
+    created_at: str = field(default_factory=utc_now_iso)
+    updated_at: str = field(default_factory=utc_now_iso)
+
+    def __post_init__(self) -> None:
+        self.project_id = _normalize_required_text(self.project_id, field_name="project id")
+        self.session_id = _normalize_required_text(self.session_id, field_name="session id")
+        self.severity = _normalize_required_text(self.severity, field_name="finding severity")
+        self.status = _normalize_required_text(self.status, field_name="finding status")
+        self.title = _normalize_required_text(self.title, field_name="finding title")
+        self.description = _normalize_optional_text(self.description)
+        self.evidence_refs = [ref.strip() for ref in self.evidence_refs if ref.strip()]
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        project_id: str,
+        session_id: str,
+        severity: str,
+        status: str,
+        title: str,
+        description: str | None = None,
+        evidence_refs: list[str] | None = None,
+    ) -> "Finding":
+        return cls(
+            id=str(uuid4()),
+            public_id="",
+            project_id=project_id,
+            session_id=session_id,
+            severity=severity,
+            status=status,
+            title=title,
+            description=description,
+            evidence_refs=list(evidence_refs or []),
+        )
+
+    @classmethod
+    def from_row(cls, row: dict[str, Any]) -> "Finding":
+        return cls(
+            id=row["id"],
+            public_id=row.get("public_id") or "",
+            project_id=row["project_id"],
+            session_id=row["session_id"],
+            severity=row["severity"],
+            status=row["status"],
+            title=row["title"],
+            description=row.get("description"),
+            evidence_refs=json.loads(row.get("evidence_refs_json") or "[]"),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def to_row(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "public_id": self.public_id,
+            "project_id": self.project_id,
+            "session_id": self.session_id,
+            "severity": self.severity,
+            "status": self.status,
+            "title": self.title,
+            "description": self.description,
+            "evidence_refs_json": json.dumps(self.evidence_refs, ensure_ascii=False),
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+
+@dataclass(slots=True)
 class AttackPathNode:
     id: str
     public_id: str

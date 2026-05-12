@@ -8,16 +8,25 @@ import json
 from urllib.parse import urlsplit
 
 from agent.settings import Settings, get_settings
-from models.control_center import AttackPathNode, Event, Evidence, Task, TaskStatus
+from models.control_center import AttackPathNode, Event, Evidence, Finding, Task, TaskStatus
 from models.run import utc_now_iso
-from scanners.contracts import ScanExecutionResult, ScannerArtifact, ScannerAdapter, ToolConfig, ToolStatus
+from scanners.contracts import (
+    AttackPathCandidate,
+    ScanExecutionResult,
+    ScannerArtifact,
+    ScannerAdapter,
+    ToolConfig,
+    ToolStatus,
+)
 from scanners.process_runner import ProcessRunner, read_version, resolve_binary
 from scanners.registry import ScannerRegistry, build_scanner_registry
 from storage.project_paths import project_session_artifacts_dir
 from storage.repositories.control_center import (
     AttackPathNodeRepository,
+    AttackPathEvidenceLinkRepository,
     EvidenceRepository,
     EventRepository,
+    FindingRepository,
     ProjectRepository,
     TargetSessionRepository,
     TaskRepository,
@@ -87,7 +96,9 @@ class ScannerService(ControlCenterService):
         object.__setattr__(self, "task_repository", TaskRepository(storage))
         object.__setattr__(self, "event_repository", EventRepository(storage))
         object.__setattr__(self, "evidence_repository", EvidenceRepository(storage))
+        object.__setattr__(self, "finding_repository", FindingRepository(storage))
         object.__setattr__(self, "attack_path_repository", AttackPathNodeRepository(storage))
+        object.__setattr__(self, "link_repository", AttackPathEvidenceLinkRepository(storage))
 
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> "ScannerService":
@@ -418,8 +429,9 @@ class ScannerService(ControlCenterService):
         return path
 
     def _persist_candidates(self, task: Task, result: ScanExecutionResult) -> None:
+        created_evidence: list[Evidence] = []
         for candidate in result.evidence:
-            self.evidence_repository.create(
+            evidence = self.evidence_repository.create(
                 Evidence.create(
                     project_id=task.project_id,
                     session_id=task.session_id,
@@ -431,8 +443,12 @@ class ScannerService(ControlCenterService):
                     payload=candidate.payload,
                 )
             )
-        for candidate in result.attack_path:
-            self.attack_path_repository.create(
+            created_evidence.append(evidence)
+            finding = _finding_from_evidence(task=task, evidence=evidence)
+            if finding is not None:
+                self.finding_repository.create(finding)
+        for index, candidate in enumerate(result.attack_path):
+            node = self.attack_path_repository.create(
                 AttackPathNode.create(
                     project_id=task.project_id,
                     session_id=task.session_id,
@@ -443,6 +459,13 @@ class ScannerService(ControlCenterService):
                     next_action=candidate.next_action,
                 )
             )
+            evidence = _evidence_for_attack_path_candidate(
+                candidate,
+                index=index,
+                created_evidence=created_evidence,
+            )
+            if evidence is not None:
+                self.link_repository.link(node_id=node.id, evidence_id=evidence.id)
 
 
 def _artifacts(
@@ -468,6 +491,50 @@ def _summary(tool_name: str, structured: dict[str, Any]) -> str:
     if tool_name == "nuclei":
         return f"nuclei found {len(structured.get('matches', []))} match(es)."
     return f"{tool_name} scan completed."
+
+
+def _evidence_for_attack_path_candidate(
+    candidate: AttackPathCandidate,
+    *,
+    index: int,
+    created_evidence: list[Evidence],
+) -> Evidence | None:
+    for evidence in created_evidence:
+        if _attack_path_candidate_matches_evidence(candidate, evidence):
+            return evidence
+    if index < len(created_evidence):
+        return created_evidence[index]
+    if len(created_evidence) == 1 and candidate.source_ref == created_evidence[0].content_ref:
+        return created_evidence[0]
+    return None
+
+
+def _attack_path_candidate_matches_evidence(candidate: AttackPathCandidate, evidence: Evidence) -> bool:
+    if candidate.title == evidence.title:
+        return True
+    if _payload_text(evidence, "url") and _payload_text(evidence, "url") in candidate.title:
+        return True
+    if _payload_text(evidence, "matched_url") and _payload_text(evidence, "matched_url") in candidate.title:
+        return True
+    if _payload_text(evidence, "template_id") and _payload_text(evidence, "template_id") in candidate.title:
+        return True
+    port = evidence.payload.get("port")
+    if isinstance(port, int):
+        title = candidate.title.lower()
+        if f"port {port}" in title or f":{port}" in title:
+            return True
+        if port == 80 and "http://" in title and "https://" not in title:
+            return True
+        if port == 443 and "https://" in title:
+            return True
+    return False
+
+
+def _payload_text(evidence: Evidence, key: str) -> str | None:
+    value = evidence.payload.get(key)
+    if value in (None, ""):
+        return None
+    return str(value)
 
 
 def _terminal_task_event_kind(status: TaskStatus) -> str:
@@ -585,3 +652,29 @@ def _is_ip_literal(value: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _finding_from_evidence(*, task: Task, evidence: Evidence) -> Finding | None:
+    if task.task_type == "port_scan" and evidence.evidence_type == "service":
+        severity = "info"
+        status = "open"
+        description = evidence.summary
+    elif task.task_type == "dir_scan" and evidence.evidence_type == "web_path":
+        severity = "info"
+        status = "open"
+        description = evidence.summary
+    elif task.task_type == "poc_scan" and evidence.evidence_type == "poc_hit":
+        severity = str(evidence.payload.get("severity") or "unknown")
+        status = "verified"
+        description = evidence.summary or str(evidence.payload.get("template_id") or "")
+    else:
+        return None
+    return Finding.create(
+        project_id=task.project_id,
+        session_id=task.session_id,
+        severity=severity,
+        status=status,
+        title=evidence.title,
+        description=description,
+        evidence_refs=[evidence.id],
+    )

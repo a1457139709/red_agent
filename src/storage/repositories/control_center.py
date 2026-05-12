@@ -7,6 +7,7 @@ from models.control_center import (
     CommandRun,
     Event,
     Evidence,
+    Finding,
     Flag,
     Project,
     ProjectStatus,
@@ -116,6 +117,26 @@ CREATE TABLE IF NOT EXISTS ctf_evidence (
 
 CREATE INDEX IF NOT EXISTS idx_ctf_evidence_session_created_at ON ctf_evidence(session_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS ctf_findings (
+    id TEXT PRIMARY KEY,
+    public_id TEXT UNIQUE,
+    project_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    status TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT,
+    evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(project_id) REFERENCES ctf_projects(id),
+    FOREIGN KEY(session_id) REFERENCES ctf_target_sessions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ctf_findings_session_created_at
+    ON ctf_findings(session_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ctf_findings_status ON ctf_findings(status);
+
 CREATE TABLE IF NOT EXISTS ctf_attack_path_nodes (
     id TEXT PRIMARY KEY,
     public_id TEXT UNIQUE,
@@ -133,6 +154,18 @@ CREATE TABLE IF NOT EXISTS ctf_attack_path_nodes (
 
 CREATE INDEX IF NOT EXISTS idx_ctf_attack_path_nodes_session_created_at
     ON ctf_attack_path_nodes(session_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS ctf_attack_path_evidence_links (
+    node_id TEXT NOT NULL,
+    evidence_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(node_id, evidence_id),
+    FOREIGN KEY(node_id) REFERENCES ctf_attack_path_nodes(id),
+    FOREIGN KEY(evidence_id) REFERENCES ctf_evidence(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ctf_attack_path_evidence_links_evidence
+    ON ctf_attack_path_evidence_links(evidence_id);
 
 CREATE TABLE IF NOT EXISTS ctf_command_runs (
     id TEXT PRIMARY KEY,
@@ -590,6 +623,80 @@ class EvidenceRepository:
         )
 
 
+class FindingRepository:
+    def __init__(self, storage: SQLiteStorage) -> None:
+        self.storage = storage
+        ControlCenterSchemaRepository(storage)
+
+    def create(self, finding: Finding) -> Finding:
+        with self.storage.connect() as connection:
+            if not finding.public_id:
+                finding.public_id = allocate_public_id(connection, table_name="ctf_findings", prefix="FIND")
+            connection.execute(
+                """
+                INSERT INTO ctf_findings (
+                    id, public_id, project_id, session_id, severity, status,
+                    title, description, evidence_refs_json, created_at, updated_at
+                ) VALUES (
+                    :id, :public_id, :project_id, :session_id, :severity, :status,
+                    :title, :description, :evidence_refs_json, :created_at, :updated_at
+                )
+                """,
+                finding.to_row(),
+            )
+            connection.commit()
+        return finding
+
+    def get(self, identifier: str) -> Finding | None:
+        with self.storage.connect() as connection:
+            row = get_row_by_identifier(
+                connection,
+                table_name="ctf_findings",
+                identifier=identifier,
+                order_column="created_at",
+            )
+        return Finding.from_row(dict(row)) if row else None
+
+    def require(self, identifier: str) -> Finding:
+        finding = self.get(identifier)
+        if finding is None:
+            raise ValueError(f"Finding not found: {identifier}")
+        return finding
+
+    def list(self, *, session_id: str, limit: int | None = 50) -> list[Finding]:
+        return _list_session_entities(
+            self.storage,
+            table_name="ctf_findings",
+            model_cls=Finding,
+            session_id=session_id,
+            limit=limit,
+        )
+
+    def update(self, finding: Finding) -> Finding:
+        finding.updated_at = utc_now_iso()
+        with self.storage.connect() as connection:
+            connection.execute(
+                """
+                UPDATE ctf_findings
+                SET
+                    public_id = :public_id,
+                    project_id = :project_id,
+                    session_id = :session_id,
+                    severity = :severity,
+                    status = :status,
+                    title = :title,
+                    description = :description,
+                    evidence_refs_json = :evidence_refs_json,
+                    created_at = :created_at,
+                    updated_at = :updated_at
+                WHERE id = :id
+                """,
+                finding.to_row(),
+            )
+            connection.commit()
+        return finding
+
+
 class AttackPathNodeRepository:
     def __init__(self, storage: SQLiteStorage) -> None:
         self.storage = storage
@@ -636,6 +743,50 @@ class AttackPathNodeRepository:
             session_id=session_id,
             limit=limit,
         )
+
+
+class AttackPathEvidenceLinkRepository:
+    def __init__(self, storage: SQLiteStorage) -> None:
+        self.storage = storage
+        ControlCenterSchemaRepository(storage)
+
+    def link(self, *, node_id: str, evidence_id: str) -> None:
+        with self.storage.connect() as connection:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO ctf_attack_path_evidence_links (
+                    node_id, evidence_id, created_at
+                ) VALUES (?, ?, ?)
+                """,
+                (node_id, evidence_id, utc_now_iso()),
+            )
+            connection.commit()
+
+    def list_evidence_ids(self, *, node_id: str) -> list[str]:
+        with self.storage.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT evidence_id
+                FROM ctf_attack_path_evidence_links
+                WHERE node_id = ?
+                ORDER BY created_at ASC
+                """,
+                (node_id,),
+            ).fetchall()
+        return [row["evidence_id"] for row in rows]
+
+    def list_node_ids(self, *, evidence_id: str) -> list[str]:
+        with self.storage.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT node_id
+                FROM ctf_attack_path_evidence_links
+                WHERE evidence_id = ?
+                ORDER BY created_at ASC
+                """,
+                (evidence_id,),
+            ).fetchall()
+        return [row["node_id"] for row in rows]
 
 
 class CommandRunRepository:

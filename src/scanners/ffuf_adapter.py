@@ -90,7 +90,7 @@ class FfufAdapter:
         ]
         attack_path = [
             AttackPathCandidate(
-                stage="web-enumeration",
+                stage="web-enum",
                 title=f"Review discovered path {item.get('url')}",
                 source_ref=str(output_path),
                 next_action="Check page content and authentication behavior.",

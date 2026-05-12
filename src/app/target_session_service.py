@@ -19,6 +19,7 @@ from storage.repositories.control_center import (
     AttackPathNodeRepository,
     CommandRunRepository,
     EvidenceRepository,
+    FindingRepository,
     FlagRepository,
     TaskRepository,
 )
@@ -110,6 +111,7 @@ class TargetSessionService(ControlCenterService):
         storage = SQLiteStorage(self.settings.sqlite_path)
         tasks = TaskRepository(storage).list(session_id=session.id, limit=None)
         evidence = EvidenceRepository(storage).list(session_id=session.id, limit=None)
+        findings = FindingRepository(storage).list(session_id=session.id, limit=None)
         attack_path = AttackPathNodeRepository(storage).list(session_id=session.id, limit=None)
         commands = CommandRunRepository(storage).list(session_id=session.id, limit=10)
         flags = FlagRepository(storage).list(session_id=session.id, limit=None)
@@ -120,6 +122,7 @@ class TargetSessionService(ControlCenterService):
             project=project,
             session=session,
             task_counts=_count_by_status(tasks),
+            finding_counts=_count_findings_by_severity(findings),
             evidence_count=len(evidence),
             flag_count=len(flags),
             open_ports=open_ports,
@@ -182,6 +185,13 @@ def _count_by_status(tasks) -> dict[str, int]:
     counts: dict[str, int] = {}
     for task in tasks:
         counts[task.status.value] = counts.get(task.status.value, 0) + 1
+    return counts
+
+
+def _count_findings_by_severity(findings) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for finding in findings:
+        counts[finding.severity] = counts.get(finding.severity, 0) + 1
     return counts
 
 

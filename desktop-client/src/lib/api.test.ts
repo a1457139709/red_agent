@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  parseAttackPathNode,
+  parseEvidence,
+  parseFinding,
+  parseFlag,
   parseHealthResponse,
   parseProject,
   parseScanTask,
@@ -55,6 +59,68 @@ describe("phase 3 DTO parsers", () => {
         updated_at: "2026-05-03T00:00:00+00:00",
       }).executor,
     ).toBe("nmap");
+  });
+});
+
+describe("phase 5 DTO parsers", () => {
+  const evidence = {
+    id: "evidence-1",
+    public_id: "EVID0001",
+    project_id: "project-1",
+    session_id: "session-1",
+    source_task_id: null,
+    evidence_type: "note",
+    title: "Manual note",
+    summary: "Check login.",
+    content_ref: null,
+    payload: {},
+    created_at: "2026-05-03T00:00:00+00:00",
+  };
+
+  it("parses evidence, attack path, finding, and flag DTOs", () => {
+    expect(parseEvidence(evidence).public_id).toBe("EVID0001");
+    expect(
+      parseAttackPathNode({
+        id: "node-1",
+        public_id: "AP0001",
+        project_id: "project-1",
+        session_id: "session-1",
+        stage: "note",
+        title: "Manual note",
+        status: "open",
+        source_ref: "evidence-1",
+        next_action: null,
+        created_at: "2026-05-03T00:00:00+00:00",
+        evidence: [evidence],
+      }).evidence[0].id,
+    ).toBe("evidence-1");
+    expect(
+      parseFinding({
+        id: "finding-1",
+        public_id: "FIND0001",
+        project_id: "project-1",
+        session_id: "session-1",
+        severity: "medium",
+        status: "verified",
+        title: "Nuclei match",
+        description: null,
+        evidence_refs: ["evidence-1"],
+        created_at: "2026-05-03T00:00:00+00:00",
+        updated_at: "2026-05-03T00:00:00+00:00",
+      }).evidence_refs,
+    ).toEqual(["evidence-1"]);
+    expect(
+      parseFlag({
+        id: "flag-1",
+        public_id: "FLAG0001",
+        project_id: "project-1",
+        session_id: "session-1",
+        flag_type: "loot",
+        value: "admin:admin",
+        source_evidence_id: "evidence-1",
+        created_at: "2026-05-03T00:00:00+00:00",
+      }).source_evidence_id,
+    ).toBe("evidence-1");
   });
 });
 

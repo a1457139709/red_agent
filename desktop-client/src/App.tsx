@@ -1,11 +1,13 @@
-import { useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Bot,
-  ChevronLeft,
-  ChevronRight,
-  Clock3,
+  CheckCircle2,
+  ClipboardList,
   Command,
-  Compass,
+  FileText,
+  Flag,
+  GitBranch,
+  Layers3,
   Menu,
   MessageSquarePlus,
   PanelLeftClose,
@@ -14,21 +16,37 @@ import {
   Search,
   SendHorizontal,
   ShieldCheck,
-  Sparkles,
   Target,
   X,
 } from "lucide-react";
+import {
+  type AttackPathNodeDto,
+  type EvidenceDto,
+  type FindingDto,
+  type FlagDto,
+  type ProjectDto,
+  type TargetSessionDto,
+  createEvidence,
+  getBackendUrl,
+  listAttackPath,
+  listEvidence,
+  listFindings,
+  listFlags,
+  listProjectSessions,
+  listProjects,
+} from "./lib/api";
+
+type WorkspaceMode = "Recon" | "Exploit" | "Report";
+type MessageRole = "agent" | "operator" | "system";
 
 type Conversation = {
   id: string;
+  projectId: string;
   title: string;
   target: string;
   mode: string;
   updatedAt: string;
-  active: boolean;
 };
-
-type MessageRole = "agent" | "operator" | "system";
 
 type ChatMessage = {
   id: string;
@@ -39,44 +57,47 @@ type ChatMessage = {
   steps?: string[];
 };
 
-const conversations: Conversation[] = [
-  {
-    id: "conv-001",
-    title: "Linux target immersion",
-    target: "10.10.10.5",
-    mode: "Enumeration",
-    updatedAt: "Now",
-    active: true,
-  },
-  {
-    id: "conv-002",
-    title: "Web entry triage",
-    target: "demo.internal",
-    mode: "Recon",
-    updatedAt: "12 min",
-    active: false,
-  },
-  {
-    id: "conv-003",
-    title: "Privilege path notes",
-    target: "lab-host-03",
-    mode: "Review",
-    updatedAt: "1 hr",
-    active: false,
-  },
-];
+type EvidenceItem = {
+  id: string;
+  kind: string;
+  title: string;
+  summary: string;
+};
+
+type AttackNode = {
+  id: string;
+  stage: string;
+  title: string;
+  status: string;
+  nextAction: string;
+  evidenceIds: string[];
+};
+
+type FindingItem = {
+  id: string;
+  severity: string;
+  status: string;
+  title: string;
+};
+
+type FlagItem = {
+  id: string;
+  type: string;
+  value: string;
+  evidenceId: string;
+};
 
 const promptSuggestions = [
   "枚举这台靶机的初始攻击面",
-  "基于当前目标生成下一步侦察计划",
-  "整理刚才的发现并给出优先级",
+  "基于当前证据生成下一步侦察计划",
+  "整理 findings 并给出优先级",
 ];
 
 const initialMessages: ChatMessage[] = [
   {
     id: "m-001",
     role: "system",
-    body: "Session context locked to Linux target immersion. Static prototype mode is active.",
+    body: "Session context locked to Linux target immersion.",
     meta: "workspace",
   },
   {
@@ -89,23 +110,114 @@ const initialMessages: ChatMessage[] = [
     id: "m-003",
     role: "agent",
     title: "Agent response",
-    body:
-      "我会先建立目标画像，再按端口、Web 指纹、目录候选和弱配置线索推进。当前原型只展示沉浸式对话主体，真实扫描、Finding、Evidence 和 Task 图后续再接入。",
-    meta: "red-code Agent · static",
-    steps: ["目标确认", "扫描策略草案", "等待真实后端接入"],
+    body: "端口枚举优先，HTTP 服务进入目录发现，POC 命中后沉淀为 finding、evidence 和攻击路径节点。",
+    meta: "red-code Agent · local",
+    steps: ["Nmap service node", "ffuf web-enum node", "nuclei verified finding"],
   },
 ];
 
 export function App() {
+  const backendUrl = useMemo(() => getBackendUrl(), []);
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [draft, setDraft] = useState("");
+  const [noteDraft, setNoteDraft] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+  const [mode, setMode] = useState<WorkspaceMode>("Recon");
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [evidence, setEvidence] = useState<EvidenceItem[]>([]);
+  const [nodes, setNodes] = useState<AttackNode[]>([]);
+  const [findings, setFindings] = useState<FindingItem[]>([]);
+  const [flags, setFlags] = useState<FlagItem[]>([]);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [noteSubmitting, setNoteSubmitting] = useState(false);
+
   const activeConversation = useMemo(
-    () => conversations.find((conversation) => conversation.active) ?? conversations[0],
-    [],
+    () => conversations.find((conversation) => conversation.id === activeConversationId) ?? null,
+    [activeConversationId, conversations],
   );
-  const hasConversation = messages.length > 1;
+
+  const refreshWorkspace = useCallback(
+    async (sessionId: string) => {
+      const [attackPathItems, evidenceItems, findingItems, flagItems] = await Promise.all([
+        listAttackPath(backendUrl, sessionId),
+        listEvidence(backendUrl, sessionId),
+        listFindings(backendUrl, sessionId),
+        listFlags(backendUrl, sessionId),
+      ]);
+      const evidenceById = new Map(evidenceItems.map((item) => [item.id, item.public_id]));
+      setEvidence(evidenceItems.map(mapEvidence));
+      setNodes(attackPathItems.map(mapAttackNode));
+      setFindings(findingItems.map(mapFinding));
+      setFlags(flagItems.map((flag) => mapFlag(flag, evidenceById)));
+      setWorkspaceError(null);
+    },
+    [backendUrl],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadWorkspaceSessions() {
+      try {
+        const projects = await listProjects(backendUrl);
+        const sessionGroups = await Promise.all(
+          projects.map(async (project) => ({
+            project,
+            sessions: await listProjectSessions(backendUrl, project.id),
+          })),
+        );
+        if (cancelled) {
+          return;
+        }
+        const nextConversations = sessionGroups.flatMap(({project, sessions}) =>
+          sessions.map((session) => mapConversation(project, session)),
+        );
+        setConversations(nextConversations);
+        setActiveConversationId((current) =>
+          current && nextConversations.some((conversation) => conversation.id === current)
+            ? current
+            : nextConversations[0]?.id ?? null,
+        );
+        if (!nextConversations.length) {
+          setEvidence([]);
+          setNodes([]);
+          setFindings([]);
+          setFlags([]);
+        }
+        setWorkspaceError(null);
+      } catch (error) {
+        if (!cancelled) {
+          setWorkspaceError(error instanceof Error ? error.message : "Failed to load sessions.");
+        }
+      }
+    }
+    void loadWorkspaceSessions();
+    return () => {
+      cancelled = true;
+    };
+  }, [backendUrl]);
+
+  useEffect(() => {
+    if (!activeConversation) {
+      return;
+    }
+    const sessionId = activeConversation.id;
+    let cancelled = false;
+    async function loadWorkspace() {
+      try {
+        await refreshWorkspace(sessionId);
+      } catch (error) {
+        if (!cancelled) {
+          setWorkspaceError(error instanceof Error ? error.message : "Failed to load workspace.");
+        }
+      }
+    }
+    void loadWorkspace();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeConversation, refreshWorkspace]);
 
   const sendMessage = (body: string) => {
     const normalized = body.trim();
@@ -125,21 +237,44 @@ export function App() {
         id: `agent-${Date.now()}`,
         role: "agent",
         title: "Agent response",
-        body:
-          "收到。静态原型会保留这条输入，并用本地回复模拟 Agent 对话节奏。真实任务编排、证据沉淀和图谱面板会在下一阶段接入。",
-        meta: "red-code Agent · static",
-        steps: ["解析意图", "规划动作", "等待后端通道"],
+        body: "我会把新输入作为当前 Session 的分析上下文，并保持 task、evidence、finding 和 attack path 的引用关系。",
+        meta: "red-code Agent · local",
+        steps: ["更新上下文", "关联证据", "生成下一步"],
       },
     ]);
     setDraft("");
+  };
+
+  const createManualNote = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const normalized = noteDraft.trim();
+    if (!normalized || !activeConversation || noteSubmitting) {
+      return;
+    }
+    setNoteSubmitting(true);
+    try {
+      await createEvidence(backendUrl, activeConversation.id, {
+        evidence_type: "note",
+        title: normalized,
+        summary: "Manual operator note.",
+      });
+      setNoteDraft("");
+      await refreshWorkspace(activeConversation.id);
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : "Failed to create evidence.");
+    } finally {
+      setNoteSubmitting(false);
+    }
   };
 
   return (
     <main className={`immersion-shell ${sidebarOpen ? "sidebar-expanded" : "sidebar-collapsed"}`}>
       <aside className="conversation-rail" aria-label="Conversation management">
         <ConversationPanel
-          activeConversationId={activeConversation.id}
+          activeConversationId={activeConversationId}
+          conversations={conversations}
           collapsed={!sidebarOpen}
+          onSelectConversation={setActiveConversationId}
           onCloseMobile={() => setMobileDrawerOpen(false)}
         />
       </aside>
@@ -147,14 +282,16 @@ export function App() {
       <div className={`mobile-drawer ${mobileDrawerOpen ? "open" : ""}`} aria-hidden={!mobileDrawerOpen}>
         <div className="mobile-drawer-surface">
           <ConversationPanel
-            activeConversationId={activeConversation.id}
+            activeConversationId={activeConversationId}
+            conversations={conversations}
             collapsed={false}
+            onSelectConversation={setActiveConversationId}
             onCloseMobile={() => setMobileDrawerOpen(false)}
           />
         </div>
       </div>
 
-      <section className="agent-workspace" aria-label="Agent conversation">
+      <section className="agent-workspace" aria-label="Agent workspace">
         <header className="agent-header">
           <div className="header-left">
             <button
@@ -178,76 +315,164 @@ export function App() {
             <div className="session-heading">
               <span className="session-kicker">
                 <Radio aria-hidden="true" size={14} />
-                Static Agent Session
+                Control Center
               </span>
-              <h1>{activeConversation.title}</h1>
+              <h1>{activeConversation?.title ?? "No session selected"}</h1>
             </div>
+          </div>
+          <div className="mode-tabs" aria-label="Workspace mode">
+            {(["Recon", "Exploit", "Report"] as WorkspaceMode[]).map((item) => (
+              <button type="button" className={item === mode ? "active" : ""} key={item} onClick={() => setMode(item)}>
+                {item}
+              </button>
+            ))}
           </div>
           <div className="header-status" aria-label="Session status">
             <span>
               <Target aria-hidden="true" size={15} />
-              {activeConversation.target}
+              {activeConversation?.target ?? "No target"}
             </span>
             <span>
               <ShieldCheck aria-hidden="true" size={15} />
-              Prototype
+              Phase 5
             </span>
           </div>
         </header>
 
-        <section className="conversation-stage">
-          <div className="stage-scroll">
-            <div className="conversation-body">
-              {!hasConversation ? <WelcomePanel onPickPrompt={sendMessage} /> : null}
-              {messages.map((message) => (
-                <MessageBubble message={message} key={message.id} />
-              ))}
-            </div>
-          </div>
-          <div className="body-fade" aria-hidden="true" />
-        </section>
+        <div className="workspace-grid">
+          <section className="conversation-column" aria-label="Agent conversation">
+            <section className="conversation-stage">
+              <div className="stage-scroll">
+                <div className="conversation-body">
+                  {messages.map((message) => (
+                    <MessageBubble message={message} key={message.id} />
+                  ))}
+                </div>
+              </div>
+              <div className="body-fade" aria-hidden="true" />
+            </section>
 
-        <footer className="sender-dock">
-          <div className="quick-prompts" aria-label="Prompt suggestions">
-            {promptSuggestions.map((prompt) => (
-              <button type="button" key={prompt} onClick={() => sendMessage(prompt)}>
-                {prompt}
-              </button>
-            ))}
-          </div>
-          <form
-            className="composer"
-            onSubmit={(event) => {
-              event.preventDefault();
-              sendMessage(draft);
-            }}
-          >
-            <label htmlFor="agent-draft">Agent prompt</label>
-            <textarea
-              id="agent-draft"
-              rows={1}
-              value={draft}
-              placeholder="Ask the Agent to reason about the target..."
-              onChange={(event) => setDraft(event.target.value)}
-            />
-            <button type="submit" className="send-button" aria-label="Send message" title="Send message">
-              <SendHorizontal aria-hidden="true" size={19} />
-            </button>
-          </form>
-          <p>Static immersion prototype. Backend tasks, evidence, findings, and graph views are intentionally deferred.</p>
-        </footer>
+            <footer className="sender-dock">
+              <div className="quick-prompts" aria-label="Prompt suggestions">
+                {promptSuggestions.map((prompt) => (
+                  <button type="button" key={prompt} onClick={() => sendMessage(prompt)}>
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+              <form
+                className="composer"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  sendMessage(draft);
+                }}
+              >
+                <label htmlFor="agent-draft">Agent prompt</label>
+                <textarea
+                  id="agent-draft"
+                  rows={1}
+                  value={draft}
+                  placeholder="Ask the Agent to reason about the target..."
+                  onChange={(event) => setDraft(event.target.value)}
+                />
+                <button type="submit" className="send-button" aria-label="Send message" title="Send message">
+                  <SendHorizontal aria-hidden="true" size={19} />
+                </button>
+              </form>
+            </footer>
+          </section>
+
+          <IntelPanel
+            mode={mode}
+            nodes={nodes}
+            evidence={evidence}
+            findings={findings}
+            flags={flags}
+            noteDraft={noteDraft}
+            workspaceError={workspaceError}
+            noteDisabled={!activeConversation || noteSubmitting}
+            onNoteChange={setNoteDraft}
+            onCreateNote={createManualNote}
+          />
+        </div>
       </section>
     </main>
   );
 }
 
+function mapConversation(project: ProjectDto, session: TargetSessionDto): Conversation {
+  return {
+    id: session.id,
+    projectId: project.id,
+    title: session.name,
+    target: session.target_value,
+    mode: `${project.name} · ${session.target_type}`,
+    updatedAt: formatCompactTime(session.updated_at),
+  };
+}
+
+function mapEvidence(item: EvidenceDto): EvidenceItem {
+  return {
+    id: item.public_id,
+    kind: item.evidence_type,
+    title: item.title,
+    summary: item.summary ?? item.content_ref ?? "No summary recorded.",
+  };
+}
+
+function mapAttackNode(item: AttackPathNodeDto): AttackNode {
+  return {
+    id: item.public_id,
+    stage: item.stage,
+    title: item.title,
+    status: item.status,
+    nextAction: item.next_action ?? "Review linked evidence.",
+    evidenceIds: item.evidence.map((evidenceItem) => evidenceItem.public_id),
+  };
+}
+
+function mapFinding(item: FindingDto): FindingItem {
+  return {
+    id: item.public_id,
+    severity: item.severity,
+    status: item.status,
+    title: item.title,
+  };
+}
+
+function mapFlag(item: FlagDto, evidenceById: Map<string, string>): FlagItem {
+  return {
+    id: item.public_id,
+    type: item.flag_type,
+    value: item.value,
+    evidenceId: item.source_evidence_id ? evidenceById.get(item.source_evidence_id) ?? item.source_evidence_id : "-",
+  };
+}
+
+function formatCompactTime(value: string): string {
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) {
+    return "-";
+  }
+  return new Date(timestamp).toLocaleString([], {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function ConversationPanel({
   activeConversationId,
+  conversations,
   collapsed,
+  onSelectConversation,
   onCloseMobile,
 }: {
-  activeConversationId: string;
+  activeConversationId: string | null;
+  conversations: Conversation[];
   collapsed: boolean;
+  onSelectConversation: (conversationId: string) => void;
   onCloseMobile: () => void;
 }) {
   return (
@@ -260,7 +485,7 @@ function ConversationPanel({
           <>
             <div>
               <strong>red-code</strong>
-              <span>Immersive Agent</span>
+              <span>Control Center</span>
             </div>
             <button
               type="button"
@@ -286,14 +511,18 @@ function ConversationPanel({
         </button>
       </div>
 
-      {!collapsed ? <p className="rail-section-label">Conversations</p> : null}
-      <nav className="conversation-list" aria-label="Conversation list">
+      {!collapsed ? <p className="rail-section-label">Sessions</p> : null}
+      <nav className="conversation-list" aria-label="Session list">
         {conversations.map((conversation) => (
           <button
             type="button"
             className={`conversation-item ${conversation.id === activeConversationId ? "active" : ""}`}
             key={conversation.id}
             title={collapsed ? conversation.title : undefined}
+            onClick={() => {
+              onSelectConversation(conversation.id);
+              onCloseMobile();
+            }}
           >
             <span className="conversation-icon" aria-hidden="true">
               <Command size={16} />
@@ -307,36 +536,134 @@ function ConversationPanel({
             {!collapsed ? <span className="conversation-time">{conversation.updatedAt}</span> : null}
           </button>
         ))}
+        {!conversations.length ? (
+          <div className="conversation-empty">
+            {!collapsed ? <span>No persisted sessions</span> : null}
+          </div>
+        ) : null}
       </nav>
 
       {!collapsed ? (
         <div className="rail-footer">
-          <Clock3 aria-hidden="true" size={16} />
-          <span>Static data · no backend session bound</span>
+          <CheckCircle2 aria-hidden="true" size={16} />
+          <span>Backend workspace ready</span>
         </div>
       ) : null}
     </div>
   );
 }
 
-function WelcomePanel({onPickPrompt}: { onPickPrompt: (prompt: string) => void }) {
+function IntelPanel({
+  mode,
+  nodes,
+  evidence,
+  findings,
+  flags,
+  noteDraft,
+  workspaceError,
+  noteDisabled,
+  onNoteChange,
+  onCreateNote,
+}: {
+  mode: WorkspaceMode;
+  nodes: AttackNode[];
+  evidence: EvidenceItem[];
+  findings: FindingItem[];
+  flags: FlagItem[];
+  noteDraft: string;
+  workspaceError: string | null;
+  noteDisabled: boolean;
+  onNoteChange: (value: string) => void;
+  onCreateNote: (event: FormEvent<HTMLFormElement>) => void;
+}) {
   return (
-    <section className="welcome-panel" aria-label="Welcome">
-      <div className="welcome-icon" aria-hidden="true">
-        <Sparkles size={28} />
-      </div>
-      <h2>Start with the Agent, not a dashboard.</h2>
-      <p>Use the conversation as the main surface. Graphs, evidence, tasks, and findings stay out of this first pass.</p>
-      <div className="welcome-prompts">
-        {promptSuggestions.map((prompt) => (
-          <button type="button" key={prompt} onClick={() => onPickPrompt(prompt)}>
-            <Compass aria-hidden="true" size={16} />
-            <span>{prompt}</span>
-            <ChevronRight aria-hidden="true" size={16} />
+    <aside className="intel-panel" aria-label="Attack path and evidence">
+      <section className="intel-section">
+        <div className="panel-heading">
+          <GitBranch aria-hidden="true" size={17} />
+          <h2>Attack Path</h2>
+          <span>{mode}</span>
+        </div>
+        <div className="attack-board">
+          {nodes.map((node) => (
+            <article className={`attack-node ${node.status}`} key={node.id}>
+              <div>
+                <span>{node.stage}</span>
+                <strong>{node.title}</strong>
+              </div>
+              <p>{node.nextAction}</p>
+              <small>{node.evidenceIds.join(", ")}</small>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="intel-section">
+        <div className="panel-heading">
+          <Layers3 aria-hidden="true" size={17} />
+          <h2>Evidence</h2>
+          <span>{evidence.length}</span>
+        </div>
+        {workspaceError ? <p className="workspace-error">{workspaceError}</p> : null}
+        <form className="note-form" onSubmit={onCreateNote}>
+          <label htmlFor="manual-note">Manual evidence</label>
+          <input
+            id="manual-note"
+            value={noteDraft}
+            placeholder="Record evidence or a note..."
+            disabled={noteDisabled}
+            onChange={(event) => onNoteChange(event.target.value)}
+          />
+          <button type="submit" aria-label="Add manual evidence" title="Add manual evidence" disabled={noteDisabled}>
+            <ClipboardList aria-hidden="true" size={17} />
           </button>
-        ))}
-      </div>
-    </section>
+        </form>
+        <div className="evidence-list">
+          {evidence.map((item) => (
+            <article key={item.id}>
+              <span>{item.kind}</span>
+              <strong>{item.title}</strong>
+              <p>{item.summary}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="intel-section split">
+        <div>
+          <div className="panel-heading">
+            <FileText aria-hidden="true" size={17} />
+            <h2>Findings</h2>
+            <span>{findings.length}</span>
+          </div>
+          <div className="finding-list">
+            {findings.map((finding) => (
+              <article key={finding.id}>
+                <span>{finding.severity}</span>
+                <strong>{finding.title}</strong>
+                <small>{finding.status}</small>
+              </article>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className="panel-heading">
+            <Flag aria-hidden="true" size={17} />
+            <h2>Flags</h2>
+            <span>{flags.length}</span>
+          </div>
+          <div className="flag-list">
+            {flags.map((flag) => (
+              <article key={flag.id}>
+                <span>{flag.type}</span>
+                <strong>{flag.value}</strong>
+                <small>{flag.evidenceId}</small>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+    </aside>
   );
 }
 
@@ -352,7 +679,7 @@ function MessageBubble({message}: { message: ChatMessage }) {
   return (
     <article className={`message-row ${message.role}`}>
       <div className="message-avatar" aria-hidden="true">
-        {message.role === "agent" ? <Bot size={18} /> : <ChevronLeft size={18} />}
+        {message.role === "agent" ? <Bot size={18} /> : <Target size={18} />}
       </div>
       <div className="message-content">
         <div className="message-meta">

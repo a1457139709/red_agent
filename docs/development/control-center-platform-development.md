@@ -467,6 +467,35 @@ Minimum rules:
 - 用户能手动添加节点和证据。
 - flag 能在攻击路径中展示。
 
+### 9.7 Current Implementation Notes
+
+当前 Phase 5 基线实现为本地持久化 workspace，不依赖在线 LLM 调用：
+
+- `AttackPathService` 负责攻击路径、证据、finding、flag 的组合写入和读取。
+- SQLite 新增 `ctf_findings` 与 `ctf_attack_path_evidence_links`，用于保存 CTF finding 和节点到证据的展开关系。
+- 扫描成功后会继续保存结构化 evidence 和 attack path node，并根据扫描结果生成 finding：
+  - `port_scan` 的 service evidence 生成信息级 finding。
+  - `dir_scan` 的 web path evidence 生成信息级 finding。
+  - `poc_scan` 的 nuclei 命中生成 verified finding，并保留 severity。
+- 最小节点规则已接入：
+  - nmap open port 生成服务枚举节点。
+  - HTTP/HTTPS 服务额外生成 web enum 节点。
+  - ffuf discovered path 生成 web enum 节点。
+  - nuclei match 生成 verified POC 节点。
+  - manual evidence 生成 note 节点。
+  - flag/loot 生成 flag 节点。
+- 新增 HTTP routes：
+  - `GET /api/sessions/{session_id}/attack-path`
+  - `POST /api/sessions/{session_id}/attack-path`
+  - `GET /api/sessions/{session_id}/evidence`
+  - `POST /api/sessions/{session_id}/evidence`
+  - `GET /api/sessions/{session_id}/findings`
+  - `PATCH /api/findings/{finding_id}`
+  - `GET /api/sessions/{session_id}/flags`
+  - `POST /api/sessions/{session_id}/flags`
+- Session dashboard 会统计 finding severity，并继续展示证据、flag、攻击路径和下一步建议。
+- 桌面端增加 Attack Path、Evidence、Findings、Flags/Loot 的 workspace 面板，并提供手动 note/evidence 节点入口。
+
 ## 10. Phase 6: Embedded Terminal
 
 ### 10.1 Goal
