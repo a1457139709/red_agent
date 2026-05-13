@@ -561,6 +561,18 @@ Implement:
 - 用户能将输出片段保存为 evidence。
 - evidence 能出现在攻击路径中。
 
+### 10.6 Current Implementation Notes
+
+当前 Phase 6 基线实现为本地 POSIX PTY 终端：
+
+- `TerminalService` 通过 `PtyManager` 管理内存中的交互终端会话，并在 FastAPI lifespan 结束时关闭所有活动终端。
+- macOS/Linux 使用 Python 标准库 PTY；不支持的平台返回明确诊断，不新增跨平台 PTY 依赖。
+- 终端进程工作目录为当前 Project/Session 目录。
+- WebSocket `/ws/events` 支持 `terminal.open`、`terminal.input`、`terminal.resize`、`terminal.close`，并推送 `terminal.output`、`terminal.exited`。
+- HTTP routes 支持打开终端、读取命令历史、将命令输出片段保存为 `terminal_output` evidence。
+- `CommandRun` 保存命令文本、工作目录、输出 artifact 引用、输出摘要、开始/结束时间和可选退出码。
+- 桌面端使用现有 React/CSS 实现终端面板，不引入 xterm.js；用户可以打开多终端 tab、发送命令、查看输出、保存选中输出为 evidence。
+
 ## 11. Phase 7: Writeup Generation
 
 ### 11.1 Goal

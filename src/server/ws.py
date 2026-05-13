@@ -5,6 +5,7 @@ import asyncio
 from agent.settings import get_settings
 from app.event_stream_service import EventStreamService
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from server.dependencies import AppRuntimeState
 from storage.repositories.control_center import ProjectRepository, TargetSessionRepository
 from storage.sqlite import SQLiteStorage
 
@@ -38,6 +39,7 @@ async def event_websocket(websocket: WebSocket) -> None:
         return
 
     stream_service = EventStreamService.from_settings(get_settings())
+    runtime_state = getattr(websocket.app.state, "runtime_state", None)
     last_persisted_sequence = since_sequence or 0
     sequence = last_persisted_sequence
 
@@ -104,6 +106,13 @@ async def event_websocket(websocket: WebSocket) -> None:
                 continue
             if message.get("event_kind") == "ping":
                 await send_event("connection.pong", {"message": "pong"})
+                continue
+            if str(message.get("event_kind", "")).startswith("terminal."):
+                await _handle_terminal_message(
+                    message=message,
+                    runtime_state=runtime_state,
+                    send_event=send_event,
+                )
                 continue
             await send_event(
                 "error",
@@ -172,3 +181,85 @@ def _resolve_scope_ids(
             raise ValueError("session_id does not belong to project_id.")
         project_id = project_id or session.project_id
     return project_id, session_id
+
+
+async def _handle_terminal_message(
+    *,
+    message: dict[str, object],
+    runtime_state: AppRuntimeState | None,
+    send_event,
+) -> None:
+    if runtime_state is None:
+        await send_event("error", {"code": "runtime_unavailable", "message": "Runtime state is not initialized."})
+        return
+    event_kind = str(message.get("event_kind"))
+    payload = message.get("payload")
+    if not isinstance(payload, dict):
+        await send_event("error", {"code": "invalid_payload", "message": "Terminal payload must be an object."})
+        return
+    try:
+        if event_kind == "terminal.open":
+            terminal = runtime_state.terminal_service.open_terminal(
+                session_identifier=_required_payload_text(payload, "session_id"),
+                rows=_payload_int(payload, "rows", default=24),
+                cols=_payload_int(payload, "cols", default=80),
+            )
+            await send_event(
+                "terminal.opened",
+                {
+                    "terminal_id": terminal.terminal_id,
+                    "project_id": terminal.project_id,
+                    "session_id": terminal.session_id,
+                    "working_directory": terminal.working_directory,
+                    "status": terminal.status,
+                    "created_at": terminal.created_at,
+                },
+            )
+            return
+        if event_kind == "terminal.input":
+            runtime_state.terminal_service.handle_input(
+                terminal_id=_required_payload_text(payload, "terminal_id"),
+                data=_required_payload_text(payload, "data"),
+            )
+            return
+        if event_kind == "terminal.resize":
+            runtime_state.terminal_service.resize_terminal(
+                terminal_id=_required_payload_text(payload, "terminal_id"),
+                rows=_payload_int(payload, "rows", default=24),
+                cols=_payload_int(payload, "cols", default=80),
+            )
+            return
+        if event_kind == "terminal.close":
+            runtime_state.terminal_service.close_terminal(
+                terminal_id=_required_payload_text(payload, "terminal_id"),
+            )
+            return
+    except (RuntimeError, ValueError) as exc:
+        await send_event("error", {"code": "terminal_error", "message": str(exc), "event_kind": event_kind})
+        return
+    await send_event(
+        "error",
+        {
+            "code": "unknown_event_kind",
+            "message": "Unsupported terminal WebSocket event kind.",
+            "event_kind": event_kind,
+        },
+    )
+
+
+def _required_payload_text(payload: dict[object, object], field_name: str) -> str:
+    value = payload.get(field_name)
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{field_name} must be a non-empty string.")
+    return value
+
+
+def _payload_int(payload: dict[object, object], field_name: str, *, default: int) -> int:
+    value = payload.get(field_name, default)
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be an integer.") from exc
+    if number <= 0:
+        raise ValueError(f"{field_name} must be greater than zero.")
+    return number

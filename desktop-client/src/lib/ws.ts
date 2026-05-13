@@ -76,6 +76,7 @@ export type EventSocketOptions = {
 export type EventSocketController = {
   reconnect: () => void;
   close: () => void;
+  send: (eventKind: string, payload?: Record<string, unknown>) => boolean;
 };
 
 export function connectEventSocket(
@@ -182,6 +183,13 @@ export function connectEventSocket(
       clearReconnectTimer();
       closeCurrentSocket(true);
       handlers.onStatusChange("disconnected");
+    },
+    send: (eventKind: string, payload: Record<string, unknown> = {}) => {
+      if (socket === null || socket.readyState !== WebSocket.OPEN) {
+        return false;
+      }
+      socket.send(JSON.stringify({event_kind: eventKind, payload}));
+      return true;
     },
   };
 }

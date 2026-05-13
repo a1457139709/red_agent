@@ -616,7 +616,11 @@ class CommandRun:
     command: str
     exit_code: int | None = None
     output_ref: str | None = None
+    output_summary: str | None = None
+    working_directory: str | None = None
     tags: list[str] = field(default_factory=list)
+    started_at: str | None = None
+    ended_at: str | None = None
     created_at: str = field(default_factory=utc_now_iso)
 
     def __post_init__(self) -> None:
@@ -625,6 +629,8 @@ class CommandRun:
         self.terminal_id = _normalize_required_text(self.terminal_id, field_name="terminal id")
         self.command = _normalize_required_text(self.command, field_name="command")
         self.output_ref = _normalize_optional_text(self.output_ref)
+        self.output_summary = _normalize_optional_text(self.output_summary)
+        self.working_directory = _normalize_optional_text(self.working_directory)
         self.tags = [tag.strip() for tag in self.tags if tag.strip()]
 
     @classmethod
@@ -637,7 +643,11 @@ class CommandRun:
         command: str,
         exit_code: int | None = None,
         output_ref: str | None = None,
+        output_summary: str | None = None,
+        working_directory: str | None = None,
         tags: list[str] | None = None,
+        started_at: str | None = None,
+        ended_at: str | None = None,
     ) -> "CommandRun":
         return cls(
             id=str(uuid4()),
@@ -648,7 +658,11 @@ class CommandRun:
             command=command,
             exit_code=exit_code,
             output_ref=output_ref,
+            output_summary=output_summary,
+            working_directory=working_directory,
             tags=list(tags or []),
+            started_at=started_at,
+            ended_at=ended_at,
         )
 
     @classmethod
@@ -662,7 +676,11 @@ class CommandRun:
             command=row["command"],
             exit_code=row.get("exit_code"),
             output_ref=row.get("output_ref"),
+            output_summary=row.get("output_summary"),
+            working_directory=row.get("working_directory"),
             tags=json.loads(row.get("tags_json") or "[]"),
+            started_at=row.get("started_at"),
+            ended_at=row.get("ended_at"),
             created_at=row["created_at"],
         )
 
@@ -676,7 +694,11 @@ class CommandRun:
             "command": self.command,
             "exit_code": self.exit_code,
             "output_ref": self.output_ref,
+            "output_summary": self.output_summary,
+            "working_directory": self.working_directory,
             "tags_json": json.dumps(self.tags, ensure_ascii=False),
+            "started_at": self.started_at,
+            "ended_at": self.ended_at,
             "created_at": self.created_at,
         }
 

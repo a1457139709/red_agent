@@ -12,29 +12,38 @@ import {
   MessageSquarePlus,
   PanelLeftClose,
   PanelLeftOpen,
+  Plus,
   Radio,
+  Save,
   Search,
   SendHorizontal,
   ShieldCheck,
+  Terminal as TerminalIcon,
   Target,
   X,
 } from "lucide-react";
 import {
   type AttackPathNodeDto,
+  type CommandRunDto,
   type EvidenceDto,
   type FindingDto,
   type FlagDto,
   type ProjectDto,
   type TargetSessionDto,
+  type TerminalDto,
+  createCommandEvidence,
   createEvidence,
   getBackendUrl,
+  listTerminalCommands,
   listAttackPath,
   listEvidence,
   listFindings,
   listFlags,
   listProjectSessions,
   listProjects,
+  openTerminal,
 } from "./lib/api";
+import { type EventSocketController, backendHttpToWebSocketUrl, connectEventSocket } from "./lib/ws";
 
 type WorkspaceMode = "Recon" | "Exploit" | "Report";
 type MessageRole = "agent" | "operator" | "system";
@@ -87,6 +96,16 @@ type FlagItem = {
   evidenceId: string;
 };
 
+type TerminalTab = {
+  terminalId: string;
+  status: string;
+  workingDirectory: string;
+  output: string;
+  draft: string;
+  selection: string;
+  commands: CommandRunDto[];
+};
+
 const promptSuggestions = [
   "枚举这台靶机的初始攻击面",
   "基于当前证据生成下一步侦察计划",
@@ -132,6 +151,10 @@ export function App() {
   const [flags, setFlags] = useState<FlagItem[]>([]);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [noteSubmitting, setNoteSubmitting] = useState(false);
+  const [terminalTabs, setTerminalTabs] = useState<TerminalTab[]>([]);
+  const [activeTerminalId, setActiveTerminalId] = useState<string | null>(null);
+  const [terminalError, setTerminalError] = useState<string | null>(null);
+  const [terminalSocket, setTerminalSocket] = useState<EventSocketController | null>(null);
 
   const activeConversation = useMemo(
     () => conversations.find((conversation) => conversation.id === activeConversationId) ?? null,
@@ -267,6 +290,137 @@ export function App() {
     }
   };
 
+  const refreshTerminalCommands = useCallback(
+    async (terminalId: string) => {
+      try {
+        const commands = await listTerminalCommands(backendUrl, terminalId);
+        setTerminalTabs((current) =>
+          current.map((tab) => (tab.terminalId === terminalId ? {...tab, commands} : tab)),
+        );
+      } catch (error) {
+        setTerminalError(error instanceof Error ? error.message : "Failed to load command history.");
+      }
+    },
+    [backendUrl],
+  );
+
+  useEffect(() => {
+    if (!activeConversation) {
+      return;
+    }
+    const socket = connectEventSocket(
+      backendHttpToWebSocketUrl(backendUrl, {sessionId: activeConversation.id, replay: true, replayLimit: 30}),
+      {
+        onStatusChange: () => undefined,
+        onEvent: (event) => {
+          if (event.event_kind === "terminal.output") {
+            const terminalId = stringPayload(event.payload.terminal_id);
+            const chunk = stringPayload(event.payload.chunk);
+            if (!terminalId || chunk === null) {
+              return;
+            }
+            setTerminalTabs((current) =>
+              current.map((tab) => (
+                tab.terminalId === terminalId ? {...tab, output: `${tab.output}${chunk}`} : tab
+              )),
+            );
+          }
+          if (event.event_kind === "terminal.exited") {
+            const terminalId = stringPayload(event.payload.terminal_id);
+            if (!terminalId) {
+              return;
+            }
+            setTerminalTabs((current) =>
+              current.map((tab) => (
+                tab.terminalId === terminalId ? {...tab, status: "exited"} : tab
+              )),
+            );
+            void refreshTerminalCommands(terminalId);
+          }
+          if (event.event_kind === "agent.terminal_command.suggested") {
+            const command = stringPayload(event.payload.command);
+            if (command) {
+              setTerminalTabs((current) =>
+                current.map((tab) => (
+                  tab.terminalId === activeTerminalId ? {...tab, draft: command} : tab
+                )),
+              );
+            }
+          }
+        },
+        onError: (message) => setTerminalError(message),
+      },
+    );
+    setTerminalSocket(socket);
+    return () => {
+      socket.close();
+      setTerminalSocket(null);
+    };
+  }, [activeConversation, activeTerminalId, backendUrl, refreshTerminalCommands]);
+
+  const openTerminalTab = async () => {
+    if (!activeConversation) {
+      return;
+    }
+    try {
+      const terminal = await openTerminal(backendUrl, activeConversation.id, {rows: 24, cols: 80});
+      const nextTab = mapTerminalTab(terminal);
+      setTerminalTabs((current) => [...current, nextTab]);
+      setActiveTerminalId(nextTab.terminalId);
+      setTerminalError(null);
+    } catch (error) {
+      setTerminalError(error instanceof Error ? error.message : "Failed to open terminal.");
+    }
+  };
+
+  const sendTerminalInput = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const activeTab = terminalTabs.find((tab) => tab.terminalId === activeTerminalId);
+    if (!activeTab || !activeTab.draft.trim() || !terminalSocket) {
+      return;
+    }
+    const data = `${activeTab.draft}\n`;
+    const sent = terminalSocket.send("terminal.input", {terminal_id: activeTab.terminalId, data});
+    if (!sent) {
+      setTerminalError("Terminal WebSocket is not connected.");
+      return;
+    }
+    setTerminalTabs((current) =>
+      current.map((tab) => (tab.terminalId === activeTab.terminalId ? {...tab, draft: ""} : tab)),
+    );
+    window.setTimeout(() => {
+      void refreshTerminalCommands(activeTab.terminalId);
+    }, 250);
+  };
+
+  const closeActiveTerminal = () => {
+    if (!activeTerminalId || !terminalSocket) {
+      return;
+    }
+    terminalSocket.send("terminal.close", {terminal_id: activeTerminalId});
+  };
+
+  const saveTerminalSelection = async () => {
+    const activeTab = terminalTabs.find((tab) => tab.terminalId === activeTerminalId);
+    const command = activeTab?.commands[0];
+    if (!activeTab || !command || !activeTab.selection.trim()) {
+      return;
+    }
+    try {
+      await createCommandEvidence(backendUrl, command.id, {
+        title: `Terminal output: ${command.command}`,
+        selected_text: activeTab.selection,
+        tags: ["terminal"],
+      });
+      await refreshWorkspace(activeTab.commands[0].session_id);
+      setTerminalTabs((current) =>
+        current.map((tab) => (tab.terminalId === activeTab.terminalId ? {...tab, selection: ""} : tab)),
+      );
+    } catch (error) {
+      setTerminalError(error instanceof Error ? error.message : "Failed to save terminal evidence.");
+    }
+  };
+
   return (
     <main className={`immersion-shell ${sidebarOpen ? "sidebar-expanded" : "sidebar-collapsed"}`}>
       <aside className="conversation-rail" aria-label="Conversation management">
@@ -394,6 +548,27 @@ export function App() {
             onNoteChange={setNoteDraft}
             onCreateNote={createManualNote}
           />
+          <TerminalPanel
+            tabs={terminalTabs}
+            activeTerminalId={activeTerminalId}
+            error={terminalError}
+            disabled={!activeConversation}
+            onOpenTerminal={openTerminalTab}
+            onSelectTerminal={setActiveTerminalId}
+            onCloseTerminal={closeActiveTerminal}
+            onDraftChange={(terminalId, draftValue) => {
+              setTerminalTabs((current) =>
+                current.map((tab) => (tab.terminalId === terminalId ? {...tab, draft: draftValue} : tab)),
+              );
+            }}
+            onSelectionChange={(terminalId, selection) => {
+              setTerminalTabs((current) =>
+                current.map((tab) => (tab.terminalId === terminalId ? {...tab, selection} : tab)),
+              );
+            }}
+            onSubmit={sendTerminalInput}
+            onSaveSelection={saveTerminalSelection}
+          />
         </div>
       </section>
     </main>
@@ -447,6 +622,22 @@ function mapFlag(item: FlagDto, evidenceById: Map<string, string>): FlagItem {
     value: item.value,
     evidenceId: item.source_evidence_id ? evidenceById.get(item.source_evidence_id) ?? item.source_evidence_id : "-",
   };
+}
+
+function mapTerminalTab(item: TerminalDto): TerminalTab {
+  return {
+    terminalId: item.terminal_id,
+    status: item.status,
+    workingDirectory: item.working_directory,
+    output: "",
+    draft: "",
+    selection: "",
+    commands: [],
+  };
+}
+
+function stringPayload(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
 }
 
 function formatCompactTime(value: string): string {
@@ -663,6 +854,115 @@ function IntelPanel({
           </div>
         </div>
       </section>
+    </aside>
+  );
+}
+
+function TerminalPanel({
+  tabs,
+  activeTerminalId,
+  error,
+  disabled,
+  onOpenTerminal,
+  onSelectTerminal,
+  onCloseTerminal,
+  onDraftChange,
+  onSelectionChange,
+  onSubmit,
+  onSaveSelection,
+}: {
+  tabs: TerminalTab[];
+  activeTerminalId: string | null;
+  error: string | null;
+  disabled: boolean;
+  onOpenTerminal: () => void;
+  onSelectTerminal: (terminalId: string) => void;
+  onCloseTerminal: () => void;
+  onDraftChange: (terminalId: string, draft: string) => void;
+  onSelectionChange: (terminalId: string, selection: string) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onSaveSelection: () => void;
+}) {
+  const activeTab = tabs.find((tab) => tab.terminalId === activeTerminalId) ?? null;
+  return (
+    <aside className="terminal-panel" aria-label="Embedded terminal">
+      <div className="panel-heading">
+        <TerminalIcon aria-hidden="true" size={17} />
+        <h2>Terminal</h2>
+        <button type="button" className="mini-icon-button" onClick={onOpenTerminal} disabled={disabled} aria-label="Open terminal" title="Open terminal">
+          <Plus aria-hidden="true" size={16} />
+        </button>
+      </div>
+
+      <div className="terminal-tabs" aria-label="Terminal tabs">
+        {tabs.map((tab) => (
+          <button
+            type="button"
+            className={tab.terminalId === activeTerminalId ? "active" : ""}
+            key={tab.terminalId}
+            onClick={() => onSelectTerminal(tab.terminalId)}
+          >
+            {tab.terminalId.slice(0, 13)}
+          </button>
+        ))}
+      </div>
+
+      {error ? <p className="workspace-error">{error}</p> : null}
+
+      {activeTab ? (
+        <>
+          <div className="terminal-meta">
+            <span>{activeTab.status}</span>
+            <small>{activeTab.workingDirectory}</small>
+          </div>
+          <textarea
+            className="terminal-output"
+            value={activeTab.output}
+            readOnly
+            spellCheck={false}
+            onSelect={(event) => {
+              const target = event.currentTarget;
+              onSelectionChange(activeTab.terminalId, target.value.slice(target.selectionStart, target.selectionEnd));
+            }}
+          />
+          <form className="terminal-input-row" onSubmit={onSubmit}>
+            <label htmlFor="terminal-input">Terminal input</label>
+            <input
+              id="terminal-input"
+              value={activeTab.draft}
+              disabled={activeTab.status === "exited"}
+              placeholder="Type a command..."
+              onChange={(event) => onDraftChange(activeTab.terminalId, event.target.value)}
+            />
+            <button type="submit" aria-label="Send terminal input" title="Send terminal input" disabled={activeTab.status === "exited"}>
+              <SendHorizontal aria-hidden="true" size={16} />
+            </button>
+          </form>
+          <div className="terminal-actions">
+            <button type="button" onClick={onSaveSelection} disabled={!activeTab.selection.trim() || activeTab.commands.length === 0}>
+              <Save aria-hidden="true" size={15} />
+              <span>Save Evidence</span>
+            </button>
+            <button type="button" onClick={onCloseTerminal} disabled={activeTab.status === "exited"}>
+              <X aria-hidden="true" size={15} />
+              <span>Close</span>
+            </button>
+          </div>
+          <div className="command-history">
+            {activeTab.commands.map((command) => (
+              <article key={command.id}>
+                <strong>{command.command}</strong>
+                <small>{command.output_summary ?? command.output_ref ?? "running"}</small>
+              </article>
+            ))}
+          </div>
+        </>
+      ) : (
+        <div className="terminal-empty">
+          <TerminalIcon aria-hidden="true" size={20} />
+          <span>No terminal open</span>
+        </div>
+      )}
     </aside>
   );
 }

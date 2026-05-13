@@ -3,6 +3,8 @@ import { backendHttpToWebSocketUrl, connectEventSocket, parseServerEventEnvelope
 
 class FakeSocket extends EventTarget {
   url: string;
+  readyState: number = WebSocket.CONNECTING;
+  send = vi.fn();
   close = vi.fn(() => this.dispatchEvent(new Event("close")));
 
   constructor(url: string) {
@@ -73,6 +75,7 @@ describe("connectEventSocket", () => {
       },
     );
 
+    sockets[0].readyState = WebSocket.OPEN;
     sockets[0].dispatchEvent(new Event("open"));
     sockets[0].dispatchEvent(
       new MessageEvent("message", {
@@ -114,6 +117,7 @@ describe("connectEventSocket", () => {
       { reconnectDelaysMs: [25] },
     );
 
+    sockets[0].readyState = WebSocket.OPEN;
     sockets[0].dispatchEvent(new Event("open"));
     sockets[0].dispatchEvent(new Event("close"));
     vi.advanceTimersByTime(25);
@@ -142,6 +146,29 @@ describe("connectEventSocket", () => {
 
     expect(sockets).toHaveLength(2);
     expect(sockets[0].close).toHaveBeenCalled();
+  });
+
+  it("sends client messages through the active socket", () => {
+    const sockets: FakeSocket[] = [];
+    const controller = connectEventSocket(
+      "ws://127.0.0.1:8000/ws/events",
+      {
+        onStatusChange: vi.fn(),
+        onEvent: vi.fn(),
+        onError: vi.fn(),
+      },
+      (url) => {
+        const socket = new FakeSocket(url);
+        sockets.push(socket);
+        return socket as unknown as WebSocket;
+      },
+    );
+
+    sockets[0].readyState = WebSocket.OPEN;
+    expect(controller.send("terminal.input", {terminal_id: "term-1", data: "id\n"})).toBe(true);
+    expect(sockets[0].send).toHaveBeenCalledWith(
+      JSON.stringify({event_kind: "terminal.input", payload: {terminal_id: "term-1", data: "id\n"}}),
+    );
   });
 
   it("does not let a stale manual-reconnect close clear the active socket", () => {

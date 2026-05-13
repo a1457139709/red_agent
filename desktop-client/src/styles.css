@@ -376,7 +376,7 @@ button {
 
 .workspace-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(340px, 420px);
+  grid-template-columns: minmax(460px, 1fr) minmax(320px, 380px) minmax(320px, 400px);
   min-height: 0;
 }
 
@@ -680,6 +680,19 @@ button {
   padding: 16px;
 }
 
+.terminal-panel {
+  display: grid;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto auto;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid rgba(228, 234, 226, 0.1);
+  background: rgba(13, 15, 15, 0.78);
+  padding: 16px;
+}
+
 .intel-section {
   display: grid;
   gap: 10px;
@@ -713,6 +726,23 @@ button {
 .panel-heading span {
   color: #9aa59d;
   font-size: 11px;
+}
+
+.mini-icon-button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(115, 196, 151, 0.35);
+  border-radius: 8px;
+  background: rgba(31, 102, 79, 0.18);
+  color: #c9f0d7;
+  cursor: pointer;
+}
+
+.mini-icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .attack-board,
@@ -832,6 +862,187 @@ button {
   opacity: 0.55;
 }
 
+.terminal-tabs {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.terminal-tabs button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  border: 1px solid rgba(228, 234, 226, 0.14);
+  border-radius: 8px;
+  background: rgba(244, 247, 242, 0.055);
+  color: #bdc8c0;
+  padding: 0 9px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.terminal-tabs button.active {
+  border-color: rgba(143, 225, 174, 0.42);
+  background: rgba(115, 196, 151, 0.15);
+  color: #c9f0d7;
+}
+
+.terminal-meta {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.terminal-meta span {
+  color: #9ce0b2;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.terminal-meta small {
+  overflow: hidden;
+  color: #89958d;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-output {
+  width: 100%;
+  min-height: 260px;
+  height: 100%;
+  min-width: 0;
+  resize: none;
+  border: 1px solid rgba(228, 234, 226, 0.13);
+  border-radius: 8px;
+  outline: 0;
+  background: #080a0a;
+  color: #dff7e4;
+  padding: 10px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.terminal-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px;
+  gap: 8px;
+}
+
+.terminal-input-row label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.terminal-input-row input {
+  min-width: 0;
+  min-height: 38px;
+  border: 1px solid rgba(228, 234, 226, 0.14);
+  border-radius: 8px;
+  outline: 0;
+  background: rgba(244, 247, 242, 0.065);
+  color: #f7fbf6;
+  padding: 0 10px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+}
+
+.terminal-input-row button {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(115, 196, 151, 0.35);
+  border-radius: 8px;
+  background: rgba(31, 102, 79, 0.18);
+  color: #c9f0d7;
+  cursor: pointer;
+}
+
+.terminal-input-row button:disabled,
+.terminal-input-row input:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.terminal-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.7fr);
+  gap: 8px;
+}
+
+.terminal-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 34px;
+  border: 1px solid rgba(228, 234, 226, 0.14);
+  border-radius: 8px;
+  background: rgba(244, 247, 242, 0.055);
+  color: #d7dfd8;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.terminal-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.command-history {
+  display: grid;
+  gap: 7px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.command-history article {
+  min-width: 0;
+  border: 1px solid rgba(228, 234, 226, 0.1);
+  border-radius: 8px;
+  background: rgba(244, 247, 242, 0.04);
+  padding: 8px;
+}
+
+.command-history strong,
+.command-history small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-history strong {
+  color: #f4f8f2;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+}
+
+.command-history small {
+  margin-top: 4px;
+  color: #89958d;
+  font-size: 11px;
+}
+
+.terminal-empty {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  min-height: 180px;
+  border: 1px dashed rgba(228, 234, 226, 0.13);
+  border-radius: 8px;
+  color: #89958d;
+  font-size: 12px;
+}
+
 .mobile-drawer,
 .mobile-only {
   display: none;
@@ -906,6 +1117,13 @@ button {
   }
 
   .intel-panel {
+    border-top: 1px solid rgba(228, 234, 226, 0.1);
+    border-left: 0;
+    overflow: visible;
+  }
+
+  .terminal-panel {
+    min-height: 520px;
     border-top: 1px solid rgba(228, 234, 226, 0.1);
     border-left: 0;
     overflow: visible;

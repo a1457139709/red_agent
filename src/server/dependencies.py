@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from fastapi import Request
 
 from agent.settings import Settings
+from app.terminal_service import TerminalService
 from runtime.ctf_agent_tasks import CTFAgentTaskRuntime
 from runtime.scanner_tasks import ScannerTaskRuntime
 
@@ -15,6 +16,7 @@ class AppRuntimeState:
     started_at: str
     scanner_tasks: ScannerTaskRuntime
     ctf_agent_tasks: CTFAgentTaskRuntime
+    terminal_service: TerminalService
 
 
 def get_runtime_state(request: Request) -> AppRuntimeState:

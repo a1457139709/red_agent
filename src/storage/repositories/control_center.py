@@ -176,7 +176,11 @@ CREATE TABLE IF NOT EXISTS ctf_command_runs (
     command TEXT NOT NULL,
     exit_code INTEGER,
     output_ref TEXT,
+    output_summary TEXT,
+    working_directory TEXT,
     tags_json TEXT NOT NULL DEFAULT '[]',
+    started_at TEXT,
+    ended_at TEXT,
     created_at TEXT NOT NULL,
     FOREIGN KEY(project_id) REFERENCES ctf_projects(id),
     FOREIGN KEY(session_id) REFERENCES ctf_target_sessions(id)
@@ -211,6 +215,10 @@ class ControlCenterSchemaRepository:
     def ensure_schema(self) -> None:
         with self.storage.connect() as connection:
             connection.executescript(CONTROL_CENTER_SCHEMA)
+            self._ensure_column(connection, "ctf_command_runs", "output_summary", "TEXT")
+            self._ensure_column(connection, "ctf_command_runs", "working_directory", "TEXT")
+            self._ensure_column(connection, "ctf_command_runs", "started_at", "TEXT")
+            self._ensure_column(connection, "ctf_command_runs", "ended_at", "TEXT")
             self._normalize_event_sequences(connection)
             connection.execute(
                 """
@@ -225,6 +233,18 @@ class ControlCenterSchemaRepository:
                 """
             )
             connection.commit()
+
+    def _ensure_column(
+        self,
+        connection: sqlite3.Connection,
+        table_name: str,
+        column_name: str,
+        column_type: str,
+    ) -> None:
+        rows = connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+        if column_name in {row["name"] for row in rows}:
+            return
+        connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
 
     def _normalize_event_sequences(self, connection: sqlite3.Connection) -> None:
         rows = connection.execute(
@@ -806,10 +826,12 @@ class CommandRunRepository:
                 """
                 INSERT INTO ctf_command_runs (
                     id, public_id, project_id, session_id, terminal_id, command,
-                    exit_code, output_ref, tags_json, created_at
+                    exit_code, output_ref, output_summary, working_directory,
+                    tags_json, started_at, ended_at, created_at
                 ) VALUES (
                     :id, :public_id, :project_id, :session_id, :terminal_id, :command,
-                    :exit_code, :output_ref, :tags_json, :created_at
+                    :exit_code, :output_ref, :output_summary, :working_directory,
+                    :tags_json, :started_at, :ended_at, :created_at
                 )
                 """,
                 command.to_row(),
@@ -835,6 +857,42 @@ class CommandRunRepository:
             session_id=session_id,
             limit=limit,
         )
+
+    def list_by_terminal(self, *, terminal_id: str, limit: int | None = 50) -> list[CommandRun]:
+        query = "SELECT * FROM ctf_command_runs WHERE terminal_id = ? ORDER BY created_at DESC"
+        params: list[object] = [terminal_id]
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        with self.storage.connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [CommandRun.from_row(dict(row)) for row in rows]
+
+    def update(self, command: CommandRun) -> CommandRun:
+        with self.storage.connect() as connection:
+            connection.execute(
+                """
+                UPDATE ctf_command_runs
+                SET
+                    public_id = :public_id,
+                    project_id = :project_id,
+                    session_id = :session_id,
+                    terminal_id = :terminal_id,
+                    command = :command,
+                    exit_code = :exit_code,
+                    output_ref = :output_ref,
+                    output_summary = :output_summary,
+                    working_directory = :working_directory,
+                    tags_json = :tags_json,
+                    started_at = :started_at,
+                    ended_at = :ended_at,
+                    created_at = :created_at
+                WHERE id = :id
+                """,
+                command.to_row(),
+            )
+            connection.commit()
+        return command
 
 
 class FlagRepository:

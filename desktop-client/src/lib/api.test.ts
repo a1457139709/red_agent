@@ -6,9 +6,11 @@ import {
   parseFlag,
   parseHealthResponse,
   parseProject,
+  parseCommandRun,
   parseScanTask,
   parseSessionDashboard,
   parseTargetSession,
+  parseTerminal,
   parseToolStatus,
 } from "./api";
 
@@ -121,6 +123,39 @@ describe("phase 5 DTO parsers", () => {
         created_at: "2026-05-03T00:00:00+00:00",
       }).source_evidence_id,
     ).toBe("evidence-1");
+  });
+});
+
+describe("phase 6 DTO parsers", () => {
+  it("parses terminal and command run DTOs", () => {
+    expect(
+      parseTerminal({
+        terminal_id: "term-1",
+        project_id: "project-1",
+        session_id: "session-1",
+        working_directory: "/tmp/session",
+        status: "open",
+        created_at: "2026-05-12T00:00:00+00:00",
+      }).terminal_id,
+    ).toBe("term-1");
+    expect(
+      parseCommandRun({
+        id: "command-1",
+        public_id: "CMD0001",
+        project_id: "project-1",
+        session_id: "session-1",
+        terminal_id: "term-1",
+        command: "id",
+        exit_code: null,
+        output_ref: "artifacts/terminal/term-1/id.txt",
+        output_summary: "uid=1000",
+        working_directory: "/tmp/session",
+        tags: ["manual"],
+        started_at: "2026-05-12T00:00:00+00:00",
+        ended_at: null,
+        created_at: "2026-05-12T00:00:00+00:00",
+      }).output_summary,
+    ).toBe("uid=1000");
   });
 });
 

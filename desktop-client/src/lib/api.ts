@@ -173,6 +173,32 @@ export type FlagDto = {
   created_at: string;
 };
 
+export type TerminalDto = {
+  terminal_id: string;
+  project_id: string;
+  session_id: string;
+  working_directory: string;
+  status: string;
+  created_at: string;
+};
+
+export type CommandRunDto = {
+  id: string;
+  public_id: string;
+  project_id: string;
+  session_id: string;
+  terminal_id: string;
+  command: string;
+  exit_code: number | null;
+  output_ref: string | null;
+  output_summary: string | null;
+  working_directory: string | null;
+  tags: string[];
+  started_at: string | null;
+  ended_at: string | null;
+  created_at: string;
+};
+
 export type CreateProjectInput = {
   name: string;
   description?: string | null;
@@ -217,6 +243,19 @@ export type CreateFlagInput = {
   flag_type: string;
   value: string;
   source_evidence_id?: string | null;
+};
+
+export type OpenTerminalInput = {
+  rows?: number;
+  cols?: number;
+};
+
+export type CreateCommandEvidenceInput = {
+  title: string;
+  selected_text: string;
+  summary?: string | null;
+  attack_path_node_id?: string | null;
+  tags?: string[];
 };
 
 const TARGET_TYPES = new Set<TargetType>(["ip", "domain", "url", "host", "note"]);
@@ -386,6 +425,38 @@ export function parseFlag(payload: unknown): FlagDto {
     value: requireString(record.value, "Invalid flag value."),
     source_evidence_id: requireNullableString(record.source_evidence_id, "Invalid flag source evidence id."),
     created_at: requireString(record.created_at, "Invalid flag created_at."),
+  };
+}
+
+export function parseTerminal(payload: unknown): TerminalDto {
+  const record = requireRecord(payload, "Invalid terminal.");
+  return {
+    terminal_id: requireString(record.terminal_id, "Invalid terminal id."),
+    project_id: requireString(record.project_id, "Invalid terminal project id."),
+    session_id: requireString(record.session_id, "Invalid terminal session id."),
+    working_directory: requireString(record.working_directory, "Invalid terminal working directory."),
+    status: requireString(record.status, "Invalid terminal status."),
+    created_at: requireString(record.created_at, "Invalid terminal created_at."),
+  };
+}
+
+export function parseCommandRun(payload: unknown): CommandRunDto {
+  const record = requireRecord(payload, "Invalid command run.");
+  return {
+    id: requireString(record.id, "Invalid command id."),
+    public_id: requireString(record.public_id, "Invalid command public id."),
+    project_id: requireString(record.project_id, "Invalid command project id."),
+    session_id: requireString(record.session_id, "Invalid command session id."),
+    terminal_id: requireString(record.terminal_id, "Invalid command terminal id."),
+    command: requireString(record.command, "Invalid command text."),
+    exit_code: requireNullableNumber(record.exit_code, "Invalid command exit code."),
+    output_ref: requireNullableString(record.output_ref, "Invalid command output ref."),
+    output_summary: requireNullableString(record.output_summary, "Invalid command output summary."),
+    working_directory: requireNullableString(record.working_directory, "Invalid command working directory."),
+    tags: requireStringArray(record.tags, "Invalid command tags."),
+    started_at: requireNullableString(record.started_at, "Invalid command started_at."),
+    ended_at: requireNullableString(record.ended_at, "Invalid command ended_at."),
+    created_at: requireString(record.created_at, "Invalid command created_at."),
   };
 }
 
@@ -603,6 +674,46 @@ export async function createFlag(
   return {flag: parseFlag(payload.flag), node: parseAttackPathNode(payload.node)};
 }
 
+export async function openTerminal(
+  baseUrl: string,
+  sessionId: string,
+  input: OpenTerminalInput = {},
+): Promise<TerminalDto> {
+  const payload = requireRecord(
+    await requestJson(`${baseUrl}/api/sessions/${sessionId}/terminals`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(input),
+    }),
+    "Invalid terminal response.",
+  );
+  return parseTerminal(payload.terminal);
+}
+
+export async function listTerminalCommands(baseUrl: string, terminalId: string): Promise<CommandRunDto[]> {
+  const payload = requireRecord(
+    await requestJson(`${baseUrl}/api/terminals/${terminalId}/commands`),
+    "Invalid terminal command response.",
+  );
+  return requireArray(payload.commands, "Invalid terminal command response.").map(parseCommandRun);
+}
+
+export async function createCommandEvidence(
+  baseUrl: string,
+  commandRunId: string,
+  input: CreateCommandEvidenceInput,
+): Promise<EvidenceDto> {
+  const payload = requireRecord(
+    await requestJson(`${baseUrl}/api/commands/${commandRunId}/evidence`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(input),
+    }),
+    "Invalid command evidence response.",
+  );
+  return parseEvidence(payload.evidence);
+}
+
 async function requestJson(url: string, init?: RequestInit): Promise<unknown> {
   const response = await fetch(url, init);
   if (!response.ok) {
@@ -654,6 +765,13 @@ function requireNumber(payload: unknown, message: string): number {
     throw new Error(message);
   }
   return payload;
+}
+
+function requireNullableNumber(payload: unknown, message: string): number | null {
+  if (payload === null) {
+    return null;
+  }
+  return requireNumber(payload, message);
 }
 
 function requireBoolean(payload: unknown, message: string): boolean {
