@@ -4,6 +4,7 @@ import sqlite3
 
 from models.control_center import (
     AttackPathNode,
+    CTFReport,
     CommandRun,
     Event,
     Evidence,
@@ -204,6 +205,25 @@ CREATE TABLE IF NOT EXISTS ctf_flags (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ctf_flags_session_created_at ON ctf_flags(session_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS ctf_reports (
+    id TEXT PRIMARY KEY,
+    public_id TEXT NOT NULL UNIQUE,
+    project_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    report_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    material_path TEXT NOT NULL,
+    artifact_path TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    FOREIGN KEY(project_id) REFERENCES ctf_projects(id),
+    FOREIGN KEY(session_id) REFERENCES ctf_target_sessions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ctf_reports_session_created_at
+    ON ctf_reports(session_id, created_at DESC);
 """
 
 
@@ -215,6 +235,13 @@ class ControlCenterSchemaRepository:
     def ensure_schema(self) -> None:
         with self.storage.connect() as connection:
             connection.executescript(CONTROL_CENTER_SCHEMA)
+            connection.executescript(
+                """
+                DROP TABLE IF EXISTS report_artifact_links;
+                DROP TABLE IF EXISTS report_finding_links;
+                DROP TABLE IF EXISTS reports;
+                """
+            )
             self._ensure_column(connection, "ctf_command_runs", "output_summary", "TEXT")
             self._ensure_column(connection, "ctf_command_runs", "working_directory", "TEXT")
             self._ensure_column(connection, "ctf_command_runs", "started_at", "TEXT")
@@ -934,6 +961,56 @@ class FlagRepository:
             self.storage,
             table_name="ctf_flags",
             model_cls=Flag,
+            session_id=session_id,
+            limit=limit,
+        )
+
+
+class CTFReportRepository:
+    def __init__(self, storage: SQLiteStorage) -> None:
+        self.storage = storage
+        ControlCenterSchemaRepository(storage)
+
+    def create(self, report: CTFReport) -> CTFReport:
+        with self.storage.connect() as connection:
+            if not report.public_id:
+                report.public_id = allocate_public_id(connection, table_name="ctf_reports", prefix="RPT")
+            connection.execute(
+                """
+                INSERT INTO ctf_reports (
+                    id, public_id, project_id, session_id, report_type, title,
+                    summary, material_path, artifact_path, created_at, metadata
+                ) VALUES (
+                    :id, :public_id, :project_id, :session_id, :report_type, :title,
+                    :summary, :material_path, :artifact_path, :created_at, :metadata
+                )
+                """,
+                report.to_row(),
+            )
+            connection.commit()
+        return report
+
+    def get(self, identifier: str) -> CTFReport | None:
+        with self.storage.connect() as connection:
+            row = get_row_by_identifier(
+                connection,
+                table_name="ctf_reports",
+                identifier=identifier,
+                order_column="created_at",
+            )
+        return CTFReport.from_row(dict(row)) if row else None
+
+    def require(self, identifier: str) -> CTFReport:
+        report = self.get(identifier)
+        if report is None:
+            raise ValueError(f"Report not found: {identifier}")
+        return report
+
+    def list(self, *, session_id: str, limit: int | None = 50) -> list[CTFReport]:
+        return _list_session_entities(
+            self.storage,
+            table_name="ctf_reports",
+            model_cls=CTFReport,
             session_id=session_id,
             limit=limit,
         )

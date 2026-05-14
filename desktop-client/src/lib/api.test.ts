@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createProject,
+  createSessionReport,
   createTargetSession,
   parseAttackPathNode,
   parseEvidence,
@@ -9,11 +10,13 @@ import {
   parseHealthResponse,
   parseProject,
   parseCommandRun,
+  parseReport,
   parseScanTask,
   parseSessionDashboard,
   parseTargetSession,
   parseTerminal,
   parseToolStatus,
+  reportDownloadUrl,
   sendAgentMessage,
 } from "./api";
 
@@ -166,6 +169,13 @@ describe("phase 6 DTO parsers", () => {
   });
 });
 
+describe("phase 7 DTO parsers", () => {
+  it("parses CTF report DTOs", () => {
+    expect(parseReport(report).content).toContain("## Overview");
+    expect(() => parseReport({...report, metadata: null})).toThrow("Invalid report metadata");
+  });
+});
+
 const project = {
   id: "project-1",
   public_id: "P0001",
@@ -176,6 +186,21 @@ const project = {
   created_at: "2026-05-03T00:00:00+00:00",
   updated_at: "2026-05-03T00:00:00+00:00",
   metadata: {},
+};
+
+const report = {
+  id: "report-1",
+  public_id: "RPT0001",
+  project_id: "project-1",
+  session_id: "session-1",
+  report_type: "session_writeup",
+  title: "Linux target writeup",
+  summary: "Linux target writeup",
+  material_path: "/tmp/.red-code/projects/project-1/sessions/session-1/reports/report_material.md",
+  artifact_path: "/tmp/.red-code/projects/project-1/sessions/session-1/reports/writeup.md",
+  created_at: "2026-05-03T00:00:00+00:00",
+  metadata: {},
+  content: "# Linux target\n\n## Overview\nTODO",
 };
 
 const session = {
@@ -283,6 +308,20 @@ describe("control center API clients", () => {
     await expect(
       sendAgentMessage("http://127.0.0.1:8000", "session-1", {message: "enumerate target"}),
     ).resolves.toMatchObject({task_type: "agent_analysis", status: "pending"});
+  });
+
+  it("creates a Session writeup report and exposes the download URL", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({report}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(createSessionReport("http://127.0.0.1:8000", "session-1")).resolves.toMatchObject({
+      public_id: "RPT0001",
+      report_type: "session_writeup",
+    });
+    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8000/api/sessions/session-1/reports", {method: "POST"});
+    expect(reportDownloadUrl("http://127.0.0.1:8000", "RPT0001")).toBe(
+      "http://127.0.0.1:8000/api/reports/RPT0001/download",
+    );
   });
 
   it("throws displayable errors for failed API responses", async () => {

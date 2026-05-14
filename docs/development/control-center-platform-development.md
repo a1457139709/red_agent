@@ -643,8 +643,9 @@ Extend Agent Console:
 新增：
 
 - `WriteupService`
-- Markdown renderer
-- report repository integration
+- 两段式 LLM 生成流程：主 Agent 汇总结构化资料，辅助报告 Agent 生成 Markdown
+- Control Center 专用 `ctf_reports` 持久化，不复用 legacy Report
+- report material 与 writeup 文件保存在 Project/Session 报告目录
 
 Routes:
 

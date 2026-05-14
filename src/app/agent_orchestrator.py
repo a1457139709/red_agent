@@ -23,6 +23,7 @@ from storage.sqlite import SQLiteStorage
 
 from .attack_path_service import AttackPathService
 from .scanner_service import ScannerService
+from .writeup_service import WriteupService
 
 
 ModelFactory = Callable[[Settings], Any]
@@ -111,6 +112,7 @@ class AgentToolRouter:
         self.finding_repository = FindingRepository(storage)
         self.node_repository = AttackPathNodeRepository(storage)
         self.attack_path_service = AttackPathService.from_settings(settings)
+        self.writeup_service = WriteupService.from_settings(settings)
         self._specs = {
             spec.name: spec
             for spec in (
@@ -121,7 +123,7 @@ class AgentToolRouter:
                 AgentToolSpec("create_attack_path_node", "Create an attack path node in the active Session.", CreateAttackPathNodeInput),
                 AgentToolSpec("create_finding", "Create a structured finding in the active Session.", CreateFindingInput),
                 AgentToolSpec("suggest_terminal_command", "Suggest a terminal command for the operator to run manually.", SuggestTerminalCommandInput),
-                AgentToolSpec("create_writeup_draft", "Create a lightweight writeup draft evidence item from current Session records.", CreateWriteupDraftInput),
+                AgentToolSpec("create_writeup_draft", "Generate a persistent Markdown writeup report from current Session records.", CreateWriteupDraftInput),
             )
         }
 
@@ -246,18 +248,23 @@ class AgentToolRouter:
                 data={"command": command},
             )
         if tool_name == "create_writeup_draft":
-            evidence, _node = self.attack_path_service.create_evidence(
-                session_identifier=session.id,
-                evidence_type="writeup_draft",
-                title=str(arguments.get("title") or f"Writeup draft for {session.name}"),
-                summary="Agent-generated lightweight writeup draft.",
-                payload={"markdown": self._build_writeup_markdown(session)},
-                source_task_id=agent_task.id,
+            result = self.writeup_service.generate_session_writeup(session_identifier=session.id)
+            report = result.report
+            self._record_event(
+                agent_task,
+                "report.generated",
+                level="info",
+                payload={
+                    "report_id": report.id,
+                    "public_id": report.public_id,
+                    "artifact_path": report.artifact_path,
+                    "summary": report.summary,
+                },
             )
             return AgentToolResult(
-                summary=f"Created writeup draft evidence {evidence.public_id}.",
-                model_text=f"Created writeup draft evidence {evidence.public_id}.",
-                data={"evidence_id": evidence.id, "public_id": evidence.public_id},
+                summary=f"Generated writeup report {report.public_id}.",
+                model_text=f"Generated writeup report {report.public_id}: {report.summary}",
+                data={"report_id": report.id, "public_id": report.public_id, "artifact_path": report.artifact_path},
             )
         raise ValueError(f"Tool is not implemented: {tool_name}")
 
@@ -269,34 +276,6 @@ class AgentToolRouter:
                 raise ValueError(f"Evidence not found in active Session: {ref}")
             evidence_refs.append(evidence.id)
         return evidence_refs
-
-    def _build_writeup_markdown(self, session: TargetSession) -> str:
-        tasks = self.task_repository.list(session_id=session.id, limit=20)
-        evidence = self.evidence_repository.list(session_id=session.id, limit=20)
-        findings = self.finding_repository.list(session_id=session.id, limit=20)
-        nodes = self.node_repository.list(session_id=session.id, limit=20)
-        lines = [
-            f"# {session.name}",
-            "",
-            f"- Target: `{session.target_value}`",
-            f"- Target type: `{session.target_type.value}`",
-            "",
-            "## Tasks",
-            *[f"- {task.public_id}: {task.task_type} `{task.status.value}`" for task in tasks],
-            "",
-            "## Findings",
-            *[f"- {finding.public_id}: {finding.title} ({finding.severity}, {finding.status})" for finding in findings],
-            "",
-            "## Evidence",
-            *[f"- {item.public_id}: {item.title}" for item in evidence],
-            "",
-            "## Attack Path",
-            *[f"- {node.public_id}: {node.stage} - {node.title}" for node in nodes],
-            "",
-            "## TODO",
-            "- Review this draft and fill exploit and remediation notes.",
-        ]
-        return "\n".join(lines)
 
     def _tool_error(self, agent_task: Task, tool_name: str, message: str) -> AgentToolResult:
         result = AgentToolResult(
@@ -352,13 +331,13 @@ class AgentOrchestrator:
         for _ in range(max_steps):
             response: AIMessage = model.invoke(messages)
             response_text = _message_text(response.content)
-            if response_text:
-                last_response = response_text
-                self._record_event(task, "conversation.delta", level="info", payload={"content": response_text})
             if not response.tool_calls:
                 final_text = response_text or last_response or "Agent turn completed."
                 self._record_event(task, "conversation.completed", level="info", payload={"content": final_text})
                 return {"ok": True, "summary": final_text, "response": final_text, "tool_calls": tool_calls}
+            if response_text:
+                last_response = response_text
+                self._record_event(task, "conversation.delta", level="info", payload={"content": response_text})
             messages.append(response)
             for tool_call in response.tool_calls:
                 tool_name = str(tool_call.get("name") or "")

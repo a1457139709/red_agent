@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mapServerEventToChatMessage } from "./agentEvents";
+import { appendChatMessage, type ChatMessage, mapServerEventToChatMessage } from "./agentEvents";
 import type { ServerEventEnvelope } from "./ws";
 
 describe("mapServerEventToChatMessage", () => {
@@ -50,6 +50,28 @@ describe("mapServerEventToChatMessage", () => {
   it("ignores connection and terminal output events", () => {
     expect(mapServerEventToChatMessage(event("connection.connected", {}))).toBeNull();
     expect(mapServerEventToChatMessage(event("terminal.output", {chunk: "ok"}))).toBeNull();
+  });
+
+  it("keeps one visible agent answer for delta, completed, and matching summary events", () => {
+    const delta = mapServerEventToChatMessage(event("conversation.delta", {content: "I am red-code."}));
+    const completed = mapServerEventToChatMessage(event("conversation.completed", {content: "I am red-code."}));
+    const summary = mapServerEventToChatMessage(event("agent.summary", {summary: "I am red-code."}));
+
+    expect(delta).not.toBeNull();
+    expect(completed).not.toBeNull();
+    expect(summary).not.toBeNull();
+
+    const messages = [delta, completed, summary].reduce<ChatMessage[]>(
+      (current, message) => (message ? appendChatMessage(current, message) : current),
+      [],
+    );
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      eventKind: "conversation.completed",
+      title: "Agent response",
+      body: "I am red-code.",
+    });
   });
 });
 

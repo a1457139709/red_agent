@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   ClipboardList,
   Command,
+  Download,
   FileText,
   Flag,
   GitBranch,
@@ -29,12 +30,14 @@ import {
   type FindingDto,
   type FlagDto,
   type ProjectDto,
+  type ReportDto,
   type TargetSessionDto,
   type TargetType,
   type TerminalDto,
   createCommandEvidence,
   createEvidence,
   createProject,
+  createSessionReport,
   createTargetSession,
   getBackendUrl,
   listTerminalCommands,
@@ -44,11 +47,13 @@ import {
   listFlags,
   listProjectSessions,
   listProjects,
+  listSessionReports,
   openTerminal,
+  reportDownloadUrl,
   sendAgentMessage,
 } from "./lib/api";
 import { TARGET_TYPE_OPTIONS, validateAgentMessageForm, validateProjectForm, validateTargetSessionForm } from "./lib/forms";
-import { type ChatMessage, mapServerEventToChatMessage } from "./lib/agentEvents";
+import { appendChatMessage, type ChatMessage, mapServerEventToChatMessage } from "./lib/agentEvents";
 import { type EventSocketController, backendHttpToWebSocketUrl, connectEventSocket } from "./lib/ws";
 
 type WorkspaceMode = "Recon" | "Exploit" | "Report";
@@ -95,6 +100,15 @@ type FlagItem = {
   evidenceId: string;
 };
 
+type ReportItem = {
+  id: string;
+  title: string;
+  summary: string;
+  createdAt: string;
+  artifactPath: string;
+  content: string;
+};
+
 type TerminalTab = {
   terminalId: string;
   status: string;
@@ -127,7 +141,10 @@ export function App() {
   const [nodes, setNodes] = useState<AttackNode[]>([]);
   const [findings, setFindings] = useState<FindingItem[]>([]);
   const [flags, setFlags] = useState<FlagItem[]>([]);
+  const [reports, setReports] = useState<ReportItem[]>([]);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [reportGenerating, setReportGenerating] = useState(false);
   const [noteSubmitting, setNoteSubmitting] = useState(false);
   const [agentSubmitting, setAgentSubmitting] = useState(false);
   const [agentError, setAgentError] = useState<string | null>(null);
@@ -160,17 +177,19 @@ export function App() {
 
   const refreshWorkspace = useCallback(
     async (sessionId: string) => {
-      const [attackPathItems, evidenceItems, findingItems, flagItems] = await Promise.all([
+      const [attackPathItems, evidenceItems, findingItems, flagItems, reportItems] = await Promise.all([
         listAttackPath(backendUrl, sessionId),
         listEvidence(backendUrl, sessionId),
         listFindings(backendUrl, sessionId),
         listFlags(backendUrl, sessionId),
+        listSessionReports(backendUrl, sessionId),
       ]);
       const evidenceById = new Map(evidenceItems.map((item) => [item.id, item.public_id]));
       setEvidence(evidenceItems.map(mapEvidence));
       setNodes(attackPathItems.map(mapAttackNode));
       setFindings(findingItems.map(mapFinding));
       setFlags(flagItems.map((flag) => mapFlag(flag, evidenceById)));
+      setReports(reportItems.map(mapReport));
       setWorkspaceError(null);
     },
     [backendUrl],
@@ -208,6 +227,7 @@ export function App() {
           setNodes([]);
           setFindings([]);
           setFlags([]);
+          setReports([]);
         }
         setWorkspaceError(null);
       } catch (error) {
@@ -233,6 +253,8 @@ export function App() {
       setNodes([]);
       setFindings([]);
       setFlags([]);
+      setReports([]);
+      setReportError(null);
       return;
     }
   }, [activeSessionId]);
@@ -409,6 +431,22 @@ export function App() {
     }
   };
 
+  const generateReport = async () => {
+    if (!activeSession || reportGenerating) {
+      return;
+    }
+    setReportGenerating(true);
+    try {
+      const report = await createSessionReport(backendUrl, activeSession.id);
+      setReports((current) => [mapReport(report), ...current.filter((item) => item.id !== report.public_id)]);
+      setReportError(null);
+    } catch (error) {
+      setReportError(error instanceof Error ? error.message : "Failed to generate report.");
+    } finally {
+      setReportGenerating(false);
+    }
+  };
+
   const refreshTerminalCommands = useCallback(
     async (terminalId: string) => {
       try {
@@ -476,14 +514,15 @@ export function App() {
           }
           const message = mapServerEventToChatMessage(event);
           if (message) {
-            setMessages((current) => [...current, message]);
+            setMessages((current) => appendChatMessage(current, message));
           }
           if (
             event.event_kind === "task.completed" ||
             event.event_kind === "task.failed" ||
             event.event_kind === "task.cancelled" ||
             event.event_kind === "agent.workflow.completed" ||
-            event.event_kind === "agent.workflow.failed"
+            event.event_kind === "agent.workflow.failed" ||
+            event.event_kind === "report.generated"
           ) {
             void refreshWorkspace(sessionId);
           }
@@ -749,11 +788,16 @@ export function App() {
             evidence={evidence}
             findings={findings}
             flags={flags}
+            reports={reports}
             noteDraft={noteDraft}
             workspaceError={workspaceError}
+            reportError={reportError}
+            reportDisabled={!activeSession || reportGenerating}
+            backendUrl={backendUrl}
             noteDisabled={!activeSession || noteSubmitting}
             onNoteChange={setNoteDraft}
             onCreateNote={createManualNote}
+            onGenerateReport={generateReport}
           />
           <TerminalPanel
             tabs={terminalTabs}
@@ -817,6 +861,17 @@ function mapFlag(item: FlagDto, evidenceById: Map<string, string>): FlagItem {
     type: item.flag_type,
     value: item.value,
     evidenceId: item.source_evidence_id ? evidenceById.get(item.source_evidence_id) ?? item.source_evidence_id : "-",
+  };
+}
+
+function mapReport(item: ReportDto): ReportItem {
+  return {
+    id: item.public_id,
+    title: item.title,
+    summary: item.summary,
+    createdAt: item.created_at,
+    artifactPath: item.artifact_path,
+    content: item.content ?? "",
   };
 }
 
@@ -1216,23 +1271,45 @@ function IntelPanel({
   evidence,
   findings,
   flags,
+  reports,
   noteDraft,
   workspaceError,
+  reportError,
+  reportDisabled,
+  backendUrl,
   noteDisabled,
   onNoteChange,
   onCreateNote,
+  onGenerateReport,
 }: {
   mode: WorkspaceMode;
   nodes: AttackNode[];
   evidence: EvidenceItem[];
   findings: FindingItem[];
   flags: FlagItem[];
+  reports: ReportItem[];
   noteDraft: string;
   workspaceError: string | null;
+  reportError: string | null;
+  reportDisabled: boolean;
+  backendUrl: string;
   noteDisabled: boolean;
   onNoteChange: (value: string) => void;
   onCreateNote: (event: FormEvent<HTMLFormElement>) => void;
+  onGenerateReport: () => void;
 }) {
+  if (mode === "Report") {
+    return (
+      <ReportPanel
+        reports={reports}
+        error={reportError ?? workspaceError}
+        disabled={reportDisabled}
+        backendUrl={backendUrl}
+        onGenerateReport={onGenerateReport}
+      />
+    );
+  }
+
   return (
     <aside className="intel-panel" aria-label="Attack path and evidence">
       <section className="intel-section">
@@ -1318,6 +1395,77 @@ function IntelPanel({
               </article>
             ))}
           </div>
+        </div>
+      </section>
+    </aside>
+  );
+}
+
+function ReportPanel({
+  reports,
+  error,
+  disabled,
+  backendUrl,
+  onGenerateReport,
+}: {
+  reports: ReportItem[];
+  error: string | null;
+  disabled: boolean;
+  backendUrl: string;
+  onGenerateReport: () => void;
+}) {
+  const latest = reports[0] ?? null;
+  return (
+    <aside className="intel-panel report-panel" aria-label="Session writeup">
+      <section className="intel-section">
+        <div className="panel-heading">
+          <FileText aria-hidden="true" size={17} />
+          <h2>Session Writeup</h2>
+          <span>{reports.length}</span>
+        </div>
+        <div className="report-actions">
+          <button type="button" onClick={onGenerateReport} disabled={disabled}>
+            <FileText aria-hidden="true" size={15} />
+            <span>{latest ? "Regenerate" : "Generate"}</span>
+          </button>
+          {latest ? (
+            <a href={reportDownloadUrl(backendUrl, latest.id)} target="_blank" rel="noreferrer">
+              <Download aria-hidden="true" size={15} />
+              <span>Download</span>
+            </a>
+          ) : null}
+        </div>
+        {error ? <p className="workspace-error">{error}</p> : null}
+        {latest ? (
+          <article className="report-preview">
+            <div>
+              <strong>{latest.title}</strong>
+              <small>{formatCompactTime(latest.createdAt)}</small>
+            </div>
+            <pre>{latest.content || latest.summary}</pre>
+            <small>{latest.artifactPath}</small>
+          </article>
+        ) : (
+          <div className="terminal-empty">
+            <FileText aria-hidden="true" size={20} />
+            <span>No writeup generated</span>
+          </div>
+        )}
+      </section>
+      <section className="intel-section">
+        <div className="panel-heading">
+          <Layers3 aria-hidden="true" size={17} />
+          <h2>Reports</h2>
+          <span>{reports.length}</span>
+        </div>
+        <div className="report-list">
+          {reports.map((report) => (
+            <article key={report.id}>
+              <span>{formatCompactTime(report.createdAt)}</span>
+              <strong>{report.title}</strong>
+              <p>{report.summary}</p>
+            </article>
+          ))}
         </div>
       </section>
     </aside>

@@ -149,7 +149,6 @@ General commands:
 - `/help`
 - `/help findings`
 - `/help artifacts`
-- `/help reports`
 - `/help skill`
 - `/help module`
 - `/clear`
@@ -164,7 +163,6 @@ Session and record lookup:
 - `/steps [current|latest|S0001]`
 - `/artifacts [current|latest|S0001]`
 - `/findings [current|latest|S0001]`
-- `/reports [current|latest|S0001]`
 - `/show <public_id> [current|latest|S0001]`
 - `/why <finding_public_id> [current|latest|S0001]`
 
@@ -173,7 +171,7 @@ Redteam mode:
 - `/redteam`
 - `/normal`
 
-Artifacts, findings, reports, and dashboards:
+Artifacts, findings, and dashboards:
 
 - `/artifacts list [current|latest|S0001] [limit]`
 - `/artifacts show <artifact_id>`
@@ -181,9 +179,6 @@ Artifacts, findings, reports, and dashboards:
 - `/findings show <finding_id>`
 - `/findings confirm <finding_id>`
 - `/findings dismiss <finding_id>`
-- `/reports generate <session_summary|findings_summary|operator_report> [current|latest|S0001]`
-- `/reports list [current|latest|S0001] [limit]`
-- `/reports show <report_id>`
 - `/dashboard`
 - `/dashboard <session_id>`
 
@@ -310,14 +305,12 @@ Inspect records from the active or latest session:
 
 When there is no active session, record lookup commands require an explicit scope such as `latest` or `S0001`.
 
-Generate and inspect reports:
+Generate and inspect Control Center writeups through the desktop Report mode or API:
 
 ```text
-/reports generate session_summary latest
-/reports generate findings_summary latest
-/reports generate operator_report latest
-/reports latest
-/reports show R0001
+POST /api/sessions/{session_id}/reports
+GET  /api/sessions/{session_id}/reports
+GET  /api/reports/{report_id}/download
 ```
 
 Create and apply planner proposals:
@@ -471,7 +464,7 @@ Core source areas:
 - `src/main.py`: CLI entrypoint and command routing
 - `src/agent/`: model loop, prompt, context, settings, and local agent state
 - `src/controller/`: natural-language controller contracts and routing helpers
-- `src/app/`: application services for sessions, execution, reports, records, and capabilities
+- `src/app/`: application services for sessions, execution, Control Center writeups, records, and capabilities
 - `src/models/`: domain models
 - `src/orchestration/`: admission, scope validation, scheduler, worker-facing job orchestration, and planner runtime
 - `src/runtime/`: execution runtime, worker runtime, leases, isolation, and timeouts

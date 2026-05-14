@@ -242,6 +242,8 @@ def test_llm_agent_answers_general_questions_without_phase4_fallback(tmp_path):
     assert completed.result_json["response"] == "我是 red-code Control Center Agent。"
     assert "Select a target Session" not in completed.result_json["summary"]
     assert "conversation.completed" in event_kinds
+    assert "conversation.delta" not in event_kinds
+    assert "agent.summary" not in event_kinds
     assert "start_port_scan" in model.bound_tool_names
 
 

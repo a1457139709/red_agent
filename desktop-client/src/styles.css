@@ -1171,6 +1171,106 @@ button {
   opacity: 0.45;
 }
 
+.report-panel {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.report-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.report-actions button,
+.report-actions a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  border: 1px solid rgba(115, 196, 151, 0.35);
+  border-radius: 8px;
+  background: rgba(31, 102, 79, 0.18);
+  color: #c9f0d7;
+  font-size: 12px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.report-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.report-preview {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  border: 1px solid rgba(228, 234, 226, 0.13);
+  border-radius: 8px;
+  background: rgba(244, 247, 242, 0.055);
+  padding: 10px;
+}
+
+.report-preview div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.report-preview strong,
+.report-list strong {
+  overflow-wrap: anywhere;
+  color: #f4f8f2;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.report-preview small,
+.report-list span {
+  color: #89958d;
+  font-size: 11px;
+}
+
+.report-preview pre {
+  max-height: 52vh;
+  margin: 0;
+  overflow: auto;
+  border: 1px solid rgba(228, 234, 226, 0.1);
+  border-radius: 8px;
+  background: #080a0a;
+  color: #dff7e4;
+  padding: 10px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.report-list {
+  display: grid;
+  gap: 8px;
+}
+
+.report-list article {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid rgba(228, 234, 226, 0.13);
+  border-radius: 8px;
+  background: rgba(244, 247, 242, 0.055);
+  padding: 10px;
+}
+
+.report-list p {
+  margin: 0;
+  color: #bdc8c0;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .command-history {
   display: grid;
   gap: 7px;

@@ -228,16 +228,17 @@ class CTFAgentService(ControlCenterService):
         task.error = result.get("error") if task.status == TaskStatus.FAILED else None
         task.result_json = result
         updated = self.task_repository.update(task)
-        self._record_agent_event(
-            updated,
-            "agent.summary",
-            level="info" if updated.status == TaskStatus.SUCCEEDED else "error",
-            payload={
-                "summary": result.get("summary"),
-                "recoverable": result.get("recoverable", False),
-                "error": result.get("error"),
-            },
-        )
+        if _should_record_agent_summary(result):
+            self._record_agent_event(
+                updated,
+                "agent.summary",
+                level="info" if updated.status == TaskStatus.SUCCEEDED else "error",
+                payload={
+                    "summary": result.get("summary"),
+                    "recoverable": result.get("recoverable", False),
+                    "error": result.get("error"),
+                },
+            )
         self._record_agent_event(
             updated,
             "agent.workflow.completed" if updated.status == TaskStatus.SUCCEEDED else "agent.workflow.failed",
@@ -447,6 +448,14 @@ def _scanner_host_for_session(session: TargetSession) -> str:
         parsed = urlsplit(session.target_value)
         return parsed.hostname or session.target_value
     return session.target_value
+
+
+def _should_record_agent_summary(result: dict[str, Any]) -> bool:
+    if result.get("error") or result.get("recoverable", False):
+        return True
+    summary = result.get("summary")
+    response = result.get("response")
+    return not (isinstance(summary, str) and isinstance(response, str) and summary == response)
 
 
 def _web_target_from_port(host: str, port_data: dict[str, Any]) -> str | None:

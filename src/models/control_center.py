@@ -37,6 +37,10 @@ class TaskStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class ReportType(StrEnum):
+    SESSION_WRITEUP = "session_writeup"
+
+
 def _normalize_required_text(value: str, *, field_name: str) -> str:
     normalized = value.strip()
     if not normalized:
@@ -763,4 +767,86 @@ class Flag:
             "value": self.value,
             "source_evidence_id": self.source_evidence_id,
             "created_at": self.created_at,
+        }
+
+
+@dataclass(slots=True)
+class CTFReport:
+    id: str
+    public_id: str
+    project_id: str
+    session_id: str
+    report_type: ReportType
+    title: str
+    summary: str
+    material_path: str
+    artifact_path: str
+    created_at: str = field(default_factory=utc_now_iso)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.project_id = _normalize_required_text(self.project_id, field_name="project id")
+        self.session_id = _normalize_required_text(self.session_id, field_name="session id")
+        self.report_type = ReportType(self.report_type)
+        self.title = _normalize_required_text(self.title, field_name="report title")
+        self.summary = _normalize_required_text(self.summary, field_name="report summary")
+        self.material_path = _normalize_required_text(self.material_path, field_name="material path")
+        self.artifact_path = _normalize_required_text(self.artifact_path, field_name="artifact path")
+        self.metadata = dict(self.metadata)
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        project_id: str,
+        session_id: str,
+        title: str,
+        summary: str,
+        material_path: str,
+        artifact_path: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> "CTFReport":
+        return cls(
+            id=str(uuid4()),
+            public_id="",
+            project_id=project_id,
+            session_id=session_id,
+            report_type=ReportType.SESSION_WRITEUP,
+            title=title,
+            summary=summary,
+            material_path=material_path,
+            artifact_path=artifact_path,
+            metadata=dict(metadata or {}),
+        )
+
+    @classmethod
+    def from_row(cls, row: dict[str, Any]) -> "CTFReport":
+        raw_metadata = row.get("metadata")
+        return cls(
+            id=row["id"],
+            public_id=row.get("public_id") or "",
+            project_id=row["project_id"],
+            session_id=row["session_id"],
+            report_type=ReportType(row["report_type"]),
+            title=row["title"],
+            summary=row["summary"],
+            material_path=row["material_path"],
+            artifact_path=row["artifact_path"],
+            created_at=row["created_at"],
+            metadata=json.loads(raw_metadata) if raw_metadata else {},
+        )
+
+    def to_row(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "public_id": self.public_id,
+            "project_id": self.project_id,
+            "session_id": self.session_id,
+            "report_type": self.report_type.value,
+            "title": self.title,
+            "summary": self.summary,
+            "material_path": self.material_path,
+            "artifact_path": self.artifact_path,
+            "created_at": self.created_at,
+            "metadata": json.dumps(self.metadata, ensure_ascii=False),
         }

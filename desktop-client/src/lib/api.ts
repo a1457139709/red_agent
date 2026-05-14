@@ -173,6 +173,21 @@ export type FlagDto = {
   created_at: string;
 };
 
+export type ReportDto = {
+  id: string;
+  public_id: string;
+  project_id: string;
+  session_id: string;
+  report_type: string;
+  title: string;
+  summary: string;
+  material_path: string;
+  artifact_path: string;
+  created_at: string;
+  metadata: Record<string, unknown>;
+  content: string | null;
+};
+
 export type TerminalDto = {
   terminal_id: string;
   project_id: string;
@@ -428,6 +443,24 @@ export function parseFlag(payload: unknown): FlagDto {
   };
 }
 
+export function parseReport(payload: unknown): ReportDto {
+  const record = requireRecord(payload, "Invalid report.");
+  return {
+    id: requireString(record.id, "Invalid report id."),
+    public_id: requireString(record.public_id, "Invalid report public id."),
+    project_id: requireString(record.project_id, "Invalid report project id."),
+    session_id: requireString(record.session_id, "Invalid report session id."),
+    report_type: requireString(record.report_type, "Invalid report type."),
+    title: requireString(record.title, "Invalid report title."),
+    summary: requireString(record.summary, "Invalid report summary."),
+    material_path: requireString(record.material_path, "Invalid report material path."),
+    artifact_path: requireString(record.artifact_path, "Invalid report artifact path."),
+    created_at: requireString(record.created_at, "Invalid report created_at."),
+    metadata: requireRecord(record.metadata, "Invalid report metadata."),
+    content: "content" in record ? requireNullableString(record.content, "Invalid report content.") : null,
+  };
+}
+
 export function parseTerminal(payload: unknown): TerminalDto {
   const record = requireRecord(payload, "Invalid terminal.");
   return {
@@ -672,6 +705,26 @@ export async function createFlag(
     "Invalid flag response.",
   );
   return {flag: parseFlag(payload.flag), node: parseAttackPathNode(payload.node)};
+}
+
+export async function listSessionReports(baseUrl: string, sessionId: string): Promise<ReportDto[]> {
+  const payload = requireRecord(
+    await requestJson(`${baseUrl}/api/sessions/${sessionId}/reports`),
+    "Invalid reports response.",
+  );
+  return requireArray(payload.reports, "Invalid reports response.").map(parseReport);
+}
+
+export async function createSessionReport(baseUrl: string, sessionId: string): Promise<ReportDto> {
+  const payload = requireRecord(
+    await requestJson(`${baseUrl}/api/sessions/${sessionId}/reports`, {method: "POST"}),
+    "Invalid report response.",
+  );
+  return parseReport(payload.report);
+}
+
+export function reportDownloadUrl(baseUrl: string, reportId: string): string {
+  return `${baseUrl}/api/reports/${reportId}/download`;
 }
 
 export async function openTerminal(
