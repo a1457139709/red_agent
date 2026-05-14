@@ -29,7 +29,8 @@ body {
 
 button,
 textarea,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -191,6 +192,16 @@ button {
   overflow-y: auto;
 }
 
+.project-list {
+  gap: 12px;
+}
+
+.project-group {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
 .conversation-empty,
 .workspace-error {
   color: #c58f8f;
@@ -202,7 +213,8 @@ button {
   padding: 8px 10px;
 }
 
-.conversation-item {
+.conversation-item,
+.project-header {
   display: grid;
   grid-template-columns: 32px minmax(0, 1fr) auto;
   align-items: center;
@@ -216,7 +228,24 @@ button {
   cursor: pointer;
 }
 
-.conversation-panel.collapsed .conversation-item {
+.project-header-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  min-width: 0;
+}
+
+.project-header {
+  min-height: 50px;
+  width: 100%;
+}
+
+.session-item {
+  margin-left: 12px;
+}
+
+.conversation-panel.collapsed .conversation-item,
+.conversation-panel.collapsed .project-header {
   grid-template-columns: 1fr;
   width: 44px;
   min-height: 44px;
@@ -224,12 +253,15 @@ button {
 }
 
 .conversation-item:hover,
-.conversation-item.active {
+.conversation-item.active,
+.project-header:hover,
+.project-header.active {
   border-color: rgba(228, 234, 226, 0.14);
   background: rgba(244, 247, 242, 0.07);
 }
 
-.conversation-item.active {
+.conversation-item.active,
+.project-header.active {
   box-shadow: inset 3px 0 0 #d54d55;
 }
 
@@ -279,6 +311,84 @@ button {
   min-height: 42px;
   border-top: 1px solid rgba(228, 234, 226, 0.12);
   padding-top: 14px;
+}
+
+.rail-create-form,
+.setup-form {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.rail-create-form {
+  border: 1px solid rgba(115, 196, 151, 0.22);
+  border-radius: 8px;
+  background: rgba(31, 102, 79, 0.09);
+  padding: 10px;
+}
+
+.rail-create-form label,
+.setup-form label {
+  color: #9ce0b2;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.rail-create-form input,
+.rail-create-form textarea,
+.rail-create-form select,
+.setup-form input,
+.setup-form textarea,
+.setup-form select {
+  min-width: 0;
+  min-height: 36px;
+  border: 1px solid rgba(228, 234, 226, 0.14);
+  border-radius: 8px;
+  outline: 0;
+  background: rgba(244, 247, 242, 0.065);
+  color: #f7fbf6;
+  padding: 0 10px;
+}
+
+.rail-create-form textarea,
+.setup-form textarea {
+  min-height: 72px;
+  resize: vertical;
+  padding: 9px 10px;
+}
+
+.rail-create-form select,
+.setup-form select {
+  color-scheme: dark;
+}
+
+.rail-create-form button,
+.setup-form button {
+  min-height: 36px;
+  border: 1px solid rgba(115, 196, 151, 0.35);
+  border-radius: 8px;
+  background: rgba(31, 102, 79, 0.22);
+  color: #c9f0d7;
+  cursor: pointer;
+}
+
+.rail-create-form button:disabled,
+.rail-create-form input:disabled,
+.rail-create-form textarea:disabled,
+.rail-create-form select:disabled,
+.setup-form button:disabled,
+.setup-form input:disabled,
+.setup-form textarea:disabled,
+.setup-form select:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.rail-create-form p,
+.setup-form p {
+  margin: 0;
+  color: #c58f8f;
+  font-size: 12px;
 }
 
 .agent-workspace {
@@ -472,6 +582,70 @@ button {
 
 .welcome-prompts span {
   overflow-wrap: anywhere;
+}
+
+.setup-panel,
+.agent-empty {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  width: min(100%, 640px);
+  margin: 0 auto;
+  padding: 42px 0 24px;
+}
+
+.setup-panel h2 {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #f8faf6;
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.setup-form,
+.session-create-form.expanded {
+  width: min(100%, 520px);
+}
+
+.setup-row {
+  display: grid;
+  grid-template-columns: minmax(92px, 0.35fr) minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+}
+
+.setup-row label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.agent-empty {
+  min-height: 240px;
+  color: #aeb8b1;
+  text-align: center;
+}
+
+.agent-empty svg {
+  color: #9ce0b2;
+}
+
+.agent-empty strong,
+.agent-empty span {
+  overflow-wrap: anywhere;
+}
+
+.agent-empty strong {
+  color: #f5f7f2;
+  font-size: 15px;
+}
+
+.agent-empty span {
+  max-width: 420px;
+  font-size: 13px;
 }
 
 .system-line {

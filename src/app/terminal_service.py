@@ -5,7 +5,7 @@ from typing import Any
 from uuid import uuid4
 
 from agent.settings import Settings, get_settings
-from models.control_center import CommandRun, Event, Evidence, TargetSession
+from models.control_center import AttackPathNode, CommandRun, Event, Evidence, TargetSession
 from models.run import utc_now_iso
 from storage.project_paths import project_session_root
 from storage.repositories.control_center import (
@@ -173,6 +173,22 @@ class TerminalService(ControlCenterService):
             if node is None or node.session_id != command.session_id:
                 raise ValueError(f"Attack path node not found in command session: {attack_path_node_id}")
             self.link_repository.link(node_id=node.id, evidence_id=evidence.id)
+        else:
+            node = self.node_repository.create(
+                AttackPathNode.create(
+                    project_id=command.project_id,
+                    session_id=command.session_id,
+                    stage="terminal-evidence",
+                    title=title,
+                    status="open",
+                    source_ref=evidence.id,
+                    next_action="Review terminal output and decide whether it supports an attack-path step.",
+                )
+            )
+            self.link_repository.link(node_id=node.id, evidence_id=evidence.id)
+        if tags:
+            command.tags = _merge_tags(command.tags, tags)
+            self.command_repository.update(command)
         self._record_event(
             context=TerminalContext(
                 project_id=command.project_id,
@@ -245,3 +261,12 @@ def _terminal_payload(descriptor: TerminalDescriptor) -> dict[str, Any]:
 
 def _selected_summary(selected_text: str) -> str:
     return selected_text.replace("\r", "").replace("\n", " ")[:200]
+
+
+def _merge_tags(existing: list[str], incoming: list[str]) -> list[str]:
+    merged: list[str] = []
+    for tag in [*existing, *incoming]:
+        normalized = tag.strip()
+        if normalized and normalized not in merged:
+            merged.append(normalized)
+    return merged

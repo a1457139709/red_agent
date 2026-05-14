@@ -32,6 +32,7 @@ Phase 3: Scanner Adapter Layer
 Phase 4: Realtime Agent Enumeration Loop
 Phase 5: Attack Path and Evidence Workspace
 Phase 6: Embedded Terminal
+Phase 6.5: LLM Agent Orchestrator and Tool Router
 Phase 7: Writeup Generation
 Phase 8: Hardening and Packaging
 ```
@@ -572,6 +573,64 @@ Implement:
 - HTTP routes 支持打开终端、读取命令历史、将命令输出片段保存为 `terminal_output` evidence。
 - `CommandRun` 保存命令文本、工作目录、输出 artifact 引用、输出摘要、开始/结束时间和可选退出码。
 - 桌面端使用现有 React/CSS 实现终端面板，不引入 xterm.js；用户可以打开多终端 tab、发送命令、查看输出、保存选中输出为 evidence。
+
+## 10.5. Phase 6.5: LLM Agent Orchestrator and Tool Router
+
+### 10.5.1 Goal
+
+将当前确定性的 Phase 4 Agent 编排升级为真实 LLM Agent 主路径。Agent 应能理解普通用户输入、读取当前 Project/Session 上下文，并通过受控高层工具创建扫描、证据、攻击路径、finding、终端建议和 writeup 草稿。
+
+### 10.5.2 Backend Tasks
+
+新增：
+
+- `AgentOrchestrator`
+- `AgentToolRouter`
+- Control Center Agent tool schemas
+
+Agent tools:
+
+- `start_port_scan`
+- `start_dir_scan`
+- `start_poc_scan`
+- `summarize_task_result`
+- `create_attack_path_node`
+- `create_finding`
+- `suggest_terminal_command`
+- `create_writeup_draft`
+
+Behavior:
+
+- 普通问答交由 LLM 回答，不再落入固定枚举 fallback。
+- 扫描类请求由 LLM 选择高层 tool call。
+- tool call 参数必须经过 schema 校验和 Session scope 校验。
+- Agent 不获得原始 `bash` 或任意 shell 字符串执行能力。
+- 终端命令只作为建议写入事件，由用户明确触发执行。
+- 现有确定性枚举闭环保留为稳定 fallback 和回归基线。
+
+### 10.5.3 Desktop Tasks
+
+Extend Agent Console:
+
+- render `conversation.delta`
+- render `conversation.completed`
+- render `agent.tool_call.started`
+- render `agent.tool_call.completed`
+
+### 10.5.4 Tests
+
+- 普通问答不会返回 Phase 4 固定 fallback。
+- 枚举/侦察类请求能通过 tool call 创建扫描任务。
+- 未注册 tool call 被拒绝并记录错误事件。
+- 越界扫描目标被拒绝。
+- WebSocket 能推送 conversation 与 tool call 事件。
+
+### 10.5.5 Acceptance
+
+- 用户问“你是什么模型”时，Agent 返回真实文本响应。
+- 用户要求枚举目标时，Agent 能通过高层工具创建扫描任务。
+- 所有 tool call 都有结构化事件并可在前端展示。
+- 现有 Phase 4/5/6 回归测试继续通过。
 
 ## 11. Phase 7: Writeup Generation
 

@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  createProject,
+  createTargetSession,
   parseAttackPathNode,
   parseEvidence,
   parseFinding,
@@ -12,7 +14,12 @@ import {
   parseTargetSession,
   parseTerminal,
   parseToolStatus,
+  sendAgentMessage,
 } from "./api";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("parseHealthResponse", () => {
   it("parses the backend health response", () => {
@@ -219,3 +226,77 @@ describe("control center DTO parsers", () => {
     expect(() => parseTargetSession({...session, target_type: "invalid"})).toThrow("Invalid target type");
   });
 });
+
+describe("control center API clients", () => {
+  it("creates a Project and parses the response", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({project}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(createProject("http://127.0.0.1:8000", {name: "HTB Lab"})).resolves.toMatchObject({
+      id: "project-1",
+      name: "HTB Lab",
+    });
+    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8000/api/projects", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({name: "HTB Lab"}),
+    });
+  });
+
+  it("creates a target Session and parses the response", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({session}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      createTargetSession("http://127.0.0.1:8000", "project-1", {
+        name: "Linux target",
+        target_type: "ip",
+        target_value: "10.10.10.5",
+      }),
+    ).resolves.toMatchObject({id: "session-1", project_id: "project-1"});
+    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8000/api/projects/project-1/sessions", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({name: "Linux target", target_type: "ip", target_value: "10.10.10.5"}),
+    });
+  });
+
+  it("sends an Agent message and parses the queued task", async () => {
+    const task = {
+      id: "task-1",
+      public_id: "TASK0001",
+      project_id: "project-1",
+      session_id: "session-1",
+      task_type: "agent_analysis",
+      executor: "ctf_agent",
+      status: "pending",
+      input: {message: "enumerate target"},
+      result: {},
+      started_at: null,
+      ended_at: null,
+      error: null,
+      created_at: "2026-05-03T00:00:00+00:00",
+      updated_at: "2026-05-03T00:00:00+00:00",
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({task})));
+
+    await expect(
+      sendAgentMessage("http://127.0.0.1:8000", "session-1", {message: "enumerate target"}),
+    ).resolves.toMatchObject({task_type: "agent_analysis", status: "pending"});
+  });
+
+  it("throws displayable errors for failed API responses", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("bad", {status: 500})));
+
+    await expect(createProject("http://127.0.0.1:8000", {name: "HTB Lab"})).rejects.toThrow(
+      "Request failed: 500",
+    );
+  });
+});
+
+function jsonResponse(payload: unknown): Response {
+  return new Response(JSON.stringify(payload), {
+    status: 200,
+    headers: {"Content-Type": "application/json"},
+  });
+}

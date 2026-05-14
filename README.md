@@ -212,9 +212,11 @@ Modules:
 ## Control Center Development
 
 The CTF Control Center currently includes the local App Server, desktop shell, Project/Session
-persistence, the Phase 3 scanner adapter layer, and the Phase 4 Agent enumeration loop.
-The current desktop UI iteration is a static immersive Agent prototype: it previews the
-conversation-first shell without connecting to backend tasks, findings, evidence, or graph views.
+persistence, the Phase 3 scanner adapter layer, the Phase 4 Agent enumeration loop, and the
+Phase 6.5 LLM Agent Orchestrator baseline.
+The desktop UI groups Sessions under Projects, lets an empty workspace create the first Project
+and Session, and connects each selected Session to its own Agent event replay, workspace records,
+and terminal context.
 
 Start the backend from the repository root:
 
@@ -238,8 +240,8 @@ npm run tauri dev
 ```
 
 The desktop shell defaults to `http://127.0.0.1:8000` and can be pointed at another backend with `VITE_BACKEND_URL`.
-The static immersive Agent prototype can be previewed without a running backend; backend wiring is
-intentionally deferred until the conversation surface is validated.
+The shell expects the backend when creating Projects/Sessions, loading workspace records, sending
+Agent messages, or replaying event streams.
 
 The Control Center event socket is `ws://127.0.0.1:8000/ws/events` by default. It accepts optional replay scope parameters such as `session_id`, `project_id`, `limit`, and `since_sequence` so the desktop client can restore persisted session history after reconnect or backend restart.
 
@@ -255,8 +257,17 @@ Phase 4 Agent messages are accepted at `/api/sessions/{session_id}/agent/message
 `枚举这台靶机`, `enumerate target`, or a similar scan request creates an `agent_analysis` task,
 starts a background port scan, summarizes the result, plans ffuf only for HTTP/HTTPS services,
 starts nuclei only when a candidate URL and templates path exist, and records next-action events
-for the desktop Agent Console. The WebSocket event stream also polls persisted events while
-connected so Agent, task, and scanner events appear without a manual reconnect.
+for the desktop Agent Console. The desktop client sends messages only for the active Session and
+renders `agent.*` and `task.*` events from `ws://127.0.0.1:8000/ws/events?session_id=...&limit=...`
+with replay enabled. Switching Sessions closes the old event socket, clears the current Agent and
+terminal views, and replays the newly selected Session scope.
+
+Phase 6.5 adds the LLM Agent Orchestrator path for non-deterministic Agent turns. General questions
+are sent to the configured LangChain/OpenAI-compatible model, and model tool calls are routed through
+registered Control Center tools such as `start_port_scan`, `start_dir_scan`, `start_poc_scan`,
+`summarize_task_result`, `create_attack_path_node`, `create_finding`, `suggest_terminal_command`,
+and `create_writeup_draft`. The Agent still cannot call raw `bash`; all scanner targets are validated
+against the active Session scope.
 
 ## Usage Examples
 

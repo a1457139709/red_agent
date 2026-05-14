@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
@@ -17,8 +18,12 @@ from storage.repositories.control_center import (
 )
 from storage.sqlite import SQLiteStorage
 
+from .agent_orchestrator import AgentOrchestrator, AgentToolRouter
 from .control_center_base import ControlCenterService
 from .scanner_service import ScannerService
+
+
+ModelFactory = Callable[[Settings], Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,12 +154,14 @@ class CTFAgentService(ControlCenterService):
         planner: EnumerationPlanner | None = None,
         reducer: EnumerationResultReducer | None = None,
         scanner_service: ScannerService | None = None,
+        model_factory: ModelFactory | None = None,
     ) -> None:
         storage = SQLiteStorage(settings.sqlite_path)
         object.__setattr__(self, "settings", settings)
         object.__setattr__(self, "planner", planner or EnumerationPlanner())
         object.__setattr__(self, "reducer", reducer or EnumerationResultReducer())
         object.__setattr__(self, "scanner_service", scanner_service or ScannerService.from_settings(settings))
+        object.__setattr__(self, "model_factory", model_factory)
         object.__setattr__(self, "project_repository", ProjectRepository(storage))
         object.__setattr__(self, "session_repository", TargetSessionRepository(storage))
         object.__setattr__(self, "task_repository", TaskRepository(storage))
@@ -210,11 +217,11 @@ class CTFAgentService(ControlCenterService):
 
         try:
             if task.input_json.get("intent") != "enumerate_target":
-                result = self._unsupported_message_result(task)
+                result = self._run_llm_agent(task)
             else:
                 result = self._run_enumeration(task)
         except Exception as exc:
-            result = {"ok": False, "summary": "Agent enumeration failed.", "error": str(exc), "recoverable": True}
+            result = {"ok": False, "summary": "Agent turn failed.", "error": str(exc), "recoverable": True}
 
         task.ended_at = utc_now_iso()
         task.status = TaskStatus.SUCCEEDED if result.get("recoverable", False) or result.get("ok", False) else TaskStatus.FAILED
@@ -238,6 +245,21 @@ class CTFAgentService(ControlCenterService):
             payload={"workflow_id": updated.input_json.get("workflow_id"), "status": updated.status.value},
         )
         return updated
+
+    def _run_llm_agent(self, task: Task) -> dict[str, Any]:
+        try:
+            session = self.session_repository.require(task.session_id)
+            message = str(task.input_json.get("message") or "")
+            router = AgentToolRouter(settings=self.settings, scanner_service=self.scanner_service)
+            orchestrator = AgentOrchestrator(
+                settings=self.settings,
+                tool_router=router,
+                event_repository=self.event_repository,
+                **({"model_factory": self.model_factory} if self.model_factory is not None else {}),
+            )
+            return orchestrator.run_turn(task=task, session=session, message=message)
+        except ValueError as exc:
+            return self._llm_unavailable_result(task, str(exc))
 
     def start_port_scan(self, *, session: TargetSession, agent_task: Task) -> Task:
         self._record_agent_event(agent_task, "agent.tool.started", level="info", payload={"tool": "start_port_scan"})
@@ -387,6 +409,11 @@ class CTFAgentService(ControlCenterService):
         message = "Select a target Session and ask for enumeration to start the Phase 4 workflow."
         self._record_agent_event(task, "agent.next_action.suggested", level="info", payload={"message": message})
         return {"ok": True, "recoverable": True, "summary": message, "task_ids": [], "next_actions": [message]}
+
+    def _llm_unavailable_result(self, task: Task, error: str) -> dict[str, Any]:
+        message = f"LLM Agent is unavailable: {error}"
+        self._record_agent_event(task, "agent.next_action.suggested", level="warning", payload={"message": message})
+        return {"ok": True, "recoverable": True, "summary": message, "error": error, "task_ids": [], "next_actions": [message]}
 
     def _record_agent_event(
         self,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+from langchain_core.messages import AIMessage
 
 from agent.settings import Settings
 from app.ctf_agent_service import CTFAgentService, EnumerationPlanner
@@ -86,6 +87,19 @@ class RoutingRunner:
         if on_output is not None and stdout:
             on_output("stdout", stdout)
         return ProcessResult(argv=list(argv), return_code=0, stdout=stdout, stderr="")
+
+
+class FakeToolCallingModel:
+    def __init__(self, responses: list[AIMessage]) -> None:
+        self.responses = list(responses)
+        self.bound_tool_names: list[str] = []
+
+    def bind_tools(self, tools):
+        self.bound_tool_names = [tool.name for tool in tools]
+        return self
+
+    def invoke(self, _messages):
+        return self.responses.pop(0)
 
 
 def build_settings(tmp_path):
@@ -211,6 +225,55 @@ def test_failed_port_scan_produces_recoverable_agent_summary(tmp_path):
     assert completed.result_json["recoverable"] is True
     assert "Port scan failed recoverably" in completed.result_json["summary"]
     assert "rerun enumeration" in completed.result_json["next_actions"][0]
+
+
+def test_llm_agent_answers_general_questions_without_phase4_fallback(tmp_path):
+    settings = build_settings(tmp_path)
+    _project, session = prepare_session(settings)
+    model = FakeToolCallingModel([AIMessage(content="我是 red-code Control Center Agent。", tool_calls=[])])
+    service = CTFAgentService(settings=settings, model_factory=lambda _settings: model)
+
+    agent_task = service.create_agent_task(session_identifier=session.id, message="你是什么模型")
+    completed = service.run_agent_task(agent_task.id)
+
+    events = EventRepository(SQLiteStorage(settings.sqlite_path)).list(session_id=session.id, limit=None, descending=False)
+    event_kinds = [event.event_kind for event in events]
+    assert completed.status.value == "succeeded"
+    assert completed.result_json["response"] == "我是 red-code Control Center Agent。"
+    assert "Select a target Session" not in completed.result_json["summary"]
+    assert "conversation.completed" in event_kinds
+    assert "start_port_scan" in model.bound_tool_names
+
+
+def test_llm_agent_tool_call_creates_scan_task_and_tool_events(tmp_path):
+    settings = build_settings(tmp_path)
+    _project, session = prepare_session(settings)
+    binary = tmp_path / "nmap"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    scanner = ScannerService(settings=settings, runner=RoutingRunner())
+    scanner.update_config({"tools": {"nmap": {"binary_path": str(binary)}}})
+    model = FakeToolCallingModel(
+        [
+            AIMessage(
+                content="I will scan the target.",
+                tool_calls=[{"name": "start_port_scan", "args": {"reason": "Initial recon"}, "id": "call-1", "type": "tool_call"}],
+            ),
+            AIMessage(content="Port scan completed.", tool_calls=[]),
+        ]
+    )
+    service = CTFAgentService(settings=settings, scanner_service=scanner, model_factory=lambda _settings: model)
+
+    agent_task = service.create_agent_task(session_identifier=session.id, message="Use the available tools for the target")
+    completed = service.run_agent_task(agent_task.id)
+
+    storage = SQLiteStorage(settings.sqlite_path)
+    task_types = [task.task_type for task in TaskRepository(storage).list(session_id=session.id, limit=None)]
+    event_kinds = [event.event_kind for event in EventRepository(storage).list(session_id=session.id, limit=None, descending=False)]
+    assert completed.status.value == "succeeded"
+    assert "port_scan" in task_types
+    assert "agent.tool_call.started" in event_kinds
+    assert "agent.tool_call.completed" in event_kinds
+    assert completed.result_json["tool_calls"][0]["name"] == "start_port_scan"
 
 
 def test_phase4_agent_api_accepts_enumeration_message(tmp_path, monkeypatch):

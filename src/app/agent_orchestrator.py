@@ -1,0 +1,434 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+from urllib.parse import urlsplit
+
+from agent.provider import create_model
+from agent.settings import Settings
+from langchain.tools import StructuredTool
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from models.control_center import Event, Finding, TargetSession, TargetType, Task
+from pydantic import BaseModel, Field
+from storage.repositories.control_center import (
+    AttackPathNodeRepository,
+    EventRepository,
+    EvidenceRepository,
+    FindingRepository,
+    TargetSessionRepository,
+    TaskRepository,
+)
+from storage.sqlite import SQLiteStorage
+
+from .attack_path_service import AttackPathService
+from .scanner_service import ScannerService
+
+
+ModelFactory = Callable[[Settings], Any]
+
+
+@dataclass(frozen=True, slots=True)
+class AgentToolResult:
+    summary: str
+    model_text: str
+    data: dict[str, Any]
+
+
+class StartPortScanInput(BaseModel):
+    reason: str | None = Field(default=None, description="Why a port scan is useful now.")
+
+
+class StartDirScanInput(BaseModel):
+    base_url: str = Field(description="In-scope HTTP(S) URL to enumerate.")
+    wordlist: str | None = Field(default=None, description="Optional ffuf wordlist path.")
+    reason: str | None = Field(default=None, description="Why directory enumeration is useful now.")
+
+
+class StartPocScanInput(BaseModel):
+    target_url: str = Field(description="In-scope HTTP(S) URL to validate with nuclei.")
+    templates: list[str] | None = Field(default=None, description="Optional nuclei template paths.")
+    reason: str | None = Field(default=None, description="Why POC validation is useful now.")
+
+
+class SummarizeTaskResultInput(BaseModel):
+    task_id: str = Field(description="Task id or public id to summarize.")
+
+
+class CreateAttackPathNodeInput(BaseModel):
+    stage: str = Field(description="Attack path stage, e.g. recon, web-enum, poc-verified.")
+    title: str = Field(description="Short node title.")
+    status: str = Field(default="open", description="Node status.")
+    next_action: str | None = Field(default=None, description="Suggested next action.")
+    evidence_ids: list[str] | None = Field(default=None, description="Evidence ids or public ids to link.")
+
+
+class CreateFindingInput(BaseModel):
+    severity: str = Field(default="info", description="Finding severity.")
+    status: str = Field(default="candidate", description="Finding status.")
+    title: str = Field(description="Finding title.")
+    description: str | None = Field(default=None, description="Finding description.")
+    evidence_refs: list[str] | None = Field(default=None, description="Evidence ids or public ids supporting the finding.")
+
+
+class SuggestTerminalCommandInput(BaseModel):
+    command: str = Field(description="Terminal command suggestion for the operator to review and run.")
+    reason: str | None = Field(default=None, description="Why this command is suggested.")
+
+
+class CreateWriteupDraftInput(BaseModel):
+    title: str | None = Field(default=None, description="Optional writeup title.")
+
+
+@dataclass(frozen=True, slots=True)
+class AgentToolSpec:
+    name: str
+    description: str
+    input_model: type[BaseModel]
+
+    def build_langchain_tool(self) -> StructuredTool:
+        def schema_only_tool(**_kwargs: Any) -> str:
+            return "This schema-only tool is executed by AgentToolRouter."
+
+        schema_only_tool.__name__ = self.name
+        return StructuredTool.from_function(
+            func=schema_only_tool,
+            name=self.name,
+            description=self.description,
+            args_schema=self.input_model,
+        )
+
+
+class AgentToolRouter:
+    def __init__(self, *, settings: Settings, scanner_service: ScannerService | None = None) -> None:
+        storage = SQLiteStorage(settings.sqlite_path)
+        self.settings = settings
+        self.scanner_service = scanner_service or ScannerService.from_settings(settings)
+        self.session_repository = TargetSessionRepository(storage)
+        self.task_repository = TaskRepository(storage)
+        self.event_repository = EventRepository(storage)
+        self.evidence_repository = EvidenceRepository(storage)
+        self.finding_repository = FindingRepository(storage)
+        self.node_repository = AttackPathNodeRepository(storage)
+        self.attack_path_service = AttackPathService.from_settings(settings)
+        self._specs = {
+            spec.name: spec
+            for spec in (
+                AgentToolSpec("start_port_scan", "Start an in-scope nmap port scan for the active Session target.", StartPortScanInput),
+                AgentToolSpec("start_dir_scan", "Start an in-scope ffuf directory scan for an HTTP(S) URL.", StartDirScanInput),
+                AgentToolSpec("start_poc_scan", "Start an in-scope nuclei POC scan for an HTTP(S) URL.", StartPocScanInput),
+                AgentToolSpec("summarize_task_result", "Summarize a task result from the active Session.", SummarizeTaskResultInput),
+                AgentToolSpec("create_attack_path_node", "Create an attack path node in the active Session.", CreateAttackPathNodeInput),
+                AgentToolSpec("create_finding", "Create a structured finding in the active Session.", CreateFindingInput),
+                AgentToolSpec("suggest_terminal_command", "Suggest a terminal command for the operator to run manually.", SuggestTerminalCommandInput),
+                AgentToolSpec("create_writeup_draft", "Create a lightweight writeup draft evidence item from current Session records.", CreateWriteupDraftInput),
+            )
+        }
+
+    def langchain_tools(self) -> list[StructuredTool]:
+        return [spec.build_langchain_tool() for spec in self._specs.values()]
+
+    def execute(self, *, agent_task: Task, tool_name: str, arguments: dict[str, Any]) -> AgentToolResult:
+        spec = self._specs.get(tool_name)
+        self._record_event(
+            agent_task,
+            "agent.tool_call.started",
+            level="info",
+            payload={"tool": tool_name, "arguments": dict(arguments)},
+        )
+        if spec is None:
+            return self._tool_error(agent_task, tool_name, f"Tool is not registered: {tool_name}")
+        try:
+            parsed = spec.input_model.model_validate(arguments).model_dump()
+            result = self._dispatch(agent_task=agent_task, tool_name=tool_name, arguments=parsed)
+        except Exception as exc:
+            return self._tool_error(agent_task, tool_name, str(exc))
+        self._record_event(
+            agent_task,
+            "agent.tool_call.completed",
+            level="info",
+            payload={"tool": tool_name, "status": "succeeded", "summary": result.summary, "data": result.data},
+        )
+        return result
+
+    def _dispatch(self, *, agent_task: Task, tool_name: str, arguments: dict[str, Any]) -> AgentToolResult:
+        session = self.session_repository.require(agent_task.session_id)
+        if tool_name == "start_port_scan":
+            task = self.scanner_service.create_scan_task(
+                session_identifier=session.id,
+                task_type="port_scan",
+                input_data={"target_host": _scanner_host_for_session(session)},
+            )
+            return _task_result(task, "Started port scan.")
+        if tool_name == "start_dir_scan":
+            base_url = str(arguments["base_url"])
+            _require_url_in_scope(session, base_url)
+            wordlist = arguments.get("wordlist") or self.scanner_service.get_config().for_tool("ffuf").default_wordlist
+            if not wordlist:
+                raise ValueError("ffuf wordlist is not configured.")
+            task = self.scanner_service.create_scan_task(
+                session_identifier=session.id,
+                task_type="dir_scan",
+                input_data={"base_url": base_url, "wordlist": wordlist, "filters": {}},
+            )
+            return _task_result(task, "Started directory scan.")
+        if tool_name == "start_poc_scan":
+            target_url = str(arguments["target_url"])
+            _require_url_in_scope(session, target_url)
+            templates = arguments.get("templates") or [self.scanner_service.get_config().for_tool("nuclei").templates_path]
+            templates = [str(item) for item in templates if item]
+            if not templates:
+                raise ValueError("nuclei templates path is not configured.")
+            task = self.scanner_service.create_scan_task(
+                session_identifier=session.id,
+                task_type="poc_scan",
+                input_data={"target_url": target_url, "templates": templates},
+            )
+            return _task_result(task, "Started POC scan.")
+        if tool_name == "summarize_task_result":
+            task = self.task_repository.require(str(arguments["task_id"]))
+            if task.session_id != session.id:
+                raise ValueError("Task is not in the active Session.")
+            summary = str(task.result_json.get("summary") or task.error or f"{task.task_type} {task.status.value}.")
+            return AgentToolResult(summary=summary, model_text=summary, data={"task_id": task.id, "status": task.status.value})
+        if tool_name == "create_attack_path_node":
+            detail = self.attack_path_service.create_attack_path_node(
+                session_identifier=session.id,
+                stage=str(arguments["stage"]),
+                title=str(arguments["title"]),
+                status=str(arguments.get("status") or "open"),
+                next_action=arguments.get("next_action"),
+                evidence_ids=list(arguments.get("evidence_ids") or []),
+            )
+            node = detail.node
+            return AgentToolResult(
+                summary=f"Created attack path node {node.public_id}.",
+                model_text=f"Created attack path node {node.public_id}: {node.title}",
+                data={"node_id": node.id, "public_id": node.public_id},
+            )
+        if tool_name == "create_finding":
+            evidence_refs = self._normalize_evidence_refs(session=session, refs=list(arguments.get("evidence_refs") or []))
+            finding = self.finding_repository.create(
+                Finding.create(
+                    project_id=session.project_id,
+                    session_id=session.id,
+                    severity=str(arguments.get("severity") or "info"),
+                    status=str(arguments.get("status") or "candidate"),
+                    title=str(arguments["title"]),
+                    description=arguments.get("description"),
+                    evidence_refs=evidence_refs,
+                )
+            )
+            self._record_event(
+                agent_task,
+                "finding.created",
+                level="info",
+                payload={"finding_id": finding.id, "public_id": finding.public_id, "severity": finding.severity},
+            )
+            return AgentToolResult(
+                summary=f"Created finding {finding.public_id}.",
+                model_text=f"Created finding {finding.public_id}: {finding.title}",
+                data={"finding_id": finding.id, "public_id": finding.public_id},
+            )
+        if tool_name == "suggest_terminal_command":
+            command = str(arguments["command"]).strip()
+            if not command:
+                raise ValueError("command must be non-empty.")
+            self._record_event(
+                agent_task,
+                "agent.terminal_command.suggested",
+                level="info",
+                payload={"command": command, "reason": arguments.get("reason")},
+            )
+            return AgentToolResult(
+                summary="Suggested terminal command.",
+                model_text=f"Suggested terminal command for operator review: {command}",
+                data={"command": command},
+            )
+        if tool_name == "create_writeup_draft":
+            evidence, _node = self.attack_path_service.create_evidence(
+                session_identifier=session.id,
+                evidence_type="writeup_draft",
+                title=str(arguments.get("title") or f"Writeup draft for {session.name}"),
+                summary="Agent-generated lightweight writeup draft.",
+                payload={"markdown": self._build_writeup_markdown(session)},
+                source_task_id=agent_task.id,
+            )
+            return AgentToolResult(
+                summary=f"Created writeup draft evidence {evidence.public_id}.",
+                model_text=f"Created writeup draft evidence {evidence.public_id}.",
+                data={"evidence_id": evidence.id, "public_id": evidence.public_id},
+            )
+        raise ValueError(f"Tool is not implemented: {tool_name}")
+
+    def _normalize_evidence_refs(self, *, session: TargetSession, refs: list[str]) -> list[str]:
+        evidence_refs: list[str] = []
+        for ref in refs:
+            evidence = self.evidence_repository.get(ref)
+            if evidence is None or evidence.session_id != session.id:
+                raise ValueError(f"Evidence not found in active Session: {ref}")
+            evidence_refs.append(evidence.id)
+        return evidence_refs
+
+    def _build_writeup_markdown(self, session: TargetSession) -> str:
+        tasks = self.task_repository.list(session_id=session.id, limit=20)
+        evidence = self.evidence_repository.list(session_id=session.id, limit=20)
+        findings = self.finding_repository.list(session_id=session.id, limit=20)
+        nodes = self.node_repository.list(session_id=session.id, limit=20)
+        lines = [
+            f"# {session.name}",
+            "",
+            f"- Target: `{session.target_value}`",
+            f"- Target type: `{session.target_type.value}`",
+            "",
+            "## Tasks",
+            *[f"- {task.public_id}: {task.task_type} `{task.status.value}`" for task in tasks],
+            "",
+            "## Findings",
+            *[f"- {finding.public_id}: {finding.title} ({finding.severity}, {finding.status})" for finding in findings],
+            "",
+            "## Evidence",
+            *[f"- {item.public_id}: {item.title}" for item in evidence],
+            "",
+            "## Attack Path",
+            *[f"- {node.public_id}: {node.stage} - {node.title}" for node in nodes],
+            "",
+            "## TODO",
+            "- Review this draft and fill exploit and remediation notes.",
+        ]
+        return "\n".join(lines)
+
+    def _tool_error(self, agent_task: Task, tool_name: str, message: str) -> AgentToolResult:
+        result = AgentToolResult(
+            summary=message,
+            model_text=f"Tool {tool_name} failed: {message}",
+            data={"error": message},
+        )
+        self._record_event(
+            agent_task,
+            "agent.tool_call.completed",
+            level="error",
+            payload={"tool": tool_name, "status": "failed", "summary": message, "data": result.data},
+        )
+        return result
+
+    def _record_event(self, task: Task, event_kind: str, *, level: str, payload: dict[str, Any]) -> Event:
+        return self.event_repository.create(
+            Event.create(
+                project_id=task.project_id,
+                session_id=task.session_id,
+                task_id=task.id,
+                event_kind=event_kind,
+                level=level,
+                payload=payload,
+            )
+        )
+
+
+class AgentOrchestrator:
+    def __init__(
+        self,
+        *,
+        settings: Settings,
+        tool_router: AgentToolRouter,
+        event_repository: EventRepository,
+        model_factory: ModelFactory = create_model,
+    ) -> None:
+        self.settings = settings
+        self.tool_router = tool_router
+        self.event_repository = event_repository
+        self.model_factory = model_factory
+
+    def run_turn(self, *, task: Task, session: TargetSession, message: str) -> dict[str, Any]:
+        model = self.model_factory(self.settings).bind_tools(self.tool_router.langchain_tools())
+        messages: list[Any] = [
+            SystemMessage(content=self._system_prompt()),
+            HumanMessage(content=self._context_message(session)),
+            HumanMessage(content=message),
+        ]
+        tool_calls: list[dict[str, Any]] = []
+        last_response = ""
+        max_steps = min(max(self.settings.max_agent_steps, 1), 8)
+        for _ in range(max_steps):
+            response: AIMessage = model.invoke(messages)
+            response_text = _message_text(response.content)
+            if response_text:
+                last_response = response_text
+                self._record_event(task, "conversation.delta", level="info", payload={"content": response_text})
+            if not response.tool_calls:
+                final_text = response_text or last_response or "Agent turn completed."
+                self._record_event(task, "conversation.completed", level="info", payload={"content": final_text})
+                return {"ok": True, "summary": final_text, "response": final_text, "tool_calls": tool_calls}
+            messages.append(response)
+            for tool_call in response.tool_calls:
+                tool_name = str(tool_call.get("name") or "")
+                args = tool_call.get("args") if isinstance(tool_call.get("args"), dict) else {}
+                call_id = str(tool_call.get("id") or f"call_{len(tool_calls) + 1}")
+                tool_calls.append({"name": tool_name, "args": dict(args), "id": call_id})
+                result = self.tool_router.execute(agent_task=task, tool_name=tool_name, arguments=dict(args))
+                messages.append(ToolMessage(content=result.model_text, tool_call_id=call_id))
+        summary = f"Agent turn stopped after {max_steps} tool-calling steps."
+        self._record_event(task, "conversation.completed", level="warning", payload={"content": summary})
+        return {"ok": True, "recoverable": True, "summary": summary, "response": summary, "tool_calls": tool_calls}
+
+    def _system_prompt(self) -> str:
+        return (
+            "You are red-code's local CTF Control Center Agent. "
+            "Answer normal questions directly. For CTF work, use only the registered high-level tools. "
+            "Never request raw bash execution or scan out-of-scope targets. "
+            "Terminal commands must be suggestions for operator review."
+        )
+
+    def _context_message(self, session: TargetSession) -> str:
+        return f"Active Session: {session.name}\nTarget: {session.target_type.value} {session.target_value}\nSummary: {session.summary or '-'}"
+
+    def _record_event(self, task: Task, event_kind: str, *, level: str, payload: dict[str, Any]) -> Event:
+        return self.event_repository.create(
+            Event.create(
+                project_id=task.project_id,
+                session_id=task.session_id,
+                task_id=task.id,
+                event_kind=event_kind,
+                level=level,
+                payload=payload,
+            )
+        )
+
+
+def _task_result(task: Task, prefix: str) -> AgentToolResult:
+    summary = str(task.result_json.get("summary") or task.error or f"{task.task_type} {task.status.value}.")
+    text = f"{prefix} {task.public_id} {task.status.value}: {summary}"
+    return AgentToolResult(summary=text, model_text=text, data={"task_id": task.id, "public_id": task.public_id, "status": task.status.value})
+
+
+def _scanner_host_for_session(session: TargetSession) -> str:
+    if session.target_type == TargetType.URL:
+        parsed = urlsplit(session.target_value)
+        return parsed.hostname or session.target_value
+    return session.target_value
+
+
+def _require_url_in_scope(session: TargetSession, value: str) -> None:
+    parsed = urlsplit(value)
+    host = parsed.hostname or value
+    target = session.target_value
+    if session.target_type == TargetType.URL:
+        target = urlsplit(session.target_value).hostname or session.target_value
+    if session.target_type == TargetType.NOTE:
+        raise ValueError("Scanner tools require a concrete Session target.")
+    if host != target:
+        raise ValueError(f"Target is outside the active Session scope: {value}")
+
+
+def _message_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict) and isinstance(item.get("text"), str):
+                parts.append(item["text"])
+        return "\n".join(part.strip() for part in parts if part.strip())
+    return str(content).strip() if content else ""

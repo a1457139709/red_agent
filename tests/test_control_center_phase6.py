@@ -12,7 +12,12 @@ from app.target_session_service import TargetSessionService
 from app.terminal_service import TerminalService
 from models.control_center import CommandRun, TargetType
 from server.app import create_app
-from storage.repositories.control_center import CommandRunRepository, EventRepository
+from storage.repositories.control_center import (
+    AttackPathEvidenceLinkRepository,
+    AttackPathNodeRepository,
+    CommandRunRepository,
+    EventRepository,
+)
 from storage.sqlite import SQLiteStorage
 from terminal.pty_manager import PtyManager
 
@@ -113,6 +118,10 @@ def test_command_output_can_be_saved_as_evidence(tmp_path):
     assert evidence.content_ref == command.output_ref
     assert evidence.payload["command_run_id"] == command.id
     assert evidence.payload["selected_text"] == "uid=1000(ctf)"
+    assert CommandRunRepository(storage).get(command.id).tags == ["manual", "terminal"]
+    node = AttackPathNodeRepository(storage).list(session_id=session.id, limit=None)[0]
+    assert node.stage == "terminal-evidence"
+    assert AttackPathEvidenceLinkRepository(storage).list_evidence_ids(node_id=node.id) == [evidence.id]
 
 
 def test_phase6_terminal_api_routes(tmp_path, monkeypatch):
@@ -147,6 +156,62 @@ def test_phase6_terminal_api_routes(tmp_path, monkeypatch):
         )
         assert evidence.status_code == 201
         assert evidence.json()["evidence"]["evidence_type"] == "terminal_output"
+
+
+@pytest.mark.skipif(platform.system().lower().startswith("win"), reason="POSIX PTY only in Phase 6")
+def test_terminal_websocket_open_input_resize_and_close(tmp_path, monkeypatch):
+    settings = build_settings(tmp_path)
+    _project, session = prepare_session(settings)
+
+    monkeypatch.setattr("server.lifecycle.get_settings", lambda: settings)
+    monkeypatch.setattr("server.ws.get_settings", lambda: settings)
+
+    with TestClient(create_app()) as client:
+        with client.websocket_connect(f"/ws/events?session_id={session.id}&replay=false") as websocket:
+            connected = websocket.receive_json()
+            assert connected["event_kind"] == "connection.connected"
+
+            websocket.send_json(
+                {
+                    "event_kind": "terminal.open",
+                    "payload": {"session_id": session.id, "rows": 20, "cols": 100},
+                }
+            )
+            opened = _receive_until(websocket, lambda event: event["event_kind"] == "terminal.opened")
+            terminal_id = opened["payload"]["terminal_id"]
+
+            websocket.send_json(
+                {
+                    "event_kind": "terminal.resize",
+                    "payload": {"terminal_id": terminal_id, "rows": 22, "cols": 120},
+                }
+            )
+            websocket.send_json(
+                {
+                    "event_kind": "terminal.input",
+                    "payload": {"terminal_id": terminal_id, "data": "echo phase6-ws\n"},
+                }
+            )
+            output = _receive_until(
+                websocket,
+                lambda event: (
+                    event["event_kind"] == "terminal.output"
+                    and "phase6-ws" in str(event["payload"].get("chunk"))
+                ),
+            )
+            assert output["payload"]["terminal_id"] == terminal_id
+
+            websocket.send_json({"event_kind": "terminal.close", "payload": {"terminal_id": terminal_id}})
+            exited = _receive_until(websocket, lambda event: event["event_kind"] == "terminal.exited")
+            assert exited["payload"]["terminal_id"] == terminal_id
+
+
+def _receive_until(websocket, predicate, *, max_messages: int = 30):
+    for _ in range(max_messages):
+        event = websocket.receive_json()
+        if predicate(event):
+            return event
+    raise AssertionError("Expected WebSocket event was not received.")
 
 
 def _wait_for(predicate, *, timeout_seconds: float = 3.0) -> bool:
