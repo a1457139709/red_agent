@@ -920,6 +920,7 @@ button {
 }
 
 .attack-board,
+.task-list,
 .evidence-list,
 .finding-list,
 .flag-list {
@@ -928,6 +929,7 @@ button {
 }
 
 .attack-node,
+.task-list article,
 .evidence-list article,
 .finding-list article,
 .flag-list article {
@@ -943,12 +945,23 @@ button {
   background: rgba(31, 102, 79, 0.13);
 }
 
+.attack-node.highlighted,
+.task-list article.highlighted,
+.evidence-list article.highlighted,
+.finding-list article.highlighted,
+.flag-list article.highlighted,
+.command-history article.highlighted {
+  border-color: rgba(236, 191, 105, 0.65);
+  background: rgba(236, 191, 105, 0.12);
+}
+
 .attack-node div {
   display: grid;
   gap: 4px;
 }
 
 .attack-node span,
+.task-list span,
 .evidence-list span,
 .finding-list span,
 .flag-list span {
@@ -958,6 +971,7 @@ button {
 }
 
 .attack-node strong,
+.task-list strong,
 .evidence-list strong,
 .finding-list strong,
 .flag-list strong {
@@ -969,6 +983,7 @@ button {
 }
 
 .attack-node p,
+.task-list p,
 .evidence-list p {
   margin: 7px 0;
   color: #bdc8c0;
@@ -978,6 +993,7 @@ button {
 }
 
 .attack-node small,
+.task-list small,
 .finding-list small,
 .flag-list small {
   color: #89958d;
@@ -1177,12 +1193,14 @@ button {
 
 .report-actions {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
 .report-actions button,
-.report-actions a {
+.report-actions a,
+.report-inline-actions button,
+.report-inline-actions a {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1197,7 +1215,8 @@ button {
   cursor: pointer;
 }
 
-.report-actions button:disabled {
+.report-actions button:disabled,
+.report-inline-actions button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
 }
@@ -1248,6 +1267,42 @@ button {
   white-space: pre-wrap;
 }
 
+.report-preview.compact pre {
+  max-height: 28vh;
+}
+
+.report-ref {
+  display: inline;
+  border: 0;
+  background: transparent;
+  color: #9ce0b2;
+  padding: 0;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.report-warnings {
+  display: grid;
+  gap: 5px;
+}
+
+.report-warnings span {
+  border: 1px solid rgba(236, 191, 105, 0.24);
+  border-radius: 8px;
+  background: rgba(236, 191, 105, 0.08);
+  color: #f0d39d;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.report-inline-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
 .report-list {
   display: grid;
   gap: 8px;
@@ -1286,6 +1341,19 @@ button {
   padding: 8px;
 }
 
+.command-history article.highlighted {
+  border-color: rgba(236, 191, 105, 0.65);
+  background: rgba(236, 191, 105, 0.12);
+}
+
+.command-history span {
+  display: block;
+  margin-bottom: 4px;
+  color: #9ce0b2;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
 .command-history strong,
 .command-history small {
   display: block;
@@ -1304,6 +1372,12 @@ button {
   margin-top: 4px;
   color: #89958d;
   font-size: 11px;
+}
+
+.session-command-history {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 .terminal-empty {

@@ -135,6 +135,10 @@ class TerminalService(ControlCenterService):
     def list_commands(self, *, terminal_identifier: str, limit: int | None = None) -> list[CommandRun]:
         return self.command_repository.list_by_terminal(terminal_id=terminal_identifier, limit=limit)
 
+    def list_session_commands(self, *, session_identifier: str, limit: int | None = None) -> list[CommandRun]:
+        session = self.session_repository.require(session_identifier)
+        return self.command_repository.list(session_id=session.id, limit=limit)
+
     def create_evidence_from_command(
         self,
         *,

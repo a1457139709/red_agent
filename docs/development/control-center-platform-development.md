@@ -645,13 +645,18 @@ Extend Agent Console:
 - `WriteupService`
 - 两段式 LLM 生成流程：主 Agent 汇总结构化资料，辅助报告 Agent 生成 Markdown
 - Control Center 专用 `ctf_reports` 持久化，不复用 legacy Report
-- report material 与 writeup 文件保存在 Project/Session 报告目录
+- report material 与 writeup 文件按 report public id 版本化保存在 Project/Session 报告目录
+- 生成后校验必需章节、未知 public id、事实性条目 public id 引用和 Command Log 命令来源
+- Command Log 命令来源包含人工终端 `CommandRun` 与 Scanner Task 的 `argv`
 
 Routes:
 
 - `GET /api/sessions/{session_id}/reports`
 - `POST /api/sessions/{session_id}/reports`
+- `GET /api/projects/{project_id}/reports`
+- `POST /api/projects/{project_id}/reports`
 - `GET /api/reports/{report_id}/download`
+- `GET /api/sessions/{session_id}/commands`
 
 Writeup sections:
 
@@ -676,15 +681,16 @@ Implement:
 - writeup preview
 - generate button
 - regenerate button
-- open file action
-- evidence reference navigation
+- open file action with Tauri report-path guard restricted to generated `writeup.md`
+- evidence/finding/task/command public id reference navigation
 
 ### 11.4 Tests
 
 - empty session writeup has useful skeleton.
 - populated session writeup includes ports, paths, findings, commands, flags.
 - generated Markdown references evidence ids.
-- no unrecorded steps are invented.
+- validator rejects unknown public ids, unrecorded commands, and uncited factual lines.
+- Scanner Task `argv` commands are accepted as recorded command sources.
 
 ### 11.5 Acceptance
 

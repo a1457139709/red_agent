@@ -82,6 +82,18 @@ async def list_terminal_commands(
     return {"commands": [serialize_command_run(command) for command in commands]}
 
 
+@router.get("/sessions/{session_id}/commands")
+async def list_session_commands(
+    session_id: str,
+    runtime_state: AppRuntimeState = Depends(get_runtime_state),
+) -> dict[str, list[dict[str, Any]]]:
+    try:
+        commands = runtime_state.terminal_service.list_session_commands(session_identifier=session_id, limit=None)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"commands": [serialize_command_run(command) for command in commands]}
+
+
 @router.post("/commands/{command_run_id}/evidence", status_code=201)
 async def create_command_evidence(
     command_run_id: str,

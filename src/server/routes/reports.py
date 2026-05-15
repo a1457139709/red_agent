@@ -44,6 +44,18 @@ async def list_session_reports(
     return {"reports": [serialize_report(report, content=_read_optional(report.artifact_path)) for report in reports]}
 
 
+@router.get("/projects/{project_id}/reports")
+async def list_project_reports(
+    project_id: str,
+    runtime_state: AppRuntimeState = Depends(get_runtime_state),
+) -> dict[str, list[dict[str, Any]]]:
+    try:
+        reports = WriteupService.from_settings(runtime_state.settings).list_project_reports(project_identifier=project_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"reports": [serialize_report(report, content=_read_optional(report.artifact_path)) for report in reports]}
+
+
 @router.post("/sessions/{session_id}/reports", status_code=201)
 async def create_session_report(
     session_id: str,
@@ -51,6 +63,18 @@ async def create_session_report(
 ) -> dict[str, Any]:
     try:
         result = WriteupService.from_settings(runtime_state.settings).generate_session_writeup(session_identifier=session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"report": serialize_report(result.report, content=result.writeup_markdown)}
+
+
+@router.post("/projects/{project_id}/reports", status_code=201)
+async def create_project_report(
+    project_id: str,
+    runtime_state: AppRuntimeState = Depends(get_runtime_state),
+) -> dict[str, Any]:
+    try:
+        result = WriteupService.from_settings(runtime_state.settings).generate_project_writeup(project_identifier=project_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"report": serialize_report(result.report, content=result.writeup_markdown)}

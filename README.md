@@ -310,8 +310,13 @@ Generate and inspect Control Center writeups through the desktop Report mode or 
 ```text
 POST /api/sessions/{session_id}/reports
 GET  /api/sessions/{session_id}/reports
+POST /api/projects/{project_id}/reports
+GET  /api/projects/{project_id}/reports
 GET  /api/reports/{report_id}/download
+GET  /api/sessions/{session_id}/commands
 ```
+
+Writeup validation rejects unknown public-id references, uncited factual lines, and Command Log commands that were not recorded as a terminal `CommandRun` or Scanner Task `argv`.
 
 Create and apply planner proposals:
 

@@ -1,4 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import {
   Bot,
   CheckCircle2,
@@ -31,12 +32,14 @@ import {
   type FlagDto,
   type ProjectDto,
   type ReportDto,
+  type ScanTaskDto,
   type TargetSessionDto,
   type TargetType,
   type TerminalDto,
   createCommandEvidence,
   createEvidence,
   createProject,
+  createProjectReport,
   createSessionReport,
   createTargetSession,
   getBackendUrl,
@@ -45,9 +48,12 @@ import {
   listEvidence,
   listFindings,
   listFlags,
+  listProjectReports,
   listProjectSessions,
   listProjects,
+  listSessionCommands,
   listSessionReports,
+  listSessionTasks,
   openTerminal,
   reportDownloadUrl,
   sendAgentMessage,
@@ -100,6 +106,14 @@ type FlagItem = {
   evidenceId: string;
 };
 
+type TaskItem = {
+  id: string;
+  type: string;
+  executor: string;
+  status: string;
+  summary: string;
+};
+
 type ReportItem = {
   id: string;
   title: string;
@@ -107,6 +121,8 @@ type ReportItem = {
   createdAt: string;
   artifactPath: string;
   content: string;
+  scope: "session" | "project";
+  validationWarnings: string[];
 };
 
 type TerminalTab = {
@@ -141,7 +157,11 @@ export function App() {
   const [nodes, setNodes] = useState<AttackNode[]>([]);
   const [findings, setFindings] = useState<FindingItem[]>([]);
   const [flags, setFlags] = useState<FlagItem[]>([]);
+  const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [sessionCommands, setSessionCommands] = useState<CommandRunDto[]>([]);
   const [reports, setReports] = useState<ReportItem[]>([]);
+  const [projectReports, setProjectReports] = useState<ReportItem[]>([]);
+  const [highlightedRef, setHighlightedRef] = useState<string | null>(null);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [reportError, setReportError] = useState<string | null>(null);
   const [reportGenerating, setReportGenerating] = useState(false);
@@ -177,11 +197,13 @@ export function App() {
 
   const refreshWorkspace = useCallback(
     async (sessionId: string) => {
-      const [attackPathItems, evidenceItems, findingItems, flagItems, reportItems] = await Promise.all([
+      const [attackPathItems, evidenceItems, findingItems, flagItems, taskItems, commandItems, reportItems] = await Promise.all([
         listAttackPath(backendUrl, sessionId),
         listEvidence(backendUrl, sessionId),
         listFindings(backendUrl, sessionId),
         listFlags(backendUrl, sessionId),
+        listSessionTasks(backendUrl, sessionId),
+        listSessionCommands(backendUrl, sessionId),
         listSessionReports(backendUrl, sessionId),
       ]);
       const evidenceById = new Map(evidenceItems.map((item) => [item.id, item.public_id]));
@@ -189,8 +211,18 @@ export function App() {
       setNodes(attackPathItems.map(mapAttackNode));
       setFindings(findingItems.map(mapFinding));
       setFlags(flagItems.map((flag) => mapFlag(flag, evidenceById)));
+      setTasks(taskItems.map(mapTask));
+      setSessionCommands(commandItems);
       setReports(reportItems.map(mapReport));
       setWorkspaceError(null);
+    },
+    [backendUrl],
+  );
+
+  const refreshProjectReports = useCallback(
+    async (projectId: string) => {
+      const reportItems = await listProjectReports(backendUrl, projectId);
+      setProjectReports(reportItems.map(mapReport));
     },
     [backendUrl],
   );
@@ -210,24 +242,27 @@ export function App() {
           return;
         }
         setProjectGroups(nextGroups);
-        setActiveProjectId((currentProjectId) => {
-          const nextProjectId = currentProjectId && nextGroups.some((group) => group.project.id === currentProjectId)
-            ? currentProjectId
-            : nextGroups[0]?.project.id ?? null;
-          setActiveSessionId((currentSessionId) => {
-            if (currentSessionId && nextGroups.some((group) => group.sessions.some((session) => session.id === currentSessionId))) {
-              return currentSessionId;
-            }
-            return nextGroups.find((group) => group.project.id === nextProjectId)?.sessions[0]?.id ?? null;
-          });
-          return nextProjectId;
+        const nextProjectId = activeProjectId && nextGroups.some((group) => group.project.id === activeProjectId)
+          ? activeProjectId
+          : nextGroups[0]?.project.id ?? null;
+        setActiveProjectId(nextProjectId);
+        setActiveSessionId((currentSessionId) => {
+          if (currentSessionId && nextGroups.some((group) => group.sessions.some((session) => session.id === currentSessionId))) {
+            return currentSessionId;
+          }
+          return nextGroups.find((group) => group.project.id === nextProjectId)?.sessions[0]?.id ?? null;
         });
         if (!nextGroups.some((group) => group.sessions.length > 0)) {
           setEvidence([]);
           setNodes([]);
           setFindings([]);
           setFlags([]);
+          setTasks([]);
+          setSessionCommands([]);
           setReports([]);
+        }
+        if (nextProjectId) {
+          void refreshProjectReports(nextProjectId);
         }
         setWorkspaceError(null);
       } catch (error) {
@@ -240,7 +275,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [backendUrl]);
+  }, [activeProjectId, backendUrl, refreshProjectReports]);
 
   useEffect(() => {
     seenEventIdsRef.current = new Set();
@@ -253,11 +288,21 @@ export function App() {
       setNodes([]);
       setFindings([]);
       setFlags([]);
+      setTasks([]);
+      setSessionCommands([]);
       setReports([]);
       setReportError(null);
       return;
     }
   }, [activeSessionId]);
+
+  useEffect(() => {
+    if (!activeProjectId) {
+      setProjectReports([]);
+      return;
+    }
+    void refreshProjectReports(activeProjectId);
+  }, [activeProjectId, refreshProjectReports]);
 
   useEffect(() => {
     if (!activeSession) {
@@ -447,6 +492,36 @@ export function App() {
     }
   };
 
+  const generateProjectReport = async () => {
+    if (!activeProject || reportGenerating) {
+      return;
+    }
+    setReportGenerating(true);
+    try {
+      const report = await createProjectReport(backendUrl, activeProject.id);
+      setProjectReports((current) => [mapReport(report), ...current.filter((item) => item.id !== report.public_id)]);
+      setReportError(null);
+    } catch (error) {
+      setReportError(error instanceof Error ? error.message : "Failed to generate project report.");
+    } finally {
+      setReportGenerating(false);
+    }
+  };
+
+  const openReportFile = async (artifactPath: string) => {
+    try {
+      await invoke("open_report_path", {path: artifactPath});
+      setReportError(null);
+    } catch (error) {
+      setReportError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const navigateReportReference = (publicId: string) => {
+    setHighlightedRef(publicId);
+    setMode(publicId.startsWith("CMD") ? "Exploit" : "Recon");
+  };
+
   const refreshTerminalCommands = useCallback(
     async (terminalId: string) => {
       try {
@@ -454,6 +529,7 @@ export function App() {
         setTerminalTabs((current) =>
           current.map((tab) => (tab.terminalId === terminalId ? {...tab, commands} : tab)),
         );
+        setSessionCommands((current) => mergeCommands(commands, current));
       } catch (error) {
         setTerminalError(error instanceof Error ? error.message : "Failed to load command history.");
       }
@@ -525,6 +601,9 @@ export function App() {
             event.event_kind === "report.generated"
           ) {
             void refreshWorkspace(sessionId);
+            if (activeProjectId) {
+              void refreshProjectReports(activeProjectId);
+            }
           }
         },
         onError: (message) => setTerminalError(message),
@@ -788,20 +867,29 @@ export function App() {
             evidence={evidence}
             findings={findings}
             flags={flags}
+            tasks={tasks}
             reports={reports}
+            projectReports={projectReports}
+            highlightedRef={highlightedRef}
             noteDraft={noteDraft}
             workspaceError={workspaceError}
             reportError={reportError}
             reportDisabled={!activeSession || reportGenerating}
+            projectReportDisabled={!activeProject || reportGenerating}
             backendUrl={backendUrl}
             noteDisabled={!activeSession || noteSubmitting}
             onNoteChange={setNoteDraft}
             onCreateNote={createManualNote}
             onGenerateReport={generateReport}
+            onGenerateProjectReport={generateProjectReport}
+            onOpenReportFile={openReportFile}
+            onReferenceClick={navigateReportReference}
           />
           <TerminalPanel
             tabs={terminalTabs}
             activeTerminalId={activeTerminalId}
+            sessionCommands={sessionCommands}
+            highlightedRef={highlightedRef}
             error={terminalError}
             disabled={!activeSession}
             onOpenTerminal={openTerminalTab}
@@ -864,7 +952,26 @@ function mapFlag(item: FlagDto, evidenceById: Map<string, string>): FlagItem {
   };
 }
 
+function mapTask(item: ScanTaskDto): TaskItem {
+  const summary = typeof item.result.summary === "string"
+    ? item.result.summary
+    : item.error ?? `${item.task_type} ${item.status}`;
+  return {
+    id: item.public_id,
+    type: item.task_type,
+    executor: item.executor,
+    status: item.status,
+    summary,
+  };
+}
+
 function mapReport(item: ReportDto): ReportItem {
+  const validation = typeof item.metadata.validation === "object" && item.metadata.validation !== null
+    ? item.metadata.validation as Record<string, unknown>
+    : {};
+  const warnings = Array.isArray(validation.warnings)
+    ? validation.warnings.filter((value): value is string => typeof value === "string")
+    : [];
   return {
     id: item.public_id,
     title: item.title,
@@ -872,6 +979,8 @@ function mapReport(item: ReportDto): ReportItem {
     createdAt: item.created_at,
     artifactPath: item.artifact_path,
     content: item.content ?? "",
+    scope: item.session_id ? "session" : "project",
+    validationWarnings: warnings,
   };
 }
 
@@ -885,6 +994,14 @@ function mapTerminalTab(item: TerminalDto): TerminalTab {
     selection: "",
     commands: [],
   };
+}
+
+function mergeCommands(incoming: CommandRunDto[], current: CommandRunDto[]): CommandRunDto[] {
+  const byId = new Map(current.map((command) => [command.id, command]));
+  for (const command of incoming) {
+    byId.set(command.id, command);
+  }
+  return [...byId.values()].sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
 }
 
 function stringPayload(value: unknown): string | null {
@@ -1271,41 +1388,60 @@ function IntelPanel({
   evidence,
   findings,
   flags,
+  tasks,
   reports,
+  projectReports,
+  highlightedRef,
   noteDraft,
   workspaceError,
   reportError,
   reportDisabled,
+  projectReportDisabled,
   backendUrl,
   noteDisabled,
   onNoteChange,
   onCreateNote,
   onGenerateReport,
+  onGenerateProjectReport,
+  onOpenReportFile,
+  onReferenceClick,
 }: {
   mode: WorkspaceMode;
   nodes: AttackNode[];
   evidence: EvidenceItem[];
   findings: FindingItem[];
   flags: FlagItem[];
+  tasks: TaskItem[];
   reports: ReportItem[];
+  projectReports: ReportItem[];
+  highlightedRef: string | null;
   noteDraft: string;
   workspaceError: string | null;
   reportError: string | null;
   reportDisabled: boolean;
+  projectReportDisabled: boolean;
   backendUrl: string;
   noteDisabled: boolean;
   onNoteChange: (value: string) => void;
   onCreateNote: (event: FormEvent<HTMLFormElement>) => void;
   onGenerateReport: () => void;
+  onGenerateProjectReport: () => void;
+  onOpenReportFile: (artifactPath: string) => void;
+  onReferenceClick: (publicId: string) => void;
 }) {
   if (mode === "Report") {
     return (
       <ReportPanel
         reports={reports}
+        projectReports={projectReports}
         error={reportError ?? workspaceError}
         disabled={reportDisabled}
+        projectDisabled={projectReportDisabled}
         backendUrl={backendUrl}
         onGenerateReport={onGenerateReport}
+        onGenerateProjectReport={onGenerateProjectReport}
+        onOpenReportFile={onOpenReportFile}
+        onReferenceClick={onReferenceClick}
       />
     );
   }
@@ -1320,13 +1456,31 @@ function IntelPanel({
         </div>
         <div className="attack-board">
           {nodes.map((node) => (
-            <article className={`attack-node ${node.status}`} key={node.id}>
+            <article className={`attack-node ${node.status} ${node.id === highlightedRef ? "highlighted" : ""}`} key={node.id}>
               <div>
                 <span>{node.stage}</span>
                 <strong>{node.title}</strong>
               </div>
               <p>{node.nextAction}</p>
               <small>{node.evidenceIds.join(", ")}</small>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="intel-section">
+        <div className="panel-heading">
+          <Layers3 aria-hidden="true" size={17} />
+          <h2>Tasks</h2>
+          <span>{tasks.length}</span>
+        </div>
+        <div className="task-list">
+          {tasks.map((task) => (
+            <article className={task.id === highlightedRef ? "highlighted" : ""} key={task.id}>
+              <span>{task.status}</span>
+              <strong>{task.type}</strong>
+              <small>{task.executor}</small>
+              <p>{task.summary}</p>
             </article>
           ))}
         </div>
@@ -1354,7 +1508,7 @@ function IntelPanel({
         </form>
         <div className="evidence-list">
           {evidence.map((item) => (
-            <article key={item.id}>
+            <article className={item.id === highlightedRef ? "highlighted" : ""} key={item.id}>
               <span>{item.kind}</span>
               <strong>{item.title}</strong>
               <p>{item.summary}</p>
@@ -1372,7 +1526,7 @@ function IntelPanel({
           </div>
           <div className="finding-list">
             {findings.map((finding) => (
-              <article key={finding.id}>
+              <article className={finding.id === highlightedRef ? "highlighted" : ""} key={finding.id}>
                 <span>{finding.severity}</span>
                 <strong>{finding.title}</strong>
                 <small>{finding.status}</small>
@@ -1388,7 +1542,7 @@ function IntelPanel({
           </div>
           <div className="flag-list">
             {flags.map((flag) => (
-              <article key={flag.id}>
+              <article className={flag.id === highlightedRef ? "highlighted" : ""} key={flag.id}>
                 <span>{flag.type}</span>
                 <strong>{flag.value}</strong>
                 <small>{flag.evidenceId}</small>
@@ -1403,18 +1557,29 @@ function IntelPanel({
 
 function ReportPanel({
   reports,
+  projectReports,
   error,
   disabled,
+  projectDisabled,
   backendUrl,
   onGenerateReport,
+  onGenerateProjectReport,
+  onOpenReportFile,
+  onReferenceClick,
 }: {
   reports: ReportItem[];
+  projectReports: ReportItem[];
   error: string | null;
   disabled: boolean;
+  projectDisabled: boolean;
   backendUrl: string;
   onGenerateReport: () => void;
+  onGenerateProjectReport: () => void;
+  onOpenReportFile: (artifactPath: string) => void;
+  onReferenceClick: (publicId: string) => void;
 }) {
   const latest = reports[0] ?? null;
+  const latestProject = projectReports[0] ?? null;
   return (
     <aside className="intel-panel report-panel" aria-label="Session writeup">
       <section className="intel-section">
@@ -1428,11 +1593,21 @@ function ReportPanel({
             <FileText aria-hidden="true" size={15} />
             <span>{latest ? "Regenerate" : "Generate"}</span>
           </button>
+          <button type="button" onClick={onGenerateProjectReport} disabled={projectDisabled}>
+            <Layers3 aria-hidden="true" size={15} />
+            <span>{latestProject ? "Project Regen" : "Project"}</span>
+          </button>
           {latest ? (
             <a href={reportDownloadUrl(backendUrl, latest.id)} target="_blank" rel="noreferrer">
               <Download aria-hidden="true" size={15} />
               <span>Download</span>
             </a>
+          ) : null}
+          {latest ? (
+            <button type="button" onClick={() => onOpenReportFile(latest.artifactPath)}>
+              <FileText aria-hidden="true" size={15} />
+              <span>Open File</span>
+            </button>
           ) : null}
         </div>
         {error ? <p className="workspace-error">{error}</p> : null}
@@ -1442,7 +1617,8 @@ function ReportPanel({
               <strong>{latest.title}</strong>
               <small>{formatCompactTime(latest.createdAt)}</small>
             </div>
-            <pre>{latest.content || latest.summary}</pre>
+            <MarkdownPreview markdown={latest.content || latest.summary} onReferenceClick={onReferenceClick} />
+            <ReportWarnings report={latest} />
             <small>{latest.artifactPath}</small>
           </article>
         ) : (
@@ -1455,7 +1631,28 @@ function ReportPanel({
       <section className="intel-section">
         <div className="panel-heading">
           <Layers3 aria-hidden="true" size={17} />
-          <h2>Reports</h2>
+          <h2>Project Reports</h2>
+          <span>{projectReports.length}</span>
+        </div>
+        {latestProject ? (
+          <article className="report-preview compact">
+            <div>
+              <strong>{latestProject.title}</strong>
+              <small>{formatCompactTime(latestProject.createdAt)}</small>
+            </div>
+            <MarkdownPreview markdown={latestProject.content || latestProject.summary} onReferenceClick={onReferenceClick} />
+            <ReportWarnings report={latestProject} />
+            <div className="report-inline-actions">
+              <a href={reportDownloadUrl(backendUrl, latestProject.id)} target="_blank" rel="noreferrer">Download</a>
+              <button type="button" onClick={() => onOpenReportFile(latestProject.artifactPath)}>Open File</button>
+            </div>
+          </article>
+        ) : null}
+      </section>
+      <section className="intel-section">
+        <div className="panel-heading">
+          <FileText aria-hidden="true" size={17} />
+          <h2>Session Reports</h2>
           <span>{reports.length}</span>
         </div>
         <div className="report-list">
@@ -1468,13 +1665,57 @@ function ReportPanel({
           ))}
         </div>
       </section>
+      <section className="intel-section">
+        <div className="panel-heading">
+          <Layers3 aria-hidden="true" size={17} />
+          <h2>Project History</h2>
+          <span>{projectReports.length}</span>
+        </div>
+        <div className="report-list">
+          {projectReports.map((report) => (
+            <article key={report.id}>
+              <span>{formatCompactTime(report.createdAt)}</span>
+              <strong>{report.title}</strong>
+              <p>{report.summary}</p>
+            </article>
+          ))}
+        </div>
+      </section>
     </aside>
+  );
+}
+
+function MarkdownPreview({markdown, onReferenceClick}: {markdown: string; onReferenceClick: (publicId: string) => void}) {
+  const tokens = markdown.split(/(\b(?:P|T|TASK|EVID|FIND|AP|CMD|FLAG|RPT)\d{4}\b)/g);
+  return (
+    <pre>
+      {tokens.map((token, index) => (
+        /^(?:P|T|TASK|EVID|FIND|AP|CMD|FLAG|RPT)\d{4}$/.test(token) ? (
+          <button type="button" className="report-ref" key={`${token}-${index}`} onClick={() => onReferenceClick(token)}>
+            {token}
+          </button>
+        ) : token
+      ))}
+    </pre>
+  );
+}
+
+function ReportWarnings({report}: {report: ReportItem}) {
+  if (!report.validationWarnings.length) {
+    return null;
+  }
+  return (
+    <div className="report-warnings">
+      {report.validationWarnings.map((warning) => <span key={warning}>{warning}</span>)}
+    </div>
   );
 }
 
 function TerminalPanel({
   tabs,
   activeTerminalId,
+  sessionCommands,
+  highlightedRef,
   error,
   disabled,
   onOpenTerminal,
@@ -1487,6 +1728,8 @@ function TerminalPanel({
 }: {
   tabs: TerminalTab[];
   activeTerminalId: string | null;
+  sessionCommands: CommandRunDto[];
+  highlightedRef: string | null;
   error: string | null;
   disabled: boolean;
   onOpenTerminal: () => void;
@@ -1564,7 +1807,8 @@ function TerminalPanel({
           </div>
           <div className="command-history">
             {activeTab.commands.map((command) => (
-              <article key={command.id}>
+              <article className={command.public_id === highlightedRef ? "highlighted" : ""} key={command.id}>
+                <span>{command.public_id}</span>
                 <strong>{command.command}</strong>
                 <small>{command.output_summary ?? command.output_ref ?? "running"}</small>
               </article>
@@ -1577,6 +1821,22 @@ function TerminalPanel({
           <span>No terminal open</span>
         </div>
       )}
+      <div className="session-command-history">
+        <div className="panel-heading">
+          <Command aria-hidden="true" size={16} />
+          <h2>Session Commands</h2>
+          <span>{sessionCommands.length}</span>
+        </div>
+        <div className="command-history">
+          {sessionCommands.map((command) => (
+            <article className={command.public_id === highlightedRef ? "highlighted" : ""} key={command.id}>
+              <span>{command.public_id}</span>
+              <strong>{command.command}</strong>
+              <small>{command.output_summary ?? command.output_ref ?? "running"}</small>
+            </article>
+          ))}
+        </div>
+      </div>
     </aside>
   );
 }

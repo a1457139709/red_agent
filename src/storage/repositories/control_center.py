@@ -210,7 +210,7 @@ CREATE TABLE IF NOT EXISTS ctf_reports (
     id TEXT PRIMARY KEY,
     public_id TEXT NOT NULL UNIQUE,
     project_id TEXT NOT NULL,
-    session_id TEXT NOT NULL,
+    session_id TEXT,
     report_type TEXT NOT NULL,
     title TEXT NOT NULL,
     summary TEXT NOT NULL,
@@ -246,6 +246,7 @@ class ControlCenterSchemaRepository:
             self._ensure_column(connection, "ctf_command_runs", "working_directory", "TEXT")
             self._ensure_column(connection, "ctf_command_runs", "started_at", "TEXT")
             self._ensure_column(connection, "ctf_command_runs", "ended_at", "TEXT")
+            self._ensure_nullable_report_session_id(connection)
             self._normalize_event_sequences(connection)
             connection.execute(
                 """
@@ -286,6 +287,43 @@ class ControlCenterSchemaRepository:
                 "UPDATE ctf_events SET sequence = ? WHERE id = ?",
                 (index, row["id"]),
             )
+
+    def _ensure_nullable_report_session_id(self, connection: sqlite3.Connection) -> None:
+        rows = connection.execute("PRAGMA table_info(ctf_reports)").fetchall()
+        session_column = next((row for row in rows if row["name"] == "session_id"), None)
+        if session_column is None or int(session_column["notnull"]) == 0:
+            return
+        connection.executescript(
+            """
+            ALTER TABLE ctf_reports RENAME TO ctf_reports_old;
+            CREATE TABLE ctf_reports (
+                id TEXT PRIMARY KEY,
+                public_id TEXT NOT NULL UNIQUE,
+                project_id TEXT NOT NULL,
+                session_id TEXT,
+                report_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                material_path TEXT NOT NULL,
+                artifact_path TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                metadata TEXT NOT NULL DEFAULT '{}',
+                FOREIGN KEY(project_id) REFERENCES ctf_projects(id),
+                FOREIGN KEY(session_id) REFERENCES ctf_target_sessions(id)
+            );
+            INSERT INTO ctf_reports (
+                id, public_id, project_id, session_id, report_type, title,
+                summary, material_path, artifact_path, created_at, metadata
+            )
+            SELECT
+                id, public_id, project_id, session_id, report_type, title,
+                summary, material_path, artifact_path, created_at, metadata
+            FROM ctf_reports_old;
+            DROP TABLE ctf_reports_old;
+            CREATE INDEX IF NOT EXISTS idx_ctf_reports_session_created_at
+                ON ctf_reports(session_id, created_at DESC);
+            """
+        )
 
 
 class ProjectRepository:
@@ -990,6 +1028,29 @@ class CTFReportRepository:
             connection.commit()
         return report
 
+    def update(self, report: CTFReport) -> CTFReport:
+        with self.storage.connect() as connection:
+            connection.execute(
+                """
+                UPDATE ctf_reports
+                SET
+                    public_id = :public_id,
+                    project_id = :project_id,
+                    session_id = :session_id,
+                    report_type = :report_type,
+                    title = :title,
+                    summary = :summary,
+                    material_path = :material_path,
+                    artifact_path = :artifact_path,
+                    created_at = :created_at,
+                    metadata = :metadata
+                WHERE id = :id
+                """,
+                report.to_row(),
+            )
+            connection.commit()
+        return report
+
     def get(self, identifier: str) -> CTFReport | None:
         with self.storage.connect() as connection:
             row = get_row_by_identifier(
@@ -1014,6 +1075,16 @@ class CTFReportRepository:
             session_id=session_id,
             limit=limit,
         )
+
+    def list_project_reports(self, *, project_id: str, limit: int | None = 50) -> list[CTFReport]:
+        query = "SELECT * FROM ctf_reports WHERE project_id = ? AND session_id IS NULL ORDER BY created_at DESC"
+        params: list[object] = [project_id]
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        with self.storage.connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [CTFReport.from_row(dict(row)) for row in rows]
 
 
 def _list_session_entities(

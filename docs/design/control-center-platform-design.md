@@ -451,6 +451,8 @@ POST   /api/sessions/{session_id}/flags
 
 GET    /api/sessions/{session_id}/reports
 POST   /api/sessions/{session_id}/reports
+GET    /api/projects/{project_id}/reports
+POST   /api/projects/{project_id}/reports
 GET    /api/reports/{report_id}/download
 
 GET    /api/tools/status
@@ -840,6 +842,7 @@ Writeup Service 从结构化数据生成 Markdown。
 - Evidence summaries
 - Findings
 - Command runs
+- Scanner Task argv
 - Flags
 
 输出：
@@ -851,7 +854,9 @@ Writeup Service 从结构化数据生成 Markdown。
 
 - 不编造未记录步骤。
 - 命令必须来自 CommandRun 或 Scanner Task。
-- 证据必须带引用。
+- 事实性条目必须带 public id 引用；未知 public id 会导致生成失败。
+- Command Log 中的命令必须匹配已记录的 CommandRun 命令或 Scanner Task `argv`。
+- 证据、finding、task、command、flag 引用可在桌面端跳转或高亮。
 - 未完成事项写入 TODO。
 - flag 默认保留原值，后续可增加遮蔽选项。
 

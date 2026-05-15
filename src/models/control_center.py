@@ -39,6 +39,7 @@ class TaskStatus(StrEnum):
 
 class ReportType(StrEnum):
     SESSION_WRITEUP = "session_writeup"
+    PROJECT_WRITEUP = "project_writeup"
 
 
 def _normalize_required_text(value: str, *, field_name: str) -> str:
@@ -775,7 +776,7 @@ class CTFReport:
     id: str
     public_id: str
     project_id: str
-    session_id: str
+    session_id: str | None
     report_type: ReportType
     title: str
     summary: str
@@ -786,7 +787,7 @@ class CTFReport:
 
     def __post_init__(self) -> None:
         self.project_id = _normalize_required_text(self.project_id, field_name="project id")
-        self.session_id = _normalize_required_text(self.session_id, field_name="session id")
+        self.session_id = _normalize_optional_text(self.session_id)
         self.report_type = ReportType(self.report_type)
         self.title = _normalize_required_text(self.title, field_name="report title")
         self.summary = _normalize_required_text(self.summary, field_name="report summary")
@@ -799,7 +800,8 @@ class CTFReport:
         cls,
         *,
         project_id: str,
-        session_id: str,
+        session_id: str | None,
+        report_type: ReportType = ReportType.SESSION_WRITEUP,
         title: str,
         summary: str,
         material_path: str,
@@ -811,7 +813,7 @@ class CTFReport:
             public_id="",
             project_id=project_id,
             session_id=session_id,
-            report_type=ReportType.SESSION_WRITEUP,
+            report_type=report_type,
             title=title,
             summary=summary,
             material_path=material_path,

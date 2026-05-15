@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createProject,
+  createProjectReport,
   createSessionReport,
   createTargetSession,
   parseAttackPathNode,
@@ -16,6 +17,7 @@ import {
   parseTargetSession,
   parseTerminal,
   parseToolStatus,
+  listProjectReports,
   reportDownloadUrl,
   sendAgentMessage,
 } from "./api";
@@ -203,6 +205,15 @@ const report = {
   content: "# Linux target\n\n## Overview\nTODO",
 };
 
+const projectReport = {
+  ...report,
+  id: "report-project-1",
+  public_id: "RPT0002",
+  session_id: null,
+  report_type: "project_writeup",
+  title: "HTB Lab project writeup",
+};
+
 const session = {
   id: "session-1",
   public_id: "T0001",
@@ -322,6 +333,24 @@ describe("control center API clients", () => {
     expect(reportDownloadUrl("http://127.0.0.1:8000", "RPT0001")).toBe(
       "http://127.0.0.1:8000/api/reports/RPT0001/download",
     );
+  });
+
+  it("lists and creates Project writeup reports", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({reports: [projectReport]}))
+      .mockResolvedValueOnce(jsonResponse({report: projectReport}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(listProjectReports("http://127.0.0.1:8000", "project-1")).resolves.toMatchObject([
+      {public_id: "RPT0002", session_id: null},
+    ]);
+    await expect(createProjectReport("http://127.0.0.1:8000", "project-1")).resolves.toMatchObject({
+      report_type: "project_writeup",
+      session_id: null,
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "http://127.0.0.1:8000/api/projects/project-1/reports", undefined);
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "http://127.0.0.1:8000/api/projects/project-1/reports", {method: "POST"});
   });
 
   it("throws displayable errors for failed API responses", async () => {

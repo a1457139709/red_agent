@@ -177,7 +177,7 @@ export type ReportDto = {
   id: string;
   public_id: string;
   project_id: string;
-  session_id: string;
+  session_id: string | null;
   report_type: string;
   title: string;
   summary: string;
@@ -449,7 +449,7 @@ export function parseReport(payload: unknown): ReportDto {
     id: requireString(record.id, "Invalid report id."),
     public_id: requireString(record.public_id, "Invalid report public id."),
     project_id: requireString(record.project_id, "Invalid report project id."),
-    session_id: requireString(record.session_id, "Invalid report session id."),
+    session_id: requireNullableString(record.session_id, "Invalid report session id."),
     report_type: requireString(record.report_type, "Invalid report type."),
     title: requireString(record.title, "Invalid report title."),
     summary: requireString(record.summary, "Invalid report summary."),
@@ -715,10 +715,26 @@ export async function listSessionReports(baseUrl: string, sessionId: string): Pr
   return requireArray(payload.reports, "Invalid reports response.").map(parseReport);
 }
 
+export async function listProjectReports(baseUrl: string, projectId: string): Promise<ReportDto[]> {
+  const payload = requireRecord(
+    await requestJson(`${baseUrl}/api/projects/${projectId}/reports`),
+    "Invalid project reports response.",
+  );
+  return requireArray(payload.reports, "Invalid project reports response.").map(parseReport);
+}
+
 export async function createSessionReport(baseUrl: string, sessionId: string): Promise<ReportDto> {
   const payload = requireRecord(
     await requestJson(`${baseUrl}/api/sessions/${sessionId}/reports`, {method: "POST"}),
     "Invalid report response.",
+  );
+  return parseReport(payload.report);
+}
+
+export async function createProjectReport(baseUrl: string, projectId: string): Promise<ReportDto> {
+  const payload = requireRecord(
+    await requestJson(`${baseUrl}/api/projects/${projectId}/reports`, {method: "POST"}),
+    "Invalid project report response.",
   );
   return parseReport(payload.report);
 }
@@ -749,6 +765,14 @@ export async function listTerminalCommands(baseUrl: string, terminalId: string):
     "Invalid terminal command response.",
   );
   return requireArray(payload.commands, "Invalid terminal command response.").map(parseCommandRun);
+}
+
+export async function listSessionCommands(baseUrl: string, sessionId: string): Promise<CommandRunDto[]> {
+  const payload = requireRecord(
+    await requestJson(`${baseUrl}/api/sessions/${sessionId}/commands`),
+    "Invalid session command response.",
+  );
+  return requireArray(payload.commands, "Invalid session command response.").map(parseCommandRun);
 }
 
 export async function createCommandEvidence(
