@@ -76,6 +76,7 @@ async def cancel_task(
 ) -> dict[str, Any]:
     try:
         task = ScannerService.from_settings(runtime_state.settings).cancel_task(task_id)
+        runtime_state.scanner_tasks.cancel_pending(task.id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"task": serialize_task(task)}

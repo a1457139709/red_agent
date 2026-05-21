@@ -577,6 +577,15 @@ graph LR
 - 本机测试
 - 本地优先部署
 
+连接模型：
+
+- `Desktop Client` 是 Tauri + React 客户端，不直接承载 Python runtime。
+- `Local App Server` 是 FastAPI 进程，负责 HTTP API、WebSocket、任务调度和服务组合。
+- 客户端默认连接 `http://127.0.0.1:<port>`，并提供运行时 backend URL 配置；运行时配置优先于构建期 `VITE_BACKEND_URL`。
+- 事件流默认由同一 backend URL 派生为 `ws://127.0.0.1:<port>/ws/events`；启用认证时 WebSocket 使用 `auth_token=<token>` 查询参数。
+- 扫描、Agent 执行、终端命令、报告生成、SQLite 和本地文件读写全部发生在本机 App Server 侧。
+- packaged desktop app 可以连接已经运行的本地 App Server；是否由桌面壳自动启动本地 sidecar 是打包层能力，不改变 client/server 边界。
+
 ### 11.2 远程单机模式
 
 ```mermaid
@@ -586,7 +595,7 @@ graph LR
     Runtime[Remote Runtime and Worker]
     DB[SQLite and Local Files on Server]
 
-    Client -->|TLS HTTP + WebSocket| Server
+    Client -->|HTTP API + WebSocket| Server
     Server --> Runtime
     Server --> DB
     Runtime --> DB
@@ -598,7 +607,44 @@ graph LR
 - 客户端与执行环境分离
 - 后台任务在服务端持续运行
 
-### 11.3 v1 不支持的部署
+连接模型：
+
+- 本地机器只运行 `Desktop Client`。
+- 远程服务器运行 `Remote App Server`、runtime/worker、SQLite 和项目文件目录。
+- 客户端通过配置的 backend URL 调用 HTTP JSON API，并从同一 URL 派生 WebSocket 事件与交互流。
+- 所有具有副作用的能力，包括扫描、shell/terminal、文件访问、报告生成和证据落盘，都在远程服务器执行。
+- 客户端不得假设本地文件系统拥有远程 artifact；下载、预览和打开报告必须通过服务端 API 或经过明确授权的文件传输机制。
+
+远程模式连接要求：
+
+- App Server 默认仍只绑定 `127.0.0.1`；绑定 `0.0.0.0` 或公网地址属于显式运行配置。
+- HTTP API 和 WebSocket 都从客户端选择的 backend URL 派生，确保请求、事件回放和终端交互连接到同一个 App Server。
+- `.red-code/config/control-center-auth.json` 提供可选的单用户认证；缺失或禁用时，远程和本地开发模式都保持未认证。
+- 服务端 data dir、工具路径、wordlist、nuclei templates 和 artifact root 必须以服务端配置为准。
+- 远程 server 本质上是执行环境；扫描、终端、报告和 artifact 都以服务端状态为准。
+
+### 11.3 统一程序入口和运行模式
+
+目标产品可以提供统一 launcher，但运行时边界仍保持 client/server 分离。
+
+推荐命令形态：
+
+```bash
+red-code server --host 127.0.0.1 --port 8000
+red-code server --host 0.0.0.0 --port 8000 --config ./server.toml
+red-code client --backend-url http://red-agent.example.com:8000
+red-code desktop
+```
+
+语义：
+
+- `red-code server` 只启动 App Server，不启动桌面 UI。
+- `red-code client` 只启动客户端，并连接显式指定的 backend URL。
+- `red-code desktop` 面向本地 all-in-one 使用场景，可以先启动或发现本地 App Server，再启动桌面客户端。
+- packaged Tauri app 应提供运行时 backend URL 配置；不能只依赖构建期 `VITE_BACKEND_URL`。
+- 统一入口只负责进程编排和配置传递，不把 Python 后端和前端 UI 合并成一个业务进程。
+
+### 11.4 v1 不支持的部署
 
 v1 不支持：
 

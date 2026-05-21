@@ -11,12 +11,14 @@ from models.run import utc_now_iso
 from runtime.ctf_agent_tasks import CTFAgentTaskRuntime
 from runtime.scanner_tasks import ScannerTaskRuntime
 
+from .auth import AuthService
 from .dependencies import AppRuntimeState
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
+    app.state.auth_service = AuthService.from_settings(settings)
     scanner_tasks = ScannerTaskRuntime(settings=settings)
     ctf_agent_tasks = CTFAgentTaskRuntime(settings=settings)
     terminal_service = TerminalService.from_settings(settings)

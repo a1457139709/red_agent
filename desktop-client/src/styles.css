@@ -54,6 +54,39 @@ button {
   grid-template-columns: 76px minmax(0, 1fr);
 }
 
+.connection-shell {
+  display: grid;
+  place-items: center;
+  width: 100vw;
+  min-height: 100vh;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 0 0, rgba(31, 102, 79, 0.2), transparent 34rem),
+    linear-gradient(135deg, rgba(151, 37, 43, 0.12), transparent 42rem),
+    #111314;
+}
+
+.connection-panel {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  width: min(100%, 460px);
+}
+
+.connection-panel h1 {
+  margin: 0;
+  color: #f8faf6;
+  font-size: 28px;
+  line-height: 1.15;
+}
+
+.connection-panel p {
+  margin: 0;
+  color: #c58f8f;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .conversation-rail {
   min-width: 0;
   border-right: 1px solid rgba(220, 225, 218, 0.12);
@@ -363,7 +396,8 @@ button {
 }
 
 .rail-create-form button,
-.setup-form button {
+.setup-form button,
+.connection-panel > button {
   min-height: 36px;
   border: 1px solid rgba(115, 196, 151, 0.35);
   border-radius: 8px;
@@ -377,6 +411,7 @@ button {
 .rail-create-form textarea:disabled,
 .rail-create-form select:disabled,
 .setup-form button:disabled,
+.connection-panel > button:disabled,
 .setup-form input:disabled,
 .setup-form textarea:disabled,
 .setup-form select:disabled {
@@ -923,7 +958,8 @@ button {
 .task-list,
 .evidence-list,
 .finding-list,
-.flag-list {
+.flag-list,
+.tool-status-list {
   display: grid;
   gap: 8px;
 }
@@ -932,7 +968,8 @@ button {
 .task-list article,
 .evidence-list article,
 .finding-list article,
-.flag-list article {
+.flag-list article,
+.tool-status-list article {
   min-width: 0;
   border: 1px solid rgba(228, 234, 226, 0.13);
   border-radius: 8px;
@@ -964,17 +1001,23 @@ button {
 .task-list span,
 .evidence-list span,
 .finding-list span,
-.flag-list span {
+.flag-list span,
+.tool-status-list span {
   color: #9ce0b2;
   font-size: 11px;
   text-transform: uppercase;
+}
+
+.tool-status-list span.missing {
+  color: #f0a0a6;
 }
 
 .attack-node strong,
 .task-list strong,
 .evidence-list strong,
 .finding-list strong,
-.flag-list strong {
+.flag-list strong,
+.tool-status-list strong {
   display: block;
   overflow-wrap: anywhere;
   color: #f4f8f2;
@@ -984,7 +1027,8 @@ button {
 
 .attack-node p,
 .task-list p,
-.evidence-list p {
+.evidence-list p,
+.tool-status-list p {
   margin: 7px 0;
   color: #bdc8c0;
   font-size: 12px;
@@ -995,10 +1039,73 @@ button {
 .attack-node small,
 .task-list small,
 .finding-list small,
-.flag-list small {
+.flag-list small,
+.tool-status-list small {
   color: #89958d;
   font-size: 11px;
   overflow-wrap: anywhere;
+}
+
+.task-actions {
+  margin-top: 8px;
+}
+
+.task-actions button,
+.tool-config-form button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 32px;
+  border: 1px solid rgba(115, 196, 151, 0.35);
+  border-radius: 8px;
+  background: rgba(31, 102, 79, 0.18);
+  color: #c9f0d7;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tool-settings-panel {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.tool-config-form {
+  display: grid;
+  gap: 10px;
+}
+
+.tool-config-form fieldset {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  margin: 0;
+  border: 1px solid rgba(228, 234, 226, 0.13);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.tool-config-form legend,
+.tool-config-form label {
+  color: #9ce0b2;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.tool-config-form input {
+  min-width: 0;
+  min-height: 34px;
+  border: 1px solid rgba(228, 234, 226, 0.14);
+  border-radius: 8px;
+  outline: 0;
+  background: rgba(244, 247, 242, 0.065);
+  color: #f7fbf6;
+  padding: 0 10px;
+}
+
+.tool-config-form button:disabled,
+.tool-config-form input:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .note-form {

@@ -9,6 +9,7 @@ from server.dependencies import AppRuntimeState
 from storage.repositories.control_center import ProjectRepository, TargetSessionRepository
 from storage.sqlite import SQLiteStorage
 
+from .auth import AuthService
 from .contracts import ServerEventEnvelope
 
 router = APIRouter(tags=["websocket"])
@@ -17,6 +18,19 @@ router = APIRouter(tags=["websocket"])
 @router.websocket("/ws/events")
 async def event_websocket(websocket: WebSocket) -> None:
     await websocket.accept()
+    auth_service = getattr(websocket.app.state, "auth_service", None)
+    if isinstance(auth_service, AuthService) and auth_service.enabled:
+        token = _optional_query_value(websocket.query_params.get("auth_token"))
+        if not auth_service.is_authorized(token):
+            await websocket.send_json(
+                ServerEventEnvelope.create(
+                    sequence=1,
+                    event_kind="error",
+                    payload={"code": "authentication_required", "message": "Authentication required."},
+                ).to_dict()
+            )
+            await websocket.close()
+            return
     try:
         project_id, session_id = _resolve_scope_ids(
             project_identifier=_optional_query_value(websocket.query_params.get("project_id")),

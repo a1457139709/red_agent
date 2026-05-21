@@ -703,7 +703,9 @@ Implement:
 
 ### 12.1 Goal
 
-提高稳定性、跨平台可用性和开发体验。
+提高稳定性、跨平台可用性、部署清晰度和开发体验。Phase 8 的 packaged desktop app
+必须明确采用 client/server 连接模型：桌面端是客户端，Python App Server 是后端执行环境。
+本阶段可以支持本机 all-in-one 体验，但不应把 UI 和后端业务逻辑合并成一个不可拆分的进程。
 
 ### 12.2 Tasks
 
@@ -717,8 +719,65 @@ Implement:
 - frontend error boundaries
 - backend structured logging
 - Tauri packaging
+- runtime backend URL configuration for packaged desktop app
+- local backend discovery or explicit local backend connection flow
+- documented remote backend connection flow using a runtime backend URL
+- optional single-user local auth config at `.red-code/config/control-center-auth.json`
+- optional unified launcher command design for `server`, `client`, and `desktop` modes
 - README update
 - docs examples update
+
+### 12.2.1 Packaged Connection Model
+
+Supported modes:
+
+- Local server mode: packaged desktop app connects to an already running local App Server at
+  `http://127.0.0.1:<port>`.
+- Remote server mode: packaged desktop app connects to a server-hosted App Server through the
+  configured backend URL; the WebSocket URL is derived from that same backend URL.
+- Local all-in-one mode: a launcher may start or discover the local App Server and then open the
+  desktop client, while keeping the server and client as separate processes.
+
+Required behavior:
+
+- The client must be able to store or receive a backend URL at runtime; packaged builds must not
+  depend only on build-time `VITE_BACKEND_URL`.
+- The WebSocket URL must continue to derive from the selected backend URL so HTTP and event replay
+  stay scoped to the same server.
+- Remote server mode must treat the server as the source of truth for runtime state, artifacts,
+  report files, tool paths, wordlists, templates, and terminal execution.
+- Opening local report paths from Tauri is only valid for local server mode. Remote mode must use
+  download or preview APIs instead of assuming the report exists on the client filesystem.
+
+Recommended launcher shape:
+
+```bash
+red-code server --host 127.0.0.1 --port 8000
+red-code server --host 0.0.0.0 --port 8000 --config ./server.toml
+red-code client --backend-url http://red-agent.example.com:8000
+red-code desktop
+```
+
+Connection baseline:
+
+- App Server defaults to `127.0.0.1`.
+- Binding to `0.0.0.0` is an explicit operator choice.
+- Remote server mode is single-user in v1; multi-user isolation remains out of scope.
+
+Optional Phase 8 auth config:
+
+```json
+{
+  "enabled": true,
+  "username": "admin",
+  "password": "change-me"
+}
+```
+
+If the auth config is missing or disabled, development remains unauthenticated. When enabled,
+all HTTP APIs except `/api/health`, `/api/auth/session`, and `/api/auth/login` require
+`Authorization: Bearer <token>`. `/ws/events` requires the same in-memory token through
+`auth_token=<token>`.
 
 ### 12.3 Tests
 
@@ -728,13 +787,23 @@ Implement:
 - event replay after reconnect
 - Windows path serialization where possible
 - frontend production build
+- packaged app backend URL override or runtime configuration
+- WebSocket URL derivation from configured backend URL
+- local mode report opening behavior remains constrained to generated reports
+- remote mode report access uses HTTP download or preview flow
+- server command defaults to localhost binding
 - backend full pytest suite
+- frontend API tests for runtime backend URL, tool config, and API error messages
+- Tauri `cargo check` and packaging smoke where platform dependencies are available
 
 ### 12.4 Acceptance
 
 - Fresh checkout can run documented dev commands.
 - Missing external tools are reported clearly.
-- Packaged desktop app can connect to local backend.
+- Packaged desktop app can connect to a local backend.
+- Packaged desktop app can be configured to connect to a remote backend.
+- Local all-in-one launcher can start or discover a local backend without weakening the client/server boundary.
+- Remote backend deployment is documented as a client/server connection mode using the configured backend URL.
 - Long-running scan can be canceled.
 - UI can recover after WebSocket reconnect.
 
@@ -780,6 +849,7 @@ npm install
 npm run dev
 npm run build
 npm run tauri dev
+npm run tauri -- build
 ```
 
 Exact package manager can be chosen when the desktop client is created, but it must be documented in `README.md`.

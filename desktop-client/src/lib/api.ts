@@ -10,9 +10,53 @@ export type HealthStatus =
   | { state: "offline"; error: string };
 
 export const DEFAULT_BACKEND_URL = "http://127.0.0.1:8000";
+export const BACKEND_URL_STORAGE_KEY = "red-code.backend-url";
+export const AUTH_TOKEN_STORAGE_KEY = "red-code.auth-token";
+
+let apiAuthToken: string | null = readLocalStorage(AUTH_TOKEN_STORAGE_KEY);
 
 export function getBackendUrl(): string {
-  return import.meta.env.VITE_BACKEND_URL ?? DEFAULT_BACKEND_URL;
+  return readLocalStorage(BACKEND_URL_STORAGE_KEY) ?? import.meta.env.VITE_BACKEND_URL ?? DEFAULT_BACKEND_URL;
+}
+
+export function setBackendUrl(value: string): string {
+  const normalized = normalizeBackendUrl(value);
+  writeLocalStorage(BACKEND_URL_STORAGE_KEY, normalized);
+  return normalized;
+}
+
+export function setApiAuthToken(token: string | null): void {
+  apiAuthToken = token;
+  if (token) {
+    writeLocalStorage(AUTH_TOKEN_STORAGE_KEY, token);
+  } else {
+    removeLocalStorage(AUTH_TOKEN_STORAGE_KEY);
+  }
+}
+
+export function getApiAuthToken(): string | null {
+  return apiAuthToken;
+}
+
+export function normalizeBackendUrl(value: string): string {
+  const normalized = value.trim().replace(/\/+$/, "");
+  if (!normalized) {
+    return DEFAULT_BACKEND_URL;
+  }
+  const url = new URL(normalized);
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("Backend URL must use http or https.");
+  }
+  return url.toString().replace(/\/+$/, "");
+}
+
+export function isLocalBackendUrl(value: string): boolean {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  } catch {
+    return false;
+  }
 }
 
 export function parseHealthResponse(payload: unknown): HealthResponse {
@@ -101,6 +145,31 @@ export type ToolStatusDto = {
   path: string | null;
   version: string | null;
   error: string | null;
+};
+
+export type AuthSessionDto = {
+  enabled: boolean;
+  authenticated: boolean;
+  username: string | null;
+};
+
+export type LoginResponseDto = {
+  token: string | null;
+  auth: AuthSessionDto;
+};
+
+export type ToolName = "nmap" | "ffuf" | "nuclei";
+
+export type ScannerToolConfigDto = {
+  binary_path: string | null;
+  timeout_seconds: number;
+  templates_path: string | null;
+  default_wordlist: string | null;
+  extra_args: string[];
+};
+
+export type ToolConfigDto = {
+  tools: Record<ToolName, ScannerToolConfigDto>;
 };
 
 export type ScanTaskDto = {
@@ -358,6 +427,35 @@ export function parseToolStatus(payload: unknown): ToolStatusDto {
   };
 }
 
+export function parseAuthSession(payload: unknown): AuthSessionDto {
+  const record = requireRecord(payload, "Invalid auth session.");
+  return {
+    enabled: requireBoolean(record.enabled, "Invalid auth enabled flag."),
+    authenticated: requireBoolean(record.authenticated, "Invalid auth authenticated flag."),
+    username: requireNullableString(record.username, "Invalid auth username."),
+  };
+}
+
+export function parseLoginResponse(payload: unknown): LoginResponseDto {
+  const record = requireRecord(payload, "Invalid login response.");
+  return {
+    token: requireNullableString(record.token, "Invalid auth token."),
+    auth: parseAuthSession(record.auth),
+  };
+}
+
+export function parseToolConfig(payload: unknown): ToolConfigDto {
+  const record = requireRecord(payload, "Invalid tool config.");
+  const tools = requireRecord(record.tools, "Invalid tool config tools.");
+  return {
+    tools: {
+      nmap: parseScannerToolConfig(tools.nmap),
+      ffuf: parseScannerToolConfig(tools.ffuf),
+      nuclei: parseScannerToolConfig(tools.nuclei),
+    },
+  };
+}
+
 export function parseScanTask(payload: unknown): ScanTaskDto {
   const record = requireRecord(payload, "Invalid scan task.");
   return {
@@ -502,6 +600,28 @@ export async function listProjects(baseUrl: string): Promise<ProjectDto[]> {
   return projects.map(parseProject);
 }
 
+export async function getAuthSession(baseUrl: string): Promise<AuthSessionDto> {
+  const payload = requireRecord(await requestJson(`${baseUrl}/api/auth/session`), "Invalid auth session response.");
+  return parseAuthSession(payload.auth);
+}
+
+export async function login(baseUrl: string, input: {username: string; password: string}): Promise<LoginResponseDto> {
+  const payload = await requestJson(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(input),
+  });
+  const response = parseLoginResponse(payload);
+  setApiAuthToken(response.token);
+  return response;
+}
+
+export async function logout(baseUrl: string): Promise<AuthSessionDto> {
+  const payload = requireRecord(await requestJson(`${baseUrl}/api/auth/logout`, {method: "POST"}), "Invalid logout response.");
+  setApiAuthToken(null);
+  return parseAuthSession(payload.auth);
+}
+
 export async function createProject(baseUrl: string, input: CreateProjectInput): Promise<ProjectDto> {
   const payload = requireRecord(
     await requestJson(`${baseUrl}/api/projects`, {
@@ -566,6 +686,23 @@ export async function listToolStatus(baseUrl: string): Promise<ToolStatusDto[]> 
     throw new Error("Invalid tool status response.");
   }
   return payload.tools.map(parseToolStatus);
+}
+
+export async function getToolConfig(baseUrl: string): Promise<ToolConfigDto> {
+  const payload = requireRecord(await requestJson(`${baseUrl}/api/tools/config`), "Invalid tool config response.");
+  return parseToolConfig(payload.config);
+}
+
+export async function updateToolConfig(baseUrl: string, input: ToolConfigDto): Promise<ToolConfigDto> {
+  const payload = requireRecord(
+    await requestJson(`${baseUrl}/api/tools/config`, {
+      method: "PATCH",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(input),
+    }),
+    "Invalid tool config response.",
+  );
+  return parseToolConfig(payload.config);
 }
 
 export async function listSessionTasks(baseUrl: string, sessionId: string): Promise<ScanTaskDto[]> {
@@ -792,11 +929,67 @@ export async function createCommandEvidence(
 }
 
 async function requestJson(url: string, init?: RequestInit): Promise<unknown> {
-  const response = await fetch(url, init);
+  const response = await fetch(url, withAuthHeader(init));
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
+    throw new Error(await responseErrorMessage(response));
   }
   return response.json();
+}
+
+function withAuthHeader(init?: RequestInit): RequestInit | undefined {
+  if (!apiAuthToken) {
+    return init;
+  }
+  const headers = new Headers(init?.headers);
+  headers.set("Authorization", `Bearer ${apiAuthToken}`);
+  return {...init, headers};
+}
+
+async function responseErrorMessage(response: Response): Promise<string> {
+  try {
+    const payload = await response.clone().json();
+    if (typeof payload === "object" && payload !== null && "detail" in payload && typeof payload.detail === "string") {
+      return `Request failed: ${response.status} ${payload.detail}`;
+    }
+  } catch {
+    return `Request failed: ${response.status}`;
+  }
+  return `Request failed: ${response.status}`;
+}
+
+function parseScannerToolConfig(payload: unknown): ScannerToolConfigDto {
+  const record = requireRecord(payload, "Invalid scanner tool config.");
+  return {
+    binary_path: requireNullableString(record.binary_path, "Invalid binary path."),
+    timeout_seconds: requireNumber(record.timeout_seconds, "Invalid timeout."),
+    templates_path: requireNullableString(record.templates_path, "Invalid templates path."),
+    default_wordlist: requireNullableString(record.default_wordlist, "Invalid default wordlist."),
+    extra_args: requireStringArray(record.extra_args, "Invalid extra args."),
+  };
+}
+
+function readLocalStorage(key: string): string | null {
+  try {
+    return globalThis.localStorage?.getItem(key) || null;
+  } catch {
+    return null;
+  }
+}
+
+function writeLocalStorage(key: string, value: string): void {
+  try {
+    globalThis.localStorage?.setItem(key, value);
+  } catch {
+    return;
+  }
+}
+
+function removeLocalStorage(key: string): void {
+  try {
+    globalThis.localStorage?.removeItem(key);
+  } catch {
+    return;
+  }
 }
 
 function requireRecord(payload: unknown, message: string): Record<string, unknown> {

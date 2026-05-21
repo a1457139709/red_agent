@@ -234,11 +234,43 @@ cd desktop-client
 npm run tauri dev
 ```
 
-The desktop shell defaults to `http://127.0.0.1:8000` and can be pointed at another backend with `VITE_BACKEND_URL`.
+Build a packaged desktop bundle:
+
+```bash
+cd desktop-client
+npm run tauri -- build
+```
+
+The desktop shell defaults to `http://127.0.0.1:8000`. Packaged and development builds also expose a
+runtime backend URL field on the first connection screen; that value is stored locally and takes
+precedence over `VITE_BACKEND_URL`.
 The shell expects the backend when creating Projects/Sessions, loading workspace records, sending
 Agent messages, or replaying event streams.
 
-The Control Center event socket is `ws://127.0.0.1:8000/ws/events` by default. It accepts optional replay scope parameters such as `session_id`, `project_id`, `limit`, and `since_sequence` so the desktop client can restore persisted session history after reconnect or backend restart.
+The Control Center event socket is `ws://127.0.0.1:8000/ws/events` by default. It accepts optional replay scope parameters such as `session_id`, `project_id`, `limit`, and `since_sequence` so the desktop client can restore persisted session history after reconnect or backend restart. When Control Center auth is enabled, the client appends `auth_token=<token>` to the WebSocket URL.
+
+Single-user auth is configured locally at `.red-code/config/control-center-auth.json`:
+
+```json
+{
+  "enabled": true,
+  "username": "admin",
+  "password": "change-me"
+}
+```
+
+If the file is missing or `enabled` is `false`, local development stays unauthenticated. When it is enabled, all HTTP API routes except `/api/health`, `/api/auth/session`, and `/api/auth/login` require `Authorization: Bearer <token>`. Tokens are in-memory and are invalidated by backend restart.
+
+The target packaging model keeps the desktop client and App Server as separate runtime roles:
+
+- local mode: packaged desktop client connects to `http://127.0.0.1:<port>`;
+- remote mode: desktop client connects to a server-hosted backend through the configured backend URL;
+- all-in-one mode: a launcher may start or discover the local App Server and then open the client.
+
+Remote backend deployment uses the server-side configuration for data directories, tool paths,
+wordlists, templates, artifacts, and optional single-user auth.
+In remote mode, the desktop client uses report preview/download over HTTP; the Tauri `Open File`
+action is only shown for `localhost` or `127.0.0.1` backends.
 
 Phase 3 scanner endpoints are available under `/api/tools` and `/api/sessions/{session_id}/tasks`.
 They expose local `nmap`, `ffuf`, and `nuclei` status/configuration, enqueue scan tasks for
@@ -247,6 +279,10 @@ session artifacts, and generate structured results plus evidence and attack-path
 successful scans. Scanner tasks are constrained to the selected Session target; ffuf can use a
 configured default wordlist, nuclei can use a configured templates path, and each tool can receive
 configured extra argv entries.
+
+The Settings mode in the desktop client shows `nmap`, `ffuf`, and `nuclei` availability, resolved
+path, version, and diagnostic error. It can update `binary_path`, `timeout_seconds`, `extra_args`,
+`ffuf.default_wordlist`, and `nuclei.templates_path` through `/api/tools/config`.
 
 Phase 4 Agent messages are accepted at `/api/sessions/{session_id}/agent/messages`. Sending
 `枚举这台靶机`, `enumerate target`, or a similar scan request creates an `agent_analysis` task,

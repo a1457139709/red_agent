@@ -1,14 +1,22 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  AUTH_TOKEN_STORAGE_KEY,
+  BACKEND_URL_STORAGE_KEY,
   createProject,
   createProjectReport,
   createSessionReport,
   createTargetSession,
+  getBackendUrl,
+  getToolConfig,
+  isLocalBackendUrl,
+  login,
   parseAttackPathNode,
+  parseAuthSession,
   parseEvidence,
   parseFinding,
   parseFlag,
   parseHealthResponse,
+  parseLoginResponse,
   parseProject,
   parseCommandRun,
   parseReport,
@@ -16,13 +24,29 @@ import {
   parseSessionDashboard,
   parseTargetSession,
   parseTerminal,
+  parseToolConfig,
   parseToolStatus,
   listProjectReports,
   reportDownloadUrl,
   sendAgentMessage,
+  setApiAuthToken,
+  setBackendUrl,
+  updateToolConfig,
 } from "./api";
 
+let storage: Map<string, string>;
+
+beforeEach(() => {
+  storage = new Map();
+  vi.stubGlobal("localStorage", {
+    getItem: vi.fn((key: string) => storage.get(key) ?? null),
+    setItem: vi.fn((key: string, value: string) => storage.set(key, value)),
+    removeItem: vi.fn((key: string) => storage.delete(key)),
+  });
+});
+
 afterEach(() => {
+  setApiAuthToken(null);
   vi.unstubAllGlobals();
 });
 
@@ -73,6 +97,32 @@ describe("phase 3 DTO parsers", () => {
         updated_at: "2026-05-03T00:00:00+00:00",
       }).executor,
     ).toBe("nmap");
+  });
+});
+
+describe("phase 8 auth and tool DTO parsers", () => {
+  it("parses auth session and login responses", () => {
+    expect(parseAuthSession({enabled: true, authenticated: false, username: null})).toEqual({
+      enabled: true,
+      authenticated: false,
+      username: null,
+    });
+    expect(parseLoginResponse({token: "token-1", auth: {enabled: true, authenticated: true, username: "admin"}})).toEqual({
+      token: "token-1",
+      auth: {enabled: true, authenticated: true, username: "admin"},
+    });
+  });
+
+  it("parses scanner tool config", () => {
+    const config = parseToolConfig({
+      tools: {
+        nmap: {binary_path: "/opt/nmap", timeout_seconds: 60, templates_path: null, default_wordlist: null, extra_args: ["-Pn"]},
+        ffuf: {binary_path: null, timeout_seconds: 120, templates_path: null, default_wordlist: "/tmp/words.txt", extra_args: []},
+        nuclei: {binary_path: null, timeout_seconds: 180, templates_path: "/tmp/templates", default_wordlist: null, extra_args: []},
+      },
+    });
+    expect(config.tools.nmap.extra_args).toEqual(["-Pn"]);
+    expect(config.tools.ffuf.default_wordlist).toBe("/tmp/words.txt");
   });
 });
 
@@ -358,6 +408,62 @@ describe("control center API clients", () => {
 
     await expect(createProject("http://127.0.0.1:8000", {name: "HTB Lab"})).rejects.toThrow(
       "Request failed: 500",
+    );
+  });
+
+  it("stores runtime backend URL and auth token", async () => {
+    expect(setBackendUrl("http://127.0.0.1:8000/")).toBe("http://127.0.0.1:8000");
+    expect(getBackendUrl()).toBe("http://127.0.0.1:8000");
+
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      token: "token-1",
+      auth: {enabled: true, authenticated: true, username: "admin"},
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await login("http://127.0.0.1:8000", {username: "admin", password: "change-me"});
+    expect(storage.get(AUTH_TOKEN_STORAGE_KEY)).toBe("token-1");
+  });
+
+  it("detects local backend URLs for file opening boundaries", () => {
+    expect(isLocalBackendUrl("http://127.0.0.1:8000")).toBe(true);
+    expect(isLocalBackendUrl("http://localhost:8000")).toBe(true);
+    expect(isLocalBackendUrl("https://control.example.test")).toBe(false);
+  });
+
+  it("adds bearer auth and updates tool config", async () => {
+    setApiAuthToken("token-1");
+    const config = {
+      tools: {
+        nmap: {binary_path: "/opt/nmap", timeout_seconds: 60, templates_path: null, default_wordlist: null, extra_args: ["-Pn"]},
+        ffuf: {binary_path: null, timeout_seconds: 120, templates_path: null, default_wordlist: "/tmp/words.txt", extra_args: []},
+        nuclei: {binary_path: null, timeout_seconds: 180, templates_path: "/tmp/templates", default_wordlist: null, extra_args: []},
+      },
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({config}))
+      .mockResolvedValueOnce(jsonResponse({config}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getToolConfig("http://127.0.0.1:8000")).resolves.toMatchObject(config);
+    await expect(updateToolConfig("http://127.0.0.1:8000", config)).resolves.toMatchObject(config);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "http://127.0.0.1:8000/api/tools/config",
+      expect.objectContaining({headers: expect.any(Headers)}),
+    );
+    expect((fetchMock.mock.calls[0][1].headers as Headers).get("Authorization")).toBe("Bearer token-1");
+  });
+
+  it("includes response detail in failed auth messages", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({detail: "Authentication required."}), {
+      status: 401,
+      headers: {"Content-Type": "application/json"},
+    })));
+
+    await expect(createProject("http://127.0.0.1:8000", {name: "HTB Lab"})).rejects.toThrow(
+      "Request failed: 401 Authentication required.",
     );
   });
 });

@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Component, FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Bot,
@@ -16,8 +16,10 @@ import {
   PanelLeftOpen,
   Plus,
   Radio,
+  RotateCcw,
   Save,
   SendHorizontal,
+  Settings,
   ShieldCheck,
   Terminal as TerminalIcon,
   Target,
@@ -36,13 +38,20 @@ import {
   type TargetSessionDto,
   type TargetType,
   type TerminalDto,
+  type ToolConfigDto,
+  type ToolStatusDto,
+  cancelScanTask,
   createCommandEvidence,
   createEvidence,
   createProject,
   createProjectReport,
   createSessionReport,
   createTargetSession,
+  getApiAuthToken,
+  getAuthSession,
   getBackendUrl,
+  getToolConfig,
+  isLocalBackendUrl,
   listTerminalCommands,
   listAttackPath,
   listEvidence,
@@ -54,15 +63,22 @@ import {
   listSessionCommands,
   listSessionReports,
   listSessionTasks,
+  listToolStatus,
+  login,
+  logout,
   openTerminal,
   reportDownloadUrl,
+  rerunScanTask,
   sendAgentMessage,
+  setApiAuthToken,
+  setBackendUrl,
+  updateToolConfig,
 } from "./lib/api";
 import { TARGET_TYPE_OPTIONS, validateAgentMessageForm, validateProjectForm, validateTargetSessionForm } from "./lib/forms";
 import { appendChatMessage, type ChatMessage, mapServerEventToChatMessage } from "./lib/agentEvents";
 import { type EventSocketController, backendHttpToWebSocketUrl, connectEventSocket } from "./lib/ws";
 
-type WorkspaceMode = "Recon" | "Exploit" | "Report";
+type WorkspaceMode = "Recon" | "Exploit" | "Report" | "Settings";
 
 type ProjectGroup = {
   project: ProjectDto;
@@ -135,6 +151,19 @@ type TerminalTab = {
   commands: CommandRunDto[];
 };
 
+type ConnectionState =
+  | {state: "checking"}
+  | {state: "login"; authEnabled: boolean; error: string | null}
+  | {state: "ready"; authEnabled: boolean; username: string | null};
+
+type ToolConfigForm = Record<ToolStatusDto["name"], {
+  binary_path: string;
+  timeout_seconds: string;
+  extra_args: string;
+  default_wordlist: string;
+  templates_path: string;
+}>;
+
 const promptSuggestions = [
   "枚举这台靶机的初始攻击面",
   "基于当前证据生成下一步侦察计划",
@@ -142,7 +171,13 @@ const promptSuggestions = [
 ];
 
 export function App() {
-  const backendUrl = useMemo(() => getBackendUrl(), []);
+  const [backendUrl, setRuntimeBackendUrl] = useState(() => getBackendUrl());
+  const [connection, setConnection] = useState<ConnectionState>({state: "checking"});
+  const [loginDraft, setLoginDraft] = useState({backendUrl: getBackendUrl(), username: "admin", password: ""});
+  const [toolStatuses, setToolStatuses] = useState<ToolStatusDto[]>([]);
+  const [toolConfig, setToolConfig] = useState<ToolConfigForm>(() => emptyToolConfigForm());
+  const [toolSettingsError, setToolSettingsError] = useState<string | null>(null);
+  const [toolSettingsSaving, setToolSettingsSaving] = useState(false);
   const seenEventIdsRef = useRef<Set<string>>(new Set());
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
@@ -185,6 +220,8 @@ export function App() {
     targetType: "ip" as TargetType,
     summary: "",
   });
+  const authToken = getApiAuthToken();
+  const localBackend = isLocalBackendUrl(backendUrl);
 
   const activeProject = useMemo(
     () => projectGroups.find((group) => group.project.id === activeProjectId)?.project ?? null,
@@ -194,6 +231,79 @@ export function App() {
     () => projectGroups.flatMap((group) => group.sessions).find((session) => session.id === activeSessionId) ?? null,
     [activeSessionId, projectGroups],
   );
+
+  const handleAuthError = useCallback((error: unknown, fallback: string): string => {
+    const message = error instanceof Error ? error.message : fallback;
+    if (message.includes("401")) {
+      setApiAuthToken(null);
+      setConnection({state: "login", authEnabled: true, error: "Session expired. Sign in again."});
+    }
+    return message;
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function verifySession() {
+      setConnection({state: "checking"});
+      try {
+        const auth = await getAuthSession(backendUrl);
+        if (cancelled) {
+          return;
+        }
+        if (!auth.enabled || auth.authenticated) {
+          setConnection({state: "ready", authEnabled: auth.enabled, username: auth.username});
+          return;
+        }
+        setConnection({state: "login", authEnabled: true, error: null});
+      } catch (error) {
+        if (!cancelled) {
+          setConnection({
+            state: "login",
+            authEnabled: false,
+            error: error instanceof Error ? error.message : "Failed to connect to backend.",
+          });
+        }
+      }
+    }
+    void verifySession();
+    return () => {
+      cancelled = true;
+    };
+  }, [backendUrl]);
+
+  const submitLogin = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    try {
+      const nextBackendUrl = setBackendUrl(loginDraft.backendUrl);
+      setRuntimeBackendUrl(nextBackendUrl);
+      const session = await getAuthSession(nextBackendUrl);
+      if (!session.enabled) {
+        setConnection({state: "ready", authEnabled: false, username: null});
+        return;
+      }
+      const response = await login(nextBackendUrl, {
+        username: loginDraft.username.trim(),
+        password: loginDraft.password,
+      });
+      setConnection({state: "ready", authEnabled: true, username: response.auth.username});
+      setLoginDraft((current) => ({...current, password: ""}));
+    } catch (error) {
+      setConnection({
+        state: "login",
+        authEnabled: true,
+        error: error instanceof Error ? error.message : "Failed to sign in.",
+      });
+    }
+  };
+
+  const signOut = async () => {
+    try {
+      await logout(backendUrl);
+    } catch {
+      setApiAuthToken(null);
+    }
+    setConnection({state: "login", authEnabled: true, error: null});
+  };
 
   const refreshWorkspace = useCallback(
     async (sessionId: string) => {
@@ -267,7 +377,7 @@ export function App() {
         setWorkspaceError(null);
       } catch (error) {
         if (!cancelled) {
-          setWorkspaceError(error instanceof Error ? error.message : "Failed to load sessions.");
+          setWorkspaceError(handleAuthError(error, "Failed to load sessions."));
         }
       }
     }
@@ -275,7 +385,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeProjectId, backendUrl, refreshProjectReports]);
+  }, [activeProjectId, backendUrl, connection.state, handleAuthError, refreshProjectReports]);
 
   useEffect(() => {
     seenEventIdsRef.current = new Set();
@@ -304,8 +414,29 @@ export function App() {
     void refreshProjectReports(activeProjectId);
   }, [activeProjectId, refreshProjectReports]);
 
+  const refreshToolSettings = useCallback(async () => {
+    try {
+      const [statuses, config] = await Promise.all([
+        listToolStatus(backendUrl),
+        getToolConfig(backendUrl),
+      ]);
+      setToolStatuses(statuses);
+      setToolConfig(toolConfigToForm(config));
+      setToolSettingsError(null);
+    } catch (error) {
+      setToolSettingsError(handleAuthError(error, "Failed to load tool settings."));
+    }
+  }, [backendUrl, handleAuthError]);
+
   useEffect(() => {
-    if (!activeSession) {
+    if (connection.state !== "ready") {
+      return;
+    }
+    void refreshToolSettings();
+  }, [connection.state, refreshToolSettings]);
+
+  useEffect(() => {
+    if (!activeSession || connection.state !== "ready") {
       return;
     }
     const sessionId = activeSession.id;
@@ -315,7 +446,7 @@ export function App() {
         await refreshWorkspace(sessionId);
       } catch (error) {
         if (!cancelled) {
-          setWorkspaceError(error instanceof Error ? error.message : "Failed to load workspace.");
+          setWorkspaceError(handleAuthError(error, "Failed to load workspace."));
         }
       }
     }
@@ -323,7 +454,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeSession, refreshWorkspace]);
+  }, [activeSession, connection.state, handleAuthError, refreshWorkspace]);
 
   const selectProject = (projectId: string) => {
     const group = projectGroups.find((item) => item.project.id === projectId);
@@ -517,6 +648,26 @@ export function App() {
     }
   };
 
+  const downloadReportFile = async (reportId: string) => {
+    try {
+      const headers = authToken ? {Authorization: `Bearer ${authToken}`} : undefined;
+      const response = await fetch(reportDownloadUrl(backendUrl, reportId), {headers});
+      if (!response.ok) {
+        throw new Error(`Request failed: ${response.status}`);
+      }
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = `${reportId}.md`;
+      anchor.click();
+      URL.revokeObjectURL(objectUrl);
+      setReportError(null);
+    } catch (error) {
+      setReportError(error instanceof Error ? error.message : "Failed to download report.");
+    }
+  };
+
   const navigateReportReference = (publicId: string) => {
     setHighlightedRef(publicId);
     setMode(publicId.startsWith("CMD") ? "Exploit" : "Recon");
@@ -543,7 +694,7 @@ export function App() {
     }
     const sessionId = activeSession.id;
     const socket = connectEventSocket(
-      backendHttpToWebSocketUrl(backendUrl, {sessionId, replay: true, replayLimit: 60}),
+      backendHttpToWebSocketUrl(backendUrl, {sessionId, authToken, replay: true, replayLimit: 60}),
       {
         onStatusChange: () => undefined,
         onEvent: (event) => {
@@ -614,7 +765,7 @@ export function App() {
       socket.close();
       setTerminalSocket(null);
     };
-  }, [activeSession, activeTerminalId, backendUrl, refreshTerminalCommands, refreshWorkspace]);
+  }, [activeSession, activeTerminalId, authToken, backendUrl, refreshTerminalCommands, refreshWorkspace]);
 
   const openTerminalTab = async () => {
     if (!activeSession) {
@@ -679,7 +830,60 @@ export function App() {
     }
   };
 
+  const saveToolSettings = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (toolSettingsSaving) {
+      return;
+    }
+    setToolSettingsSaving(true);
+    try {
+      await updateToolConfig(backendUrl, toolConfigFromForm(toolConfig));
+      await refreshToolSettings();
+      setToolSettingsError(null);
+    } catch (error) {
+      setToolSettingsError(handleAuthError(error, "Failed to save tool settings."));
+    } finally {
+      setToolSettingsSaving(false);
+    }
+  };
+
+  const cancelTask = async (taskId: string) => {
+    if (!activeSession) {
+      return;
+    }
+    try {
+      await cancelScanTask(backendUrl, taskId);
+      await refreshWorkspace(activeSession.id);
+    } catch (error) {
+      setWorkspaceError(handleAuthError(error, "Failed to cancel task."));
+    }
+  };
+
+  const rerunTask = async (taskId: string) => {
+    if (!activeSession) {
+      return;
+    }
+    try {
+      await rerunScanTask(backendUrl, taskId);
+      await refreshWorkspace(activeSession.id);
+    } catch (error) {
+      setWorkspaceError(handleAuthError(error, "Failed to rerun task."));
+    }
+  };
+
+  if (connection.state !== "ready") {
+    return (
+      <ConnectionPanel
+        draft={loginDraft}
+        state={connection}
+        onDraftChange={setLoginDraft}
+        onSubmit={submitLogin}
+      />
+    );
+  }
+
   return (
+    <ErrorBoundary>
     <main className={`immersion-shell ${sidebarOpen ? "sidebar-expanded" : "sidebar-collapsed"}`}>
       <aside className="conversation-rail" aria-label="Conversation management">
         <ConversationPanel
@@ -777,7 +981,7 @@ export function App() {
             </div>
           </div>
           <div className="mode-tabs" aria-label="Workspace mode">
-            {(["Recon", "Exploit", "Report"] as WorkspaceMode[]).map((item) => (
+            {(["Recon", "Exploit", "Report", "Settings"] as WorkspaceMode[]).map((item) => (
               <button type="button" className={item === mode ? "active" : ""} key={item} onClick={() => setMode(item)}>
                 {item}
               </button>
@@ -790,8 +994,13 @@ export function App() {
             </span>
             <span>
               <ShieldCheck aria-hidden="true" size={15} />
-              {activeSession?.target_type ?? "Project"}
+              {connection.authEnabled ? connection.username ?? "Signed in" : activeSession?.target_type ?? "Local"}
             </span>
+            {connection.authEnabled ? (
+              <button type="button" className="mini-icon-button" onClick={signOut} aria-label="Sign out" title="Sign out">
+                <X aria-hidden="true" size={15} />
+              </button>
+            ) : null}
           </div>
         </header>
 
@@ -877,13 +1086,24 @@ export function App() {
             reportDisabled={!activeSession || reportGenerating}
             projectReportDisabled={!activeProject || reportGenerating}
             backendUrl={backendUrl}
+            localBackend={localBackend}
+            toolStatuses={toolStatuses}
+            toolConfig={toolConfig}
+            toolSettingsError={toolSettingsError}
+            toolSettingsSaving={toolSettingsSaving}
             noteDisabled={!activeSession || noteSubmitting}
             onNoteChange={setNoteDraft}
             onCreateNote={createManualNote}
             onGenerateReport={generateReport}
             onGenerateProjectReport={generateProjectReport}
+            onDownloadReport={downloadReportFile}
             onOpenReportFile={openReportFile}
             onReferenceClick={navigateReportReference}
+            onToolConfigChange={setToolConfig}
+            onSaveToolSettings={saveToolSettings}
+            onRefreshToolSettings={refreshToolSettings}
+            onCancelTask={cancelTask}
+            onRerunTask={rerunTask}
           />
           <TerminalPanel
             tabs={terminalTabs}
@@ -909,6 +1129,86 @@ export function App() {
             onSaveSelection={saveTerminalSelection}
           />
         </div>
+      </section>
+    </main>
+    </ErrorBoundary>
+  );
+}
+
+class ErrorBoundary extends Component<{children: ReactNode}, {error: string | null}> {
+  state: {error: string | null} = {error: null};
+
+  static getDerivedStateFromError(error: Error) {
+    return {error: error.message};
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <main className="connection-shell">
+          <section className="connection-panel">
+            <div className="welcome-icon" aria-hidden="true">
+              <X size={22} />
+            </div>
+            <h1>Recover Workspace</h1>
+            <p>{this.state.error}</p>
+            <button type="button" onClick={() => this.setState({error: null})}>Retry</button>
+          </section>
+        </main>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function ConnectionPanel({
+  draft,
+  state,
+  onDraftChange,
+  onSubmit,
+}: {
+  draft: {backendUrl: string; username: string; password: string};
+  state: ConnectionState;
+  onDraftChange: (draft: {backendUrl: string; username: string; password: string}) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <main className="connection-shell">
+      <section className="connection-panel" aria-label="Backend connection">
+        <div className="welcome-icon" aria-hidden="true">
+          <ShieldCheck size={22} />
+        </div>
+        <h1>Control Center</h1>
+        <form className="setup-form" onSubmit={onSubmit}>
+          <label htmlFor="backend-url">Backend URL</label>
+          <input
+            id="backend-url"
+            value={draft.backendUrl}
+            placeholder="http://127.0.0.1:8000"
+            onChange={(event) => onDraftChange({...draft, backendUrl: event.target.value})}
+          />
+          <label htmlFor="login-username">Username</label>
+          <input
+            id="login-username"
+            value={draft.username}
+            disabled={state.state === "checking"}
+            placeholder="admin"
+            onChange={(event) => onDraftChange({...draft, username: event.target.value})}
+          />
+          <label htmlFor="login-password">Password</label>
+          <input
+            id="login-password"
+            type="password"
+            value={draft.password}
+            disabled={state.state === "checking"}
+            placeholder="Password"
+            onChange={(event) => onDraftChange({...draft, password: event.target.value})}
+          />
+          <button type="submit" disabled={state.state === "checking"}>
+            {state.state === "checking" ? "Checking" : state.authEnabled ? "Sign In" : "Connect"}
+          </button>
+          {state.state === "login" && state.error ? <p>{state.error}</p> : null}
+        </form>
       </section>
     </main>
   );
@@ -1023,6 +1323,56 @@ function formatCompactTime(value: string): string {
 
 function emptySessionDraft(): SessionDraft {
   return {name: "", target_value: "", target_type: "ip", summary: ""};
+}
+
+function emptyToolConfigForm(): ToolConfigForm {
+  return {
+    nmap: {binary_path: "", timeout_seconds: "300", extra_args: "", default_wordlist: "", templates_path: ""},
+    ffuf: {binary_path: "", timeout_seconds: "300", extra_args: "", default_wordlist: "", templates_path: ""},
+    nuclei: {binary_path: "", timeout_seconds: "300", extra_args: "", default_wordlist: "", templates_path: ""},
+  };
+}
+
+function toolConfigToForm(config: ToolConfigDto): ToolConfigForm {
+  return {
+    nmap: scannerToolConfigToForm(config.tools.nmap),
+    ffuf: scannerToolConfigToForm(config.tools.ffuf),
+    nuclei: scannerToolConfigToForm(config.tools.nuclei),
+  };
+}
+
+function scannerToolConfigToForm(config: ToolConfigDto["tools"]["nmap"]): ToolConfigForm["nmap"] {
+  return {
+    binary_path: config.binary_path ?? "",
+    timeout_seconds: String(config.timeout_seconds),
+    extra_args: config.extra_args.join(" "),
+    default_wordlist: config.default_wordlist ?? "",
+    templates_path: config.templates_path ?? "",
+  };
+}
+
+function toolConfigFromForm(form: ToolConfigForm): ToolConfigDto {
+  return {
+    tools: {
+      nmap: scannerToolConfigFromForm(form.nmap),
+      ffuf: scannerToolConfigFromForm(form.ffuf),
+      nuclei: scannerToolConfigFromForm(form.nuclei),
+    },
+  };
+}
+
+function scannerToolConfigFromForm(form: ToolConfigForm["nmap"]) {
+  const timeout = Number.parseInt(form.timeout_seconds, 10);
+  if (!Number.isFinite(timeout) || timeout <= 0) {
+    throw new Error("timeout_seconds must be greater than 0.");
+  }
+  return {
+    binary_path: form.binary_path.trim() || null,
+    timeout_seconds: timeout,
+    templates_path: form.templates_path.trim() || null,
+    default_wordlist: form.default_wordlist.trim() || null,
+    extra_args: form.extra_args.split(/\s+/).map((item) => item.trim()).filter(Boolean),
+  };
 }
 
 function ConversationPanel({
@@ -1398,13 +1748,24 @@ function IntelPanel({
   reportDisabled,
   projectReportDisabled,
   backendUrl,
+  localBackend,
+  toolStatuses,
+  toolConfig,
+  toolSettingsError,
+  toolSettingsSaving,
   noteDisabled,
   onNoteChange,
   onCreateNote,
   onGenerateReport,
   onGenerateProjectReport,
+  onDownloadReport,
   onOpenReportFile,
   onReferenceClick,
+  onToolConfigChange,
+  onSaveToolSettings,
+  onRefreshToolSettings,
+  onCancelTask,
+  onRerunTask,
 }: {
   mode: WorkspaceMode;
   nodes: AttackNode[];
@@ -1421,14 +1782,38 @@ function IntelPanel({
   reportDisabled: boolean;
   projectReportDisabled: boolean;
   backendUrl: string;
+  localBackend: boolean;
+  toolStatuses: ToolStatusDto[];
+  toolConfig: ToolConfigForm;
+  toolSettingsError: string | null;
+  toolSettingsSaving: boolean;
   noteDisabled: boolean;
   onNoteChange: (value: string) => void;
   onCreateNote: (event: FormEvent<HTMLFormElement>) => void;
   onGenerateReport: () => void;
   onGenerateProjectReport: () => void;
+  onDownloadReport: (reportId: string) => void;
   onOpenReportFile: (artifactPath: string) => void;
   onReferenceClick: (publicId: string) => void;
+  onToolConfigChange: (config: ToolConfigForm) => void;
+  onSaveToolSettings: (event: FormEvent<HTMLFormElement>) => void;
+  onRefreshToolSettings: () => void;
+  onCancelTask: (taskId: string) => void;
+  onRerunTask: (taskId: string) => void;
 }) {
+  if (mode === "Settings") {
+    return (
+      <ToolSettingsPanel
+        statuses={toolStatuses}
+        config={toolConfig}
+        error={toolSettingsError}
+        saving={toolSettingsSaving}
+        onConfigChange={onToolConfigChange}
+        onSubmit={onSaveToolSettings}
+        onRefresh={onRefreshToolSettings}
+      />
+    );
+  }
   if (mode === "Report") {
     return (
       <ReportPanel
@@ -1438,8 +1823,10 @@ function IntelPanel({
         disabled={reportDisabled}
         projectDisabled={projectReportDisabled}
         backendUrl={backendUrl}
+        localBackend={localBackend}
         onGenerateReport={onGenerateReport}
         onGenerateProjectReport={onGenerateProjectReport}
+        onDownloadReport={onDownloadReport}
         onOpenReportFile={onOpenReportFile}
         onReferenceClick={onReferenceClick}
       />
@@ -1481,6 +1868,13 @@ function IntelPanel({
               <strong>{task.type}</strong>
               <small>{task.executor}</small>
               <p>{task.summary}</p>
+              <div className="task-actions">
+                {task.status === "pending" || task.status === "running" ? (
+                  <button type="button" onClick={() => onCancelTask(task.id)}>Cancel</button>
+                ) : (
+                  <button type="button" onClick={() => onRerunTask(task.id)}>Rerun</button>
+                )}
+              </div>
             </article>
           ))}
         </div>
@@ -1555,6 +1949,113 @@ function IntelPanel({
   );
 }
 
+function ToolSettingsPanel({
+  statuses,
+  config,
+  error,
+  saving,
+  onConfigChange,
+  onSubmit,
+  onRefresh,
+}: {
+  statuses: ToolStatusDto[];
+  config: ToolConfigForm;
+  error: string | null;
+  saving: boolean;
+  onConfigChange: (config: ToolConfigForm) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onRefresh: () => void;
+}) {
+  return (
+    <aside className="intel-panel tool-settings-panel" aria-label="Tool settings">
+      <section className="intel-section">
+        <div className="panel-heading">
+          <Settings aria-hidden="true" size={17} />
+          <h2>Tool Diagnostics</h2>
+          <button type="button" className="mini-icon-button" onClick={onRefresh} aria-label="Refresh tools" title="Refresh tools">
+            <RotateCcw aria-hidden="true" size={15} />
+          </button>
+        </div>
+        <div className="tool-status-list">
+          {statuses.map((status) => (
+            <article key={status.name}>
+              <span className={status.available ? "ok" : "missing"}>{status.available ? "available" : "missing"}</span>
+              <strong>{status.name}</strong>
+              <small>{status.path ?? "No binary path configured"}</small>
+              {status.version ? <p>{status.version}</p> : null}
+              {status.error ? <p className="workspace-error">{status.error}</p> : null}
+            </article>
+          ))}
+        </div>
+      </section>
+      <section className="intel-section">
+        <div className="panel-heading">
+          <Settings aria-hidden="true" size={17} />
+          <h2>Tool Configuration</h2>
+          <span>{saving ? "saving" : "editable"}</span>
+        </div>
+        <form className="tool-config-form" onSubmit={onSubmit}>
+          {(["nmap", "ffuf", "nuclei"] as ToolStatusDto["name"][]).map((name) => (
+            <fieldset key={name}>
+              <legend>{name}</legend>
+              <label htmlFor={`${name}-binary`}>Binary path</label>
+              <input
+                id={`${name}-binary`}
+                value={config[name].binary_path}
+                disabled={saving}
+                onChange={(event) => onConfigChange({...config, [name]: {...config[name], binary_path: event.target.value}})}
+              />
+              <label htmlFor={`${name}-timeout`}>Timeout seconds</label>
+              <input
+                id={`${name}-timeout`}
+                value={config[name].timeout_seconds}
+                disabled={saving}
+                inputMode="numeric"
+                onChange={(event) => onConfigChange({...config, [name]: {...config[name], timeout_seconds: event.target.value}})}
+              />
+              <label htmlFor={`${name}-extra`}>Extra args</label>
+              <input
+                id={`${name}-extra`}
+                value={config[name].extra_args}
+                disabled={saving}
+                placeholder="--rate 20"
+                onChange={(event) => onConfigChange({...config, [name]: {...config[name], extra_args: event.target.value}})}
+              />
+              {name === "ffuf" ? (
+                <>
+                  <label htmlFor="ffuf-wordlist">Default wordlist</label>
+                  <input
+                    id="ffuf-wordlist"
+                    value={config.ffuf.default_wordlist}
+                    disabled={saving}
+                    onChange={(event) => onConfigChange({...config, ffuf: {...config.ffuf, default_wordlist: event.target.value}})}
+                  />
+                </>
+              ) : null}
+              {name === "nuclei" ? (
+                <>
+                  <label htmlFor="nuclei-templates">Templates path</label>
+                  <input
+                    id="nuclei-templates"
+                    value={config.nuclei.templates_path}
+                    disabled={saving}
+                    onChange={(event) => onConfigChange({...config, nuclei: {...config.nuclei, templates_path: event.target.value}})}
+                  />
+                </>
+              ) : null}
+            </fieldset>
+          ))}
+          <button type="submit" disabled={saving}>
+            <Save aria-hidden="true" size={15} />
+            <span>Save</span>
+          </button>
+          {error ? <p className="workspace-error">{error}</p> : null}
+        </form>
+      </section>
+    </aside>
+  );
+}
+
 function ReportPanel({
   reports,
   projectReports,
@@ -1562,8 +2063,10 @@ function ReportPanel({
   disabled,
   projectDisabled,
   backendUrl,
+  localBackend,
   onGenerateReport,
   onGenerateProjectReport,
+  onDownloadReport,
   onOpenReportFile,
   onReferenceClick,
 }: {
@@ -1573,8 +2076,10 @@ function ReportPanel({
   disabled: boolean;
   projectDisabled: boolean;
   backendUrl: string;
+  localBackend: boolean;
   onGenerateReport: () => void;
   onGenerateProjectReport: () => void;
+  onDownloadReport: (reportId: string) => void;
   onOpenReportFile: (artifactPath: string) => void;
   onReferenceClick: (publicId: string) => void;
 }) {
@@ -1598,12 +2103,12 @@ function ReportPanel({
             <span>{latestProject ? "Project Regen" : "Project"}</span>
           </button>
           {latest ? (
-            <a href={reportDownloadUrl(backendUrl, latest.id)} target="_blank" rel="noreferrer">
+            <button type="button" onClick={() => onDownloadReport(latest.id)}>
               <Download aria-hidden="true" size={15} />
               <span>Download</span>
-            </a>
+            </button>
           ) : null}
-          {latest ? (
+          {latest && localBackend ? (
             <button type="button" onClick={() => onOpenReportFile(latest.artifactPath)}>
               <FileText aria-hidden="true" size={15} />
               <span>Open File</span>
@@ -1643,8 +2148,10 @@ function ReportPanel({
             <MarkdownPreview markdown={latestProject.content || latestProject.summary} onReferenceClick={onReferenceClick} />
             <ReportWarnings report={latestProject} />
             <div className="report-inline-actions">
-              <a href={reportDownloadUrl(backendUrl, latestProject.id)} target="_blank" rel="noreferrer">Download</a>
-              <button type="button" onClick={() => onOpenReportFile(latestProject.artifactPath)}>Open File</button>
+              <button type="button" onClick={() => onDownloadReport(latestProject.id)}>Download</button>
+              {localBackend ? (
+                <button type="button" onClick={() => onOpenReportFile(latestProject.artifactPath)}>Open File</button>
+              ) : null}
             </div>
           </article>
         ) : null}

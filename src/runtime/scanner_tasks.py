@@ -15,10 +15,24 @@ class ScannerTaskRuntime:
         self._futures: dict[str, Future[object]] = {}
 
     def submit(self, task_identifier: str) -> None:
-        future = self.executor.submit(self._execute, task_identifier)
         with self._lock:
+            current = self._futures.get(task_identifier)
+            if current is not None and not current.done():
+                return
+            future = self.executor.submit(self._execute, task_identifier)
             self._futures[task_identifier] = future
         future.add_done_callback(lambda _future: self._forget(task_identifier))
+
+    def cancel_pending(self, task_identifier: str) -> bool:
+        with self._lock:
+            future = self._futures.get(task_identifier)
+            if future is None or future.running() or future.done():
+                return False
+        cancelled = future.cancel()
+        if cancelled:
+            with self._lock:
+                self._futures.pop(task_identifier, None)
+        return cancelled
 
     def shutdown(self) -> None:
         self.executor.shutdown(wait=False, cancel_futures=True)

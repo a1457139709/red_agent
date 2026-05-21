@@ -5,6 +5,7 @@ from ipaddress import ip_address
 from pathlib import Path
 from typing import Any
 import json
+import logging
 from urllib.parse import urlsplit
 
 from agent.settings import Settings, get_settings
@@ -38,6 +39,7 @@ from .control_center_base import ControlCenterService
 
 TOOL_NAMES = ("nmap", "ffuf", "nuclei")
 TOOL_TASK_TYPES = {"nmap": "port_scan", "ffuf": "dir_scan", "nuclei": "poc_scan"}
+logger = logging.getLogger("red_code.control_center")
 
 
 @dataclass(frozen=True, slots=True)
@@ -408,6 +410,17 @@ class ScannerService(ControlCenterService):
         level: str,
         payload: dict[str, Any],
     ) -> Event:
+        logger.info(
+            json.dumps(
+                {
+                    "event": "task.event",
+                    "task_id": task.id,
+                    "event_kind": event_kind,
+                    "error": payload.get("error"),
+                },
+                ensure_ascii=False,
+            )
+        )
         return self.event_repository.create(
             Event.create(
                 project_id=task.project_id,

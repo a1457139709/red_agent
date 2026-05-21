@@ -27,10 +27,11 @@ describe("backendHttpToWebSocketUrl", () => {
       backendHttpToWebSocketUrl("http://127.0.0.1:8000", {
         projectId: "project-1",
         sessionId: "session-1",
+        authToken: "token-1",
         replayLimit: 20,
         sinceSequence: 9,
       }),
-    ).toBe("ws://127.0.0.1:8000/ws/events?project_id=project-1&session_id=session-1&limit=20&since_sequence=9");
+    ).toBe("ws://127.0.0.1:8000/ws/events?project_id=project-1&session_id=session-1&auth_token=token-1&limit=20&since_sequence=9");
   });
 });
 

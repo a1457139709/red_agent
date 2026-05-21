@@ -16,6 +16,7 @@ const DEFAULT_RECONNECT_DELAYS_MS = [500, 1000, 2000, 5000];
 export type EventSocketUrlOptions = {
   projectId?: string | null;
   sessionId?: string | null;
+  authToken?: string | null;
   replay?: boolean;
   replayLimit?: number;
   sinceSequence?: number | null;
@@ -32,6 +33,9 @@ export function backendHttpToWebSocketUrl(baseUrl: string, options: EventSocketU
   }
   if (options.sessionId) {
     url.searchParams.set("session_id", options.sessionId);
+  }
+  if (options.authToken) {
+    url.searchParams.set("auth_token", options.authToken);
   }
   if (options.replay === false) {
     url.searchParams.set("replay", "0");
