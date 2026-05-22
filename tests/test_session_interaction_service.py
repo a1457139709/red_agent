@@ -11,6 +11,7 @@ from controller.contracts import (
     ConfirmationDecisionValue,
     ConfirmationRequest,
     ControllerResultStatus,
+    SessionSummary,
 )
 from models.conversation_context import ConversationContext
 from runtime.execution_events import ExecutionOutcome
@@ -78,7 +79,14 @@ def test_session_interaction_service_binds_session_and_executes(tmp_path):
         controller=AgentController.from_session_service(session_service),
         execution_service=FakeExecutionService(),
     )
+    session = session_service.create_session(
+        title="Current",
+        goal="Track current work",
+        mode="normal",
+        status="active",
+    )
     context = ConversationContext(active_skill_name="security-audit")
+    context.bind_session(SessionSummary.from_session(session, reused=True))
     interaction_port = FakeInteractionPort()
 
     outcome = asyncio.run(
@@ -117,7 +125,7 @@ def test_session_interaction_service_returns_missing_fields_without_pending_stat
 
     first = asyncio.run(
         interaction_service.handle_message(
-            question="what did you already do?",
+            question="/status",
             conversation_context=context,
             session_state=SessionState(),
             capability_service=FakeCapabilityService(),

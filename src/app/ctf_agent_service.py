@@ -185,7 +185,6 @@ class CTFAgentService(ControlCenterService):
             executor="ctf_agent",
             input_json={
                 "message": normalized_message,
-                "intent": _classify_agent_intent(normalized_message),
                 "workflow_id": str(uuid4()),
             },
         )
@@ -194,7 +193,7 @@ class CTFAgentService(ControlCenterService):
             created,
             "agent.message.received",
             level="info",
-            payload={"message": normalized_message, "intent": created.input_json["intent"]},
+            payload={"message": normalized_message},
         )
         self._record_agent_event(
             created,
@@ -216,10 +215,7 @@ class CTFAgentService(ControlCenterService):
         self._record_agent_event(task, "agent.workflow.started", level="info", payload={"workflow_id": task.input_json.get("workflow_id")})
 
         try:
-            if task.input_json.get("intent") != "enumerate_target":
-                result = self._run_llm_agent(task)
-            else:
-                result = self._run_enumeration(task)
+            result = self._run_llm_agent(task)
         except Exception as exc:
             result = {"ok": False, "summary": "Agent turn failed.", "error": str(exc), "recoverable": True}
 
@@ -406,11 +402,6 @@ class CTFAgentService(ControlCenterService):
             "next_actions": next_actions,
         }
 
-    def _unsupported_message_result(self, task: Task) -> dict[str, Any]:
-        message = "Select a target Session and ask for enumeration to start the Phase 4 workflow."
-        self._record_agent_event(task, "agent.next_action.suggested", level="info", payload={"message": message})
-        return {"ok": True, "recoverable": True, "summary": message, "task_ids": [], "next_actions": [message]}
-
     def _llm_unavailable_result(self, task: Task, error: str) -> dict[str, Any]:
         message = f"LLM Agent is unavailable: {error}"
         self._record_agent_event(task, "agent.next_action.suggested", level="warning", payload={"message": message})
@@ -434,14 +425,6 @@ class CTFAgentService(ControlCenterService):
                 payload=payload,
             )
         )
-
-
-def _classify_agent_intent(message: str) -> str:
-    normalized = message.lower()
-    if "枚举" in message or "enumerate" in normalized or "recon" in normalized or "scan" in normalized:
-        return "enumerate_target"
-    return "unknown"
-
 
 def _scanner_host_for_session(session: TargetSession) -> str:
     if session.target_type == TargetType.URL:

@@ -295,21 +295,18 @@ The Settings mode in the desktop client shows `nmap`, `ffuf`, and `nuclei` avail
 path, version, and diagnostic error. It can update `binary_path`, `timeout_seconds`, `extra_args`,
 `ffuf.default_wordlist`, and `nuclei.templates_path` through `/api/tools/config`.
 
-Phase 4 Agent messages are accepted at `/api/sessions/{session_id}/agent/messages`. Sending
-`枚举这台靶机`, `enumerate target`, or a similar scan request creates an `agent_analysis` task,
-starts a background port scan, summarizes the result, plans ffuf only for HTTP/HTTPS services,
-starts nuclei only when a candidate URL and templates path exist, and records next-action events
-for the desktop Agent Console. The desktop client sends messages only for the active Session and
-renders `agent.*` and `task.*` events from `ws://127.0.0.1:8000/ws/events?session_id=...&limit=...`
-with replay enabled. Switching Sessions closes the old event socket, clears the current Agent and
-terminal views, and replays the newly selected Session scope.
-
-Phase 6.5 adds the LLM Agent Orchestrator path for non-deterministic Agent turns. General questions
-are sent to the configured LangChain/OpenAI-compatible model, and model tool calls are routed through
+Agent messages are accepted at `/api/sessions/{session_id}/agent/messages`. Each message creates an
+`agent_analysis` task for the active Session and is handled by the LLM Agent Orchestrator. The backend
+does not use hand-written natural-language keyword routing for prompts such as `枚举这台靶机`,
+`enumerate target`, or similar scan requests. Instead, general questions are sent to the configured
+LangChain/OpenAI-compatible model, and model tool calls are routed through
 registered Control Center tools such as `start_port_scan`, `start_dir_scan`, `start_poc_scan`,
 `summarize_task_result`, `create_attack_path_node`, `create_finding`, `suggest_terminal_command`,
 and `create_writeup_draft`. The Agent still cannot call raw `bash`; all scanner targets are validated
-against the active Session scope.
+against the active Session scope. The desktop client sends messages only for the active Session and
+renders `agent.*` and `task.*` events from `ws://127.0.0.1:8000/ws/events?session_id=...&limit=...`
+with replay enabled. Switching Sessions closes the old event socket, clears the current Agent and
+terminal views, and replays the newly selected Session scope.
 
 ## Usage Examples
 

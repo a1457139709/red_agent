@@ -355,12 +355,12 @@ Agent tools:
 
 Behavior:
 
-- Chat 输入 `枚举这台靶机` 时，Agent 读取当前 Session。
+- Chat 输入会创建当前 Session 作用域内的 `agent_analysis` 任务。
+- 后端不通过手写关键词或正则对 Chat 输入做自然语言 intent 分类。
+- 扫描、证据、攻击路径和报告动作由 LLM Agent 通过受控 tool call 选择。
 - 如果缺少目标，Agent 请求用户创建或选择 Session。
-- Agent 创建 port scan task。
-- port scan 结束后，Agent 分析开放服务。
-- 对 HTTP 服务创建 dir scan task。
-- 对候选服务生成 nuclei scan 建议或任务。
+- Agent 可创建 port scan、dir scan、nuclei scan 等 task。
+- Agent 可根据工具结果生成下一步建议。
 - 每一步通过 WebSocket 推送。
 
 ### 8.3 Desktop Tasks
@@ -569,7 +569,7 @@ Behavior:
 - tool call 参数必须经过 schema 校验和 Session scope 校验。
 - Agent 不获得原始 `bash` 或任意 shell 字符串执行能力。
 - 命令只作为建议写入事件，由用户在系统外部明确执行。
-- 现有确定性枚举闭环保留为稳定 fallback 和回归基线。
+- 不保留基于自然语言关键词的确定性枚举 fallback；自由文本只交给 LLM 处理。
 
 ### 10.5.3 Desktop Tasks
 

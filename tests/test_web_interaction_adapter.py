@@ -9,6 +9,7 @@ from app.session_record_query_service import SessionRecordQueryService
 from app.session_service import SessionService
 from controller.agent_controller import AgentController
 from controller.contracts import ConfirmationDecisionValue, ConfirmationRequest
+from controller.contracts import SessionSummary
 from models.run import utc_now_iso
 from runtime.execution_events import ExecutionOutcome
 from runtime.execution_events import ExecutionEventType, ExecutionProgressEvent
@@ -69,6 +70,13 @@ def build_settings(tmp_path) -> Settings:
 def test_web_interaction_adapter_emits_ordered_events(tmp_path):
     settings = build_settings(tmp_path)
     session_service = SessionService.from_settings(settings)
+    session = session_service.create_session(
+        title="Current",
+        goal="Track current work",
+        mode="normal",
+        status="active",
+    )
+    conversation_store = InMemoryConversationStore()
     adapter = WebInteractionAdapter(
         interaction_service=SessionInteractionService.from_services(
             controller=AgentController.from_session_service(session_service),
@@ -78,9 +86,12 @@ def test_web_interaction_adapter_emits_ordered_events(tmp_path):
         session_record_query_service=SessionRecordQueryService.from_settings(settings),
         report_flow_service=ReportFlowService.from_settings(settings),
         dashboard_service=DashboardService.from_settings(settings),
-        conversation_store=InMemoryConversationStore(),
+        conversation_store=conversation_store,
     )
     conversation = adapter.create_conversation()
+    context = conversation_store.get(conversation.conversation_id)
+    context.bind_session(SessionSummary.from_session(session, reused=True))
+    conversation_store.save(context)
 
     response = asyncio.run(
         adapter.handle_message(
@@ -102,6 +113,13 @@ def test_web_interaction_adapter_emits_ordered_events(tmp_path):
 def test_web_interaction_adapter_streams_confirmation_before_completion(tmp_path):
     settings = build_settings(tmp_path)
     session_service = SessionService.from_settings(settings)
+    session = session_service.create_session(
+        title="Current",
+        goal="Track current work",
+        mode="normal",
+        status="active",
+    )
+    conversation_store = InMemoryConversationStore()
     adapter = WebInteractionAdapter(
         interaction_service=SessionInteractionService.from_services(
             controller=AgentController.from_session_service(session_service),
@@ -111,9 +129,12 @@ def test_web_interaction_adapter_streams_confirmation_before_completion(tmp_path
         session_record_query_service=SessionRecordQueryService.from_settings(settings),
         report_flow_service=ReportFlowService.from_settings(settings),
         dashboard_service=DashboardService.from_settings(settings),
-        conversation_store=InMemoryConversationStore(),
+        conversation_store=conversation_store,
     )
     conversation = adapter.create_conversation()
+    context = conversation_store.get(conversation.conversation_id)
+    context.bind_session(SessionSummary.from_session(session, reused=True))
+    conversation_store.save(context)
 
     async def run_flow():
         stream = await adapter.start_message(

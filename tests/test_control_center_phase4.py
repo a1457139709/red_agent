@@ -174,7 +174,7 @@ def test_planner_does_not_start_nuclei_without_candidate_target(tmp_path):
     assert "No HTTP/HTTPS services" in plan.next_actions[0]
 
 
-def test_ctf_agent_service_runs_enumeration_loop_and_records_events(tmp_path):
+def test_ctf_agent_service_runs_llm_selected_scan_tools_and_records_events(tmp_path):
     settings = build_settings(tmp_path)
     _project, session = prepare_session(settings)
     wordlist = tmp_path / "words.txt"
@@ -195,7 +195,36 @@ def test_ctf_agent_service_runs_enumeration_loop_and_records_events(tmp_path):
             }
         }
     )
-    service = CTFAgentService(settings=settings, scanner_service=scanner)
+    model = FakeToolCallingModel(
+        [
+            AIMessage(
+                content="I will run the selected scan tools.",
+                tool_calls=[
+                    {"name": "start_port_scan", "args": {"reason": "Initial recon"}, "id": "call-1", "type": "tool_call"},
+                    {
+                        "name": "start_dir_scan",
+                        "args": {"base_url": "http://10.10.10.5", "reason": "HTTP service discovered"},
+                        "id": "call-2",
+                        "type": "tool_call",
+                    },
+                    {
+                        "name": "start_poc_scan",
+                        "args": {"target_url": "http://10.10.10.5", "reason": "Validate web findings"},
+                        "id": "call-3",
+                        "type": "tool_call",
+                    },
+                    {
+                        "name": "suggest_terminal_command",
+                        "args": {"command": "curl -I http://10.10.10.5", "reason": "Inspect headers"},
+                        "id": "call-4",
+                        "type": "tool_call",
+                    },
+                ],
+            ),
+            AIMessage(content="Enumeration tools completed.", tool_calls=[]),
+        ]
+    )
+    service = CTFAgentService(settings=settings, scanner_service=scanner, model_factory=lambda _settings: model)
 
     agent_task = service.create_agent_task(session_identifier=session.id, message="枚举这台靶机")
     completed = service.run_agent_task(agent_task.id)
@@ -206,25 +235,43 @@ def test_ctf_agent_service_runs_enumeration_loop_and_records_events(tmp_path):
     assert completed.status.value == "succeeded"
     assert completed.result_json["ok"] is True
     assert {"agent_analysis", "port_scan", "dir_scan", "poc_scan"}.issubset(set(task_types))
-    assert "agent.plan.created" in event_kinds
+    assert "agent.tool_call.started" in event_kinds
+    assert "agent.tool_call.completed" in event_kinds
     assert "agent.terminal_command.suggested" in event_kinds
     assert event_kinds[-1] == "agent.workflow.completed"
 
 
-def test_failed_port_scan_produces_recoverable_agent_summary(tmp_path):
+def test_failed_port_scan_tool_call_records_diagnostic_event(tmp_path):
     settings = build_settings(tmp_path)
     _project, session = prepare_session(settings)
     scanner = ScannerService.from_settings(settings)
     scanner.update_config({"tools": {"nmap": {"binary_path": str(tmp_path / "missing-nmap")}}})
-    service = CTFAgentService(settings=settings, scanner_service=scanner)
+    model = FakeToolCallingModel(
+        [
+            AIMessage(
+                content="I will try the port scan.",
+                tool_calls=[{"name": "start_port_scan", "args": {"reason": "Initial recon"}, "id": "call-1", "type": "tool_call"}],
+            ),
+            AIMessage(content="Port scan could not run with the current scanner configuration.", tool_calls=[]),
+        ]
+    )
+    service = CTFAgentService(settings=settings, scanner_service=scanner, model_factory=lambda _settings: model)
 
     agent_task = service.create_agent_task(session_identifier=session.id, message="enumerate target")
     completed = service.run_agent_task(agent_task.id)
+    events = EventRepository(SQLiteStorage(settings.sqlite_path)).list(session_id=session.id, limit=None, descending=False)
+    tool_events = [event for event in events if event.event_kind == "agent.tool_call.completed"]
+    scan_tasks = [
+        task
+        for task in TaskRepository(SQLiteStorage(settings.sqlite_path)).list(session_id=session.id, limit=None)
+        if task.task_type == "port_scan"
+    ]
 
     assert completed.status.value == "succeeded"
-    assert completed.result_json["recoverable"] is True
-    assert "Port scan failed recoverably" in completed.result_json["summary"]
-    assert "rerun enumeration" in completed.result_json["next_actions"][0]
+    assert completed.result_json["summary"] == "Port scan could not run with the current scanner configuration."
+    assert tool_events
+    assert scan_tasks
+    assert scan_tasks[0].status.value == "failed"
 
 
 def test_llm_agent_answers_general_questions_without_phase4_fallback(tmp_path):

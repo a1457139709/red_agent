@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import re
 
 from app.report_flow_service import ReportFlowService
 from app.session_record_query_service import SessionRecordQueryService
 from app.session_service import SessionService
-from models.session import Session, SessionMode, SessionStatus, SessionTarget
+from models.session import Session, SessionMode
 
 from .contracts import (
     ControllerIntent,
@@ -21,12 +20,9 @@ from .contracts import (
     RecordQueryRequest,
     SessionSummary,
 )
-from .intents import IntentClassification, classify_input, extract_targets
 
 
-SESSION_START_KEYWORDS = ("start", "create", "new session", "open session")
 DEFAULT_MODULE_NAMES = ("surface-recon", "web-enum")
-MODULE_INVOCATION_VERBS = ("run", "use", "invoke", "execute")
 SESSION_SCOPE_ALLOWED_VALUES = {"session_scope": ["current", "latest", "S0001"]}
 
 
@@ -52,47 +48,15 @@ class AgentController:
         )
 
     def handle(self, request: ControllerRequest) -> ControllerResult:
-        classification = classify_input(request.raw_input)
         if request.record_query is not None:
             return self._handle_structured_record_query(request)
 
-        if classification.intent == ControllerIntent.ADVANCED_COMMAND_REQUEST:
+        normalized = request.raw_input.strip()
+        if not normalized:
+            return ControllerResult.unsupported(message="Please enter a request.")
+        if normalized.startswith("/"):
             return ControllerResult.delegated_to_advanced_command()
-        if classification.intent == ControllerIntent.UNSUPPORTED_REQUEST:
-            return ControllerResult.unsupported(
-                message=classification.unsupported_reason
-                or "I couldn't route that request."
-            )
-        module_request = self._parse_explicit_module_request(request.raw_input)
-        if module_request is not None:
-            module_name, module_parameters, targets = module_request
-            return self._handle_module_request(
-                request=request,
-                module_name=module_name,
-                module_parameters=module_parameters,
-                targets=targets,
-            )
-        if classification.intent == ControllerIntent.RECORD_LOOKUP_REQUEST:
-            return self._handle_record_lookup(request, classification)
-        return self._handle_session_request(
-            request=request,
-            classification=classification,
-            mode=request.requested_session_mode,
-            execute=True,
-        )
-
-    def _handle_record_lookup(
-        self,
-        request: ControllerRequest,
-        classification: IntentClassification,
-    ) -> ControllerResult:
-        return self._handle_record_query(
-            request=request,
-            record_query=RecordQueryRequest(
-                kind=RecordLookupKind.SESSION_HISTORY,
-                explicit_scope=classification.explicit_record_scope,
-            ),
-        )
+        return self._handle_active_session_prompt(request, normalized)
 
     def _handle_structured_record_query(
         self,
@@ -333,180 +297,42 @@ class AgentController:
             bind_session=False,
         )
 
-    def _parse_explicit_module_request(
+    def _handle_active_session_prompt(
         self,
-        raw_input: str,
-    ) -> tuple[str, dict[str, object], list[SessionTarget]] | None:
-        lowered = raw_input.lower()
-        if not any(verb in lowered for verb in MODULE_INVOCATION_VERBS):
-            return None
-        for module_name in self.module_names:
-            pattern = rf"(?<![\w-]){re.escape(module_name.lower())}(?![\w-])"
-            if not re.search(pattern, lowered):
-                continue
-            targets = extract_targets(raw_input)
-            if not targets:
-                return None
-            return module_name, {"target": targets[0].value}, targets
-        return None
-
-    def _handle_module_request(
-        self,
-        *,
         request: ControllerRequest,
-        module_name: str,
-        module_parameters: dict[str, object],
-        targets: list[SessionTarget],
+        prompt_text: str,
     ) -> ControllerResult:
         session = self._load_active_session(request)
-        use_persistent = (
-            session is not None
-            and session.mode == SessionMode.REDTEAM
-            and not session.is_terminal
+        if session is None:
+            return ControllerResult.unsupported(
+                message=(
+                    "No active session is bound. Select or create a session with an explicit "
+                    "command, API request, or UI action before sending a free-form prompt."
+                )
+            )
+        summary = SessionSummary.from_session(session, reused=True)
+        bridge_kind = (
+            ExecutionBridgeKind.ACTIVE_SKILL_RUNTIME
+            if request.active_skill_name
+            else ExecutionBridgeKind.BASE_RUNTIME
         )
-        summary = (
-            SessionSummary.from_session(session, reused=True)
-            if use_persistent and session
-            else None
+        intent = (
+            ControllerIntent.REDTEAM_REQUEST
+            if session.mode == SessionMode.REDTEAM
+            else ControllerIntent.NORMAL_REQUEST
         )
         return ControllerResult.handled(
-            intent=ControllerIntent.MODULE_INVOCATION_REQUEST,
-            message=(
-                f"Running module {module_name} in {summary.public_id}."
-                if summary is not None
-                else f"Running one-shot module {module_name}."
-            ),
+            intent=intent,
             session_summary=summary,
             execution_bridge=ExecutionBridge(
-                kind=ExecutionBridgeKind.MODULE_RUNTIME,
-                prompt_text=self._build_execution_prompt(request.raw_input, targets),
-                module_name=module_name,
-                module_parameters=module_parameters,
-                module_one_shot=summary is None,
+                kind=bridge_kind,
+                prompt_text=prompt_text,
             ),
-            bind_session=False,
-        )
-
-    def _handle_session_request(
-        self,
-        *,
-        request: ControllerRequest,
-        classification: IntentClassification,
-        mode: SessionMode,
-        execute: bool,
-        forced_targets: list[SessionTarget] | None = None,
-        original_request: str | None = None,
-    ) -> ControllerResult:
-        raw_request = original_request or request.raw_input
-        targets = list(forced_targets or classification.extracted_targets)
-        session, reused = self._reuse_or_create_session(
-            request=request,
-            raw_request=raw_request,
-            targets=targets,
-            mode=mode,
-        )
-        summary = SessionSummary.from_session(session, reused=reused)
-        if execute:
-            intent = (
-                ControllerIntent.NORMAL_REQUEST
-                if mode == SessionMode.NORMAL
-                else ControllerIntent.REDTEAM_REQUEST
-            )
-            session_label = "normal" if mode == SessionMode.NORMAL else "redteam"
-            bridge_kind = (
-                ExecutionBridgeKind.ACTIVE_SKILL_RUNTIME
-                if request.active_skill_name
-                else ExecutionBridgeKind.BASE_RUNTIME
-            )
-            message = None if reused else f"Started {session_label} session {summary.public_id}: {summary.title}"
-            return ControllerResult.handled(
-                intent=intent,
-                message=message,
-                session_summary=summary,
-                execution_bridge=ExecutionBridge(
-                    kind=bridge_kind,
-                    prompt_text=self._build_execution_prompt(raw_request, targets),
-                ),
-                bind_session=True,
-            )
-
-        action = "Reused" if reused else "Started"
-        return ControllerResult.handled(
-            intent=ControllerIntent.REDTEAM_REQUEST,
-            message=f"{action} redteam session {summary.public_id}: {summary.title}",
-            session_summary=summary,
             bind_session=True,
         )
 
-    def _reuse_or_create_session(
-        self,
-        *,
-        request: ControllerRequest,
-        raw_request: str,
-        targets: list[SessionTarget],
-        mode: SessionMode,
-    ) -> tuple[Session, bool]:
-        existing = self._load_active_session(request)
-        if (
-            existing is not None
-            and existing.mode == mode
-            and not existing.is_terminal
-            and not self._should_force_new_session(raw_request, existing, targets)
-        ):
-            return existing, True
-
-        title = self._derive_session_title(raw_request, targets, mode)
-        session = self.session_service.create_session(
-            title=title,
-            goal=raw_request.strip(),
-            mode=mode,
-            status=SessionStatus.ACTIVE,
-            targets=targets or None,
-        )
-        return session, False
-
     def _load_active_session(self, request: ControllerRequest) -> Session | None:
-        if request.active_session_public_id is None:
+        identifier = request.active_session_public_id or request.active_session_id
+        if identifier is None:
             return None
-        return self.session_service.get_session(request.active_session_public_id)
-
-    def _should_force_new_session(
-        self,
-        raw_request: str,
-        existing: Session,
-        targets: list[SessionTarget],
-    ) -> bool:
-        lowered = raw_request.lower()
-        if any(keyword in lowered for keyword in SESSION_START_KEYWORDS):
-            return True
-        if not targets or not existing.target_summary:
-            return False
-        return targets[0].value not in existing.target_summary
-
-    def _derive_session_title(
-        self,
-        raw_request: str,
-        targets: list[SessionTarget],
-        mode: SessionMode,
-    ) -> str:
-        if targets:
-            prefix = "Redteam Session" if mode == SessionMode.REDTEAM else "Session"
-            return f"{prefix} for {targets[0].value}"
-        preview = " ".join(raw_request.strip().split())
-        if len(preview) > 48:
-            preview = preview[:45].rstrip() + "..."
-        if mode == SessionMode.REDTEAM:
-            return f"Redteam: {preview}"
-        return f"Session: {preview}"
-
-    def _build_execution_prompt(
-        self,
-        raw_request: str,
-        targets: list[SessionTarget],
-    ) -> str:
-        if not targets:
-            return raw_request
-        if all(target.value in raw_request for target in targets):
-            return raw_request
-        target_lines = [f"- {target.kind.value}: {target.value}" for target in targets]
-        return raw_request.rstrip() + "\nTargets:\n" + "\n".join(target_lines)
+        return self.session_service.get_session(identifier)

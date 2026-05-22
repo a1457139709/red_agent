@@ -22,6 +22,7 @@ from controller.contracts import (
     ExecutionBridgeKind,
     RecordLookupKind,
     ReportType,
+    SessionSummary,
 )
 from main import (
     ShellState,
@@ -174,40 +175,65 @@ def seed_record_lookup_session(tmp_path):
     return settings, controller, session, artifact, finding, report
 
 
-def test_agent_controller_creates_and_reuses_normal_session(tmp_path):
+def test_agent_controller_requires_active_session_for_free_form_prompt(tmp_path):
     settings = build_settings(tmp_path)
     session_service = SessionService.from_settings(settings)
     controller = AgentController.from_session_service(session_service)
 
-    first = controller.handle(ControllerRequest(raw_input="Summarize this repository"))
-    second = controller.handle(
+    result = controller.handle(ControllerRequest(raw_input="Summarize this repository"))
+
+    assert result.status == ControllerResultStatus.UNSUPPORTED
+    assert result.execution_bridge is None
+    assert "No active session is bound" in (result.message or "")
+
+
+def test_agent_controller_reuses_bound_normal_session_for_free_form_prompt(tmp_path):
+    settings = build_settings(tmp_path)
+    session_service = SessionService.from_settings(settings)
+    controller = AgentController.from_session_service(session_service)
+    session = session_service.create_session(
+        title="Current",
+        goal="Track current work",
+        mode="normal",
+        status="active",
+    )
+
+    result = controller.handle(
         ControllerRequest(
             raw_input="Summarize the tests too",
-            active_session_id=first.session_summary.id if first.session_summary else None,
-            active_session_public_id=first.session_summary.public_id if first.session_summary else None,
-            active_session_mode=first.session_summary.mode if first.session_summary else None,
+            active_session_id=session.id,
+            active_session_public_id=session.public_id,
+            active_session_mode=session.mode,
         )
     )
 
-    assert first.status == ControllerResultStatus.HANDLED
-    assert first.intent == ControllerIntent.NORMAL_REQUEST
-    assert first.execution_bridge is not None
-    assert first.execution_bridge.kind == ExecutionBridgeKind.BASE_RUNTIME
-    assert first.session_summary is not None
-    assert second.session_summary is not None
-    assert second.session_summary.public_id == first.session_summary.public_id
-    assert second.session_summary.reused
+    assert result.status == ControllerResultStatus.HANDLED
+    assert result.intent == ControllerIntent.NORMAL_REQUEST
+    assert result.execution_bridge is not None
+    assert result.execution_bridge.kind == ExecutionBridgeKind.BASE_RUNTIME
+    assert result.execution_bridge.prompt_text == "Summarize the tests too"
+    assert result.session_summary is not None
+    assert result.session_summary.public_id == session.public_id
+    assert result.session_summary.reused
 
 
-def test_agent_controller_starts_redteam_session_with_execution_bridge(tmp_path):
+def test_agent_controller_uses_bound_redteam_session_for_free_form_prompt(tmp_path):
     settings = build_settings(tmp_path)
     session_service = SessionService.from_settings(settings)
     controller = AgentController.from_session_service(session_service)
+    session = session_service.create_session(
+        title="Redteam current",
+        goal="Track redteam work",
+        mode="redteam",
+        status="active",
+    )
 
     result = controller.handle(
         ControllerRequest(
             raw_input="Scan example.com for open services",
-            requested_session_mode=SessionMode.REDTEAM,
+            active_session_id=session.id,
+            active_session_public_id=session.public_id,
+            active_session_mode=session.mode,
         )
     )
 
@@ -217,40 +243,64 @@ def test_agent_controller_starts_redteam_session_with_execution_bridge(tmp_path)
     assert result.execution_bridge.kind == ExecutionBridgeKind.BASE_RUNTIME
     assert result.session_summary is not None
     assert result.session_summary.mode.value == "redteam"
+    assert result.session_summary.public_id == session.public_id
     assert result.bind_session
 
 
-def test_agent_controller_keeps_ambiguous_target_requests_in_normal_flow(tmp_path):
+def test_agent_controller_keeps_free_form_target_text_unparsed(tmp_path):
     settings = build_settings(tmp_path)
     session_service = SessionService.from_settings(settings)
     controller = AgentController.from_session_service(session_service)
+    session = session_service.create_session(
+        title="Current",
+        goal="Track current work",
+        mode="normal",
+        status="active",
+    )
 
-    result = controller.handle(ControllerRequest(raw_input="look at example.com"))
+    result = controller.handle(
+        ControllerRequest(
+            raw_input="look at example.com",
+            active_session_id=session.id,
+            active_session_public_id=session.public_id,
+            active_session_mode=session.mode,
+        )
+    )
 
     assert result.status == ControllerResultStatus.HANDLED
     assert result.intent == ControllerIntent.NORMAL_REQUEST
     assert result.missing_field_error is None
     assert result.execution_bridge is not None
     assert result.execution_bridge.kind == ExecutionBridgeKind.BASE_RUNTIME
+    assert result.execution_bridge.prompt_text == "look at example.com"
 
 
-def test_agent_controller_routes_explicit_module_request_as_one_shot(tmp_path):
+def test_agent_controller_does_not_route_plain_text_as_module_request(tmp_path):
     settings = build_settings(tmp_path)
     session_service = SessionService.from_settings(settings)
     controller = AgentController.from_session_service(session_service)
+    session = session_service.create_session(
+        title="Current",
+        goal="Track current work",
+        mode="normal",
+        status="active",
+    )
 
     result = controller.handle(
-        ControllerRequest(raw_input="Run surface-recon for example.com")
+        ControllerRequest(
+            raw_input="Run surface-recon for example.com",
+            active_session_id=session.id,
+            active_session_public_id=session.public_id,
+            active_session_mode=session.mode,
+        )
     )
 
     assert result.status == ControllerResultStatus.HANDLED
-    assert result.intent == ControllerIntent.MODULE_INVOCATION_REQUEST
+    assert result.intent == ControllerIntent.NORMAL_REQUEST
     assert result.execution_bridge is not None
-    assert result.execution_bridge.kind == ExecutionBridgeKind.MODULE_RUNTIME
-    assert result.execution_bridge.module_name == "surface-recon"
-    assert result.execution_bridge.module_parameters == {"target": "example.com"}
-    assert result.execution_bridge.module_one_shot
-    assert result.session_summary is None
+    assert result.execution_bridge.kind == ExecutionBridgeKind.BASE_RUNTIME
+    assert result.execution_bridge.module_name is None
+    assert result.execution_bridge.prompt_text == "Run surface-recon for example.com"
 
 
 def test_agent_controller_record_lookup_prefers_active_session(tmp_path):
@@ -265,11 +315,13 @@ def test_agent_controller_record_lookup_prefers_active_session(tmp_path):
     )
 
     result = controller.handle(
-        ControllerRequest(
-            raw_input="What did you already do?",
-            active_session_id=session.id,
-            active_session_public_id=session.public_id,
-            active_session_mode=session.mode,
+        build_controller_request(
+            question="/history",
+            shell_state=ShellState(
+                active_session_id=session.id,
+                active_session_public_id=session.public_id,
+                active_session_mode=session.mode,
+            ),
         )
     )
 
@@ -408,7 +460,7 @@ def test_agent_controller_returns_traceable_finding_explanation(tmp_path):
     assert explanation.missing_segments == []
 
 
-def test_agent_controller_active_task_does_not_override_normal_session_routing(tmp_path):
+def test_agent_controller_free_form_prompt_without_session_is_not_auto_routed(tmp_path):
     settings = build_settings(tmp_path)
     session_service = SessionService.from_settings(settings)
     controller = AgentController.from_session_service(session_service)
@@ -419,14 +471,11 @@ def test_agent_controller_active_task_does_not_override_normal_session_routing(t
         )
     )
 
-    assert result.status == ControllerResultStatus.HANDLED
-    assert result.execution_bridge is not None
-    assert result.execution_bridge.kind == ExecutionBridgeKind.BASE_RUNTIME
-    assert result.session_summary is not None
-    assert result.intent == ControllerIntent.NORMAL_REQUEST
+    assert result.status == ControllerResultStatus.UNSUPPORTED
+    assert result.execution_bridge is None
 
 
-def test_agent_controller_active_task_does_not_override_record_lookup_or_explicit_redteam_mode(tmp_path):
+def test_agent_controller_active_session_does_not_reclassify_free_form_text(tmp_path):
     settings = build_settings(tmp_path)
     session_service = SessionService.from_settings(settings)
     controller = AgentController.from_session_service(session_service)
@@ -438,71 +487,92 @@ def test_agent_controller_active_task_does_not_override_record_lookup_or_explici
     )
 
     record_result = controller.handle(
+        build_controller_request(
+            question="/history",
+            shell_state=ShellState(
+                active_session_id=session.id,
+                active_session_public_id=session.public_id,
+                active_session_mode=session.mode,
+            ),
+        )
+    )
+    prompt_result = controller.handle(
         ControllerRequest(
-            raw_input="What did you already do?",
+            raw_input="Scan example.com for open services",
             active_session_id=session.id,
             active_session_public_id=session.public_id,
             active_session_mode=session.mode,
         )
     )
-    redteam_result = controller.handle(
-        ControllerRequest(
-            raw_input="Scan example.com for open services",
-            requested_session_mode=SessionMode.REDTEAM,
-        )
-    )
     normal_result = controller.handle(
         ControllerRequest(
             raw_input="scan this host",
+            active_session_id=session.id,
+            active_session_public_id=session.public_id,
+            active_session_mode=session.mode,
         )
     )
 
     assert record_result.intent == ControllerIntent.RECORD_LOOKUP_REQUEST
     assert record_result.execution_bridge is None
-    assert redteam_result.intent == ControllerIntent.REDTEAM_REQUEST
-    assert redteam_result.execution_bridge is not None
-    assert redteam_result.execution_bridge.kind == ExecutionBridgeKind.BASE_RUNTIME
+    assert prompt_result.intent == ControllerIntent.NORMAL_REQUEST
+    assert prompt_result.execution_bridge is not None
+    assert prompt_result.execution_bridge.prompt_text == "Scan example.com for open services"
     assert normal_result.intent == ControllerIntent.NORMAL_REQUEST
     assert normal_result.execution_bridge is not None
 
 
-def test_agent_controller_preserves_all_detected_targets_in_execution_prompt(tmp_path):
+def test_agent_controller_does_not_extract_targets_from_free_form_prompt(tmp_path):
     settings = build_settings(tmp_path)
     session_service = SessionService.from_settings(settings)
     controller = AgentController.from_session_service(session_service)
+    session = session_service.create_session(
+        title="Current",
+        goal="Track current work",
+        mode="normal",
+        status="active",
+    )
 
     result = controller.handle(
         ControllerRequest(
             raw_input="Inspect example.com and 10.0.0.1 for exposed services",
+            active_session_id=session.id,
+            active_session_public_id=session.public_id,
+            active_session_mode=session.mode,
         )
     )
 
     assert result.status == ControllerResultStatus.HANDLED
     assert result.execution_bridge is not None
     assert result.execution_bridge.kind == ExecutionBridgeKind.BASE_RUNTIME
-    assert "example.com" in result.execution_bridge.prompt_text
-    assert "10.0.0.1" in result.execution_bridge.prompt_text
+    assert result.execution_bridge.prompt_text == "Inspect example.com and 10.0.0.1 for exposed services"
     assert result.session_summary is not None
-    assert result.session_summary.target_summary is not None
-    assert "example.com" in result.session_summary.target_summary
-    assert "10.0.0.1" in result.session_summary.target_summary
+    assert result.session_summary.target_summary is None
 
 
 def test_render_controller_result_uses_callback_presenter(tmp_path):
     outputs = []
     session_service = SessionService.from_settings(build_settings(tmp_path))
     controller = AgentController.from_session_service(session_service)
+    session = session_service.create_session(
+        title="Redteam current",
+        goal="Track redteam work",
+        mode="redteam",
+        status="active",
+    )
     result = controller.handle(
         ControllerRequest(
             raw_input="Scan example.com for open services",
-            requested_session_mode=SessionMode.REDTEAM,
+            active_session_id=session.id,
+            active_session_public_id=session.public_id,
+            active_session_mode=session.mode,
         )
     )
     presenter = main_module.CliPresenter.for_callbacks(info_output=outputs.append, error_output=outputs.append)
 
     render_controller_result(result, ui=presenter)
 
-    assert any("Started session" in message or "Started redteam session" in message for message in outputs)
+    assert any("Reused session" in message for message in outputs)
     assert any("Mode: redteam" in message for message in outputs)
 
 
@@ -514,6 +584,13 @@ def test_run_interactive_shell_routes_plain_text_through_controller_and_skill_br
     session_state = SessionState()
     shell_state = ShellState(active_skill_name="security-audit")
     session_service = SessionService.from_settings(settings)
+    session = session_service.create_session(
+        title="Current",
+        goal="Track current work",
+        mode="normal",
+        status="active",
+    )
+    shell_state.bind_session(SessionSummary.from_session(session, reused=True))
     controller = AgentController.from_session_service(session_service)
     capability_service = main_module.create_capability_service()
     execution_service = FakeExecutionService()
@@ -564,6 +641,12 @@ def test_run_interactive_shell_keeps_plain_text_on_session_flow_with_active_sess
         active_session_mode=SessionMode.NORMAL,
     )
     session_service = SessionService.from_settings(settings)
+    session_service.create_session(
+        title="Current",
+        goal="Track current work",
+        mode="normal",
+        status="active",
+    )
     controller = AgentController.from_session_service(session_service)
     capability_service = main_module.create_capability_service()
     execution_service = FakeExecutionService()
@@ -608,6 +691,13 @@ def test_run_interactive_shell_redteam_command_sets_mode_and_next_plain_text_exe
     session_state = SessionState()
     shell_state = ShellState()
     session_service = SessionService.from_settings(settings)
+    session = session_service.create_session(
+        title="Redteam current",
+        goal="Track redteam work",
+        mode="redteam",
+        status="active",
+    )
+    shell_state.bind_session(SessionSummary.from_session(session, reused=True))
     controller = AgentController.from_session_service(session_service)
     capability_service = main_module.create_capability_service()
     execution_service = FakeExecutionService()
