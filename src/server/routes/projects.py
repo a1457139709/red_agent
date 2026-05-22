@@ -3,19 +3,24 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.project_service import ProjectService
+from app.target_admission_service import TargetAdmissionService
 from app.target_session_service import TargetSessionService
 from models.control_center import (
+    CampaignTarget,
     Project,
     ProjectDashboard,
     ProjectStatus,
     SessionDashboard,
+    TargetPoolStatus,
+    TargetSource,
     TargetSession,
     TargetSessionStatus,
     TargetType,
 )
+from models.scope_policy import ScopePolicy
 
 router = APIRouter(prefix="/api", tags=["projects"])
 
@@ -32,18 +37,37 @@ class ProjectPatchRequest(BaseModel):
 
 
 class TargetSessionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1)
-    target_value: str = Field(min_length=1)
-    target_type: TargetType
     summary: str | None = None
 
 
 class TargetSessionPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = Field(default=None, min_length=1)
-    target_value: str | None = Field(default=None, min_length=1)
-    target_type: TargetType | None = None
     summary: str | None = None
     status: TargetSessionStatus | None = None
+
+
+class ScopePolicyPatchRequest(BaseModel):
+    allowed_hosts: list[str] | None = None
+    allowed_domains: list[str] | None = None
+    allowed_cidrs: list[str] | None = None
+    allowed_ports: list[int] | None = None
+    allowed_protocols: list[str] | None = None
+    denied_targets: list[str] | None = None
+    allowed_tool_categories: list[str] | None = None
+    confirmation_required_actions: list[str] | None = None
+
+
+class TargetProposalRequest(BaseModel):
+    value: str = Field(min_length=1)
+    source: TargetSource = TargetSource.AGENT_DISCOVERED
+    evidence_id: str | None = None
+    discovered_by: str | None = None
+    discovered_from: str | None = None
 
 
 def serialize_project(project: Project) -> dict[str, Any]:
@@ -66,8 +90,6 @@ def serialize_target_session(session: TargetSession) -> dict[str, Any]:
         "public_id": session.public_id,
         "project_id": session.project_id,
         "name": session.name,
-        "target_value": session.target_value,
-        "target_type": session.target_type.value,
         "status": session.status.value,
         "summary": session.summary,
         "created_at": session.created_at,
@@ -76,15 +98,52 @@ def serialize_target_session(session: TargetSession) -> dict[str, Any]:
     }
 
 
+def serialize_target(target: CampaignTarget) -> dict[str, Any]:
+    return {
+        "id": target.id,
+        "public_id": target.public_id,
+        "project_id": target.project_id,
+        "value": target.value,
+        "target_type": target.target_type.value,
+        "normalized_host": target.normalized_host,
+        "source": target.source.value,
+        "status": target.status.value,
+        "confidence": target.confidence,
+        "discovered_by": target.discovered_by,
+        "discovered_from": target.discovered_from,
+        "scope_reason": target.scope_reason,
+        "rejection_key": target.rejection_key,
+        "created_at": target.created_at,
+        "updated_at": target.updated_at,
+        "metadata": dict(target.metadata),
+    }
+
+
+def serialize_scope_policy(policy: ScopePolicy) -> dict[str, Any]:
+    return {
+        "id": policy.id,
+        "project_id": policy.session_id,
+        "allowed_hosts": list(policy.allowed_hosts),
+        "allowed_domains": list(policy.allowed_domains),
+        "allowed_cidrs": list(policy.allowed_cidrs),
+        "allowed_ports": list(policy.allowed_ports),
+        "allowed_protocols": list(policy.allowed_protocols),
+        "denied_targets": list(policy.denied_targets),
+        "allowed_tool_categories": list(policy.allowed_tool_categories),
+        "max_concurrency": policy.max_concurrency,
+        "rate_limit_per_minute": policy.rate_limit_per_minute,
+        "confirmation_required_actions": list(policy.confirmation_required_actions),
+        "created_at": policy.created_at,
+        "updated_at": policy.updated_at,
+    }
+
+
 def serialize_dashboard(dashboard: SessionDashboard) -> dict[str, Any]:
     return {
         "project": serialize_project(dashboard.project),
         "session": serialize_target_session(dashboard.session),
-        "target": {
-            "value": dashboard.session.target_value,
-            "type": dashboard.session.target_type.value,
-            "summary": dashboard.session.summary,
-        },
+        "active_targets": list(dashboard.active_targets),
+        "pending_targets": list(dashboard.pending_targets),
         "task_counts": dict(dashboard.task_counts),
         "finding_counts": dict(dashboard.finding_counts),
         "evidence_count": dashboard.evidence_count,
@@ -188,8 +247,6 @@ async def create_project_session(
         session = TargetSessionService.from_settings().create_session(
             project_identifier=project_id,
             name=request.name,
-            target_value=request.target_value,
-            target_type=request.target_type,
             summary=request.summary,
         )
     except ValueError as exc:
@@ -201,7 +258,7 @@ async def create_project_session(
 async def get_session(session_id: str) -> dict[str, Any]:
     session = TargetSessionService.from_settings().get_session(session_id)
     if session is None:
-        raise HTTPException(status_code=404, detail=f"Target session not found: {session_id}")
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
     return {"session": serialize_target_session(session)}
 
 
@@ -212,8 +269,6 @@ async def patch_session(session_id: str, request: TargetSessionPatchRequest) -> 
         session = TargetSessionService.from_settings().update_session(
             session_id,
             name=changes.get("name"),
-            target_value=changes.get("target_value"),
-            target_type=changes.get("target_type"),
             summary=changes.get("summary"),
             status=changes.get("status"),
         )
@@ -229,3 +284,73 @@ async def get_session_dashboard(session_id: str) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"dashboard": serialize_dashboard(dashboard)}
+
+
+@router.get("/projects/{project_id}/scope")
+async def get_project_scope(project_id: str) -> dict[str, Any]:
+    try:
+        policy = TargetAdmissionService.from_settings().require_scope_policy(project_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"scope": serialize_scope_policy(policy)}
+
+
+@router.patch("/projects/{project_id}/scope")
+async def patch_project_scope(project_id: str, request: ScopePolicyPatchRequest) -> dict[str, Any]:
+    service = TargetAdmissionService.from_settings()
+    try:
+        policy = service.require_scope_policy(project_id)
+        changes = request.model_dump(exclude_unset=True)
+        for field_name, value in changes.items():
+            setattr(policy, field_name, list(value or []))
+        saved = service.save_scope_policy(project_id, policy)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"scope": serialize_scope_policy(saved)}
+
+
+@router.get("/projects/{project_id}/targets")
+async def list_project_targets(project_id: str, status: TargetPoolStatus | None = None) -> dict[str, Any]:
+    try:
+        targets = TargetAdmissionService.from_settings().list_targets(
+            project_identifier=project_id,
+            status=status,
+            limit=None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"targets": [serialize_target(target) for target in targets]}
+
+
+@router.post("/projects/{project_id}/targets/propose", status_code=201)
+async def propose_project_target(project_id: str, request: TargetProposalRequest) -> dict[str, Any]:
+    try:
+        result = TargetAdmissionService.from_settings().propose_target(
+            project_identifier=project_id,
+            value=request.value,
+            source=request.source,
+            evidence_id=request.evidence_id,
+            discovered_by=request.discovered_by,
+            discovered_from=request.discovered_from,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"admission": {"status": result.status, "reason": result.reason, "target": serialize_target(result.target)}}
+
+
+@router.post("/targets/{target_id}/approve")
+async def approve_target(target_id: str) -> dict[str, Any]:
+    try:
+        result = TargetAdmissionService.from_settings().approve_target(target_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"admission": {"status": result.status, "reason": result.reason, "target": serialize_target(result.target)}}
+
+
+@router.post("/targets/{target_id}/reject")
+async def reject_target(target_id: str) -> dict[str, Any]:
+    try:
+        result = TargetAdmissionService.from_settings().reject_target(target_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"admission": {"status": result.status, "reason": result.reason, "target": serialize_target(result.target)}}

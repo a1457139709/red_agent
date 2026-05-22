@@ -6,7 +6,7 @@ import pytest
 from agent.settings import Settings
 from app.project_service import ProjectService
 from app.target_session_service import TargetSessionService
-from models.control_center import AttackPathNode, CommandRun, Event, Evidence, Flag, TargetSessionStatus, TargetType, Task
+from models.control_center import AttackPathNode, CommandRun, Event, Evidence, Flag, TargetSessionStatus, Task
 from server.app import create_app
 from storage.project_paths import (
     project_manifest_path,
@@ -64,14 +64,10 @@ def test_target_session_repository_creates_lists_and_gets_sessions(tmp_path):
     session = session_service.create_session(
         project_identifier=project.public_id,
         name="Linux target",
-        target_value="10.10.10.5",
-        target_type=TargetType.IP,
     )
     session_service.create_session(
         project_identifier=other_project.public_id,
         name="Other target",
-        target_value="example.test",
-        target_type=TargetType.DOMAIN,
     )
 
     assert session.public_id == "T0001"
@@ -85,8 +81,6 @@ def test_project_and_session_filesystem_layout_is_created(tmp_path):
     session = TargetSessionService.from_settings(settings).create_session(
         project_identifier=project.id,
         name="Web target",
-        target_value="https://target.local",
-        target_type=TargetType.URL,
     )
 
     assert project_manifest_path(settings, project.id).exists()
@@ -106,7 +100,7 @@ def test_control_center_schema_initializes_reserved_tables(tmp_path):
 
     expected_tables = {
         "ctf_projects",
-        "ctf_target_sessions",
+        "ctf_sessions",
         "ctf_tasks",
         "ctf_events",
         "ctf_evidence",
@@ -127,8 +121,6 @@ def test_phase2_supporting_repositories_persist_session_entities(tmp_path):
     session = TargetSessionService.from_settings(settings).create_session(
         project_identifier=project.id,
         name="Target",
-        target_value="10.10.10.8",
-        target_type=TargetType.IP,
     )
 
     task = TaskRepository(storage).create(
@@ -137,7 +129,7 @@ def test_phase2_supporting_repositories_persist_session_entities(tmp_path):
             session_id=session.id,
             task_type="port_scan",
             executor="scanner",
-            input_json={"target": session.target_value},
+            input_json={"target": "10.10.10.8"},
         )
     )
     event = EventRepository(storage).create(
@@ -204,14 +196,10 @@ def test_event_sequence_is_global_and_project_history_is_ordered(tmp_path):
     first_session = session_service.create_session(
         project_identifier=project.id,
         name="First target",
-        target_value="10.10.10.10",
-        target_type=TargetType.IP,
     )
     second_session = session_service.create_session(
         project_identifier=project.id,
         name="Second target",
-        target_value="10.10.10.11",
-        target_type=TargetType.IP,
     )
 
     first_event = EventRepository(storage).create(
@@ -246,8 +234,6 @@ def test_session_dashboard_empty_state(tmp_path):
     session = TargetSessionService.from_settings(settings).create_session(
         project_identifier=project.id,
         name="Initial target",
-        target_value="target.local",
-        target_type=TargetType.HOST,
     )
 
     dashboard = TargetSessionService.from_settings(settings).build_dashboard(session.public_id)
@@ -267,8 +253,6 @@ def test_session_dashboard_includes_workspace_sections(tmp_path):
     session = TargetSessionService.from_settings(settings).create_session(
         project_identifier=project.id,
         name="Portal",
-        target_value="portal.local",
-        target_type=TargetType.HOST,
     )
     storage = SQLiteStorage(settings.sqlite_path)
     task = TaskRepository(storage).create(
@@ -277,6 +261,7 @@ def test_session_dashboard_includes_workspace_sections(tmp_path):
             session_id=session.id,
             task_type="port_scan",
             executor="nmap",
+            input_json={"target_host": "portal.local"},
             result_json={
                 "structured": {
                     "open_ports": [
@@ -379,8 +364,6 @@ def test_session_creation_rolls_back_when_workspace_prep_fails(tmp_path, monkeyp
         service.create_session(
             project_identifier=project.id,
             name="Broken session",
-            target_value="10.10.10.12",
-            target_type=TargetType.IP,
         )
 
     assert service.list_sessions(project_identifier=project.id, limit=None) == []
@@ -413,11 +396,7 @@ def test_phase2_project_and_session_api_routes(tmp_path, monkeypatch):
 
         create_session = client.post(
             f"/api/projects/{project['public_id']}/sessions",
-            json={
-                "name": "Linux target",
-                "target_value": "10.10.10.5",
-                "target_type": "ip",
-            },
+            json={"name": "Linux target"},
         )
         assert create_session.status_code == 201
         session = create_session.json()["session"]
@@ -428,15 +407,22 @@ def test_phase2_project_and_session_api_routes(tmp_path, monkeypatch):
 
         get_session = client.get(f"/api/sessions/{session['public_id']}")
         assert get_session.status_code == 200
-        assert get_session.json()["session"]["target_value"] == "10.10.10.5"
+        assert get_session.json()["session"]["name"] == "Linux target"
 
         dashboard = client.get(f"/api/sessions/{session['id']}/dashboard")
         assert dashboard.status_code == 200
         payload = dashboard.json()["dashboard"]
-        assert payload["target"] == {"value": "10.10.10.5", "type": "ip", "summary": None}
+        assert payload["active_targets"] == []
+        assert payload["pending_targets"] == []
         assert payload["open_ports"] == []
         assert payload["attack_path"] == []
         assert payload["next_actions"] == []
+
+        legacy_session = client.post(
+            f"/api/projects/{project['id']}/sessions",
+            json={"name": "Legacy target", "target_value": "10.10.10.5", "target_type": "ip"},
+        )
+        assert legacy_session.status_code == 422
 
 
 def test_project_and_session_lifecycle_routes_include_project_dashboard(tmp_path, monkeypatch):
@@ -450,11 +436,7 @@ def test_project_and_session_lifecycle_routes_include_project_dashboard(tmp_path
         project = client.post("/api/projects", json={"name": "Archive Lab"}).json()["project"]
         session = client.post(
             f"/api/projects/{project['id']}/sessions",
-            json={
-                "name": "Initial target",
-                "target_value": "10.10.10.20",
-                "target_type": "ip",
-            },
+            json={"name": "Initial target"},
         ).json()["session"]
 
         patched_project = client.patch(
@@ -494,11 +476,7 @@ def test_project_and_session_lifecycle_routes_include_project_dashboard(tmp_path
 
         create_session = client.post(
             f"/api/projects/{project['id']}/sessions",
-            json={
-                "name": "Should fail",
-                "target_value": "10.10.10.21",
-                "target_type": "ip",
-            },
+            json={"name": "Should fail"},
         )
         assert create_session.status_code == 400
 
@@ -510,14 +488,10 @@ def test_project_dashboard_aggregates_project_activity(tmp_path):
     first_session = session_service.create_session(
         project_identifier=project.id,
         name="First target",
-        target_value="10.10.10.30",
-        target_type=TargetType.IP,
     )
     second_session = session_service.create_session(
         project_identifier=project.id,
         name="Second target",
-        target_value="10.10.10.31",
-        target_type=TargetType.IP,
     )
     second_session.status = TargetSessionStatus.PAUSED
     TargetSessionRepository(SQLiteStorage(settings.sqlite_path)).update(second_session)
@@ -585,8 +559,6 @@ def test_event_websocket_replays_persisted_session_history(tmp_path, monkeypatch
     session = TargetSessionService.from_settings(settings).create_session(
         project_identifier=project.id,
         name="Replay target",
-        target_value="10.10.10.15",
-        target_type=TargetType.IP,
     )
     storage = SQLiteStorage(settings.sqlite_path)
     event = EventRepository(storage).create(

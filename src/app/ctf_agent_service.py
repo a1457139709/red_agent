@@ -3,11 +3,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
-from urllib.parse import urlsplit
 from uuid import uuid4
 
 from agent.settings import Settings, get_settings
-from models.control_center import AttackPathNode, Event, TargetSession, Task, TaskStatus, TargetType
+from models.control_center import AttackPathNode, Event, TargetSession, Task, TaskStatus
 from models.run import utc_now_iso
 from storage.repositories.control_center import (
     AttackPathNodeRepository,
@@ -21,6 +20,7 @@ from storage.sqlite import SQLiteStorage
 from .agent_orchestrator import AgentOrchestrator, AgentToolRouter
 from .control_center_base import ControlCenterService
 from .scanner_service import ScannerService
+from .target_admission_service import TargetAdmissionService
 
 
 ModelFactory = Callable[[Settings], Any]
@@ -72,7 +72,12 @@ class EnumerationPlanner:
                 PlannedScan(
                     tool_name="ffuf",
                     task_type="dir_scan",
-                    input_data={"base_url": target, "wordlist": default_wordlist, "filters": {}},
+                    input_data={
+                        "target_id": port_scan.input_json.get("target_id"),
+                        "base_url": target,
+                        "wordlist": default_wordlist,
+                        "filters": {},
+                    },
                     reason=f"HTTP service discovered at {target}.",
                 )
                 for target in web_targets
@@ -88,7 +93,11 @@ class EnumerationPlanner:
                 PlannedScan(
                     tool_name="nuclei",
                     task_type="poc_scan",
-                    input_data={"target_url": target, "templates": [nuclei_templates_path]},
+                    input_data={
+                        "target_id": port_scan.input_json.get("target_id"),
+                        "target_url": target,
+                        "templates": [nuclei_templates_path],
+                    },
                     reason=f"HTTP candidate target is available at {target}.",
                 )
                 for target in web_targets
@@ -107,19 +116,20 @@ class EnumerationPlanner:
         )
 
     def web_targets_from_port_scan(self, *, session: TargetSession, port_scan: Task) -> list[str]:
-        if session.target_type == TargetType.URL:
-            return [session.target_value]
         structured = port_scan.result_json.get("structured")
         if not isinstance(structured, dict):
             return []
         open_ports = structured.get("open_ports")
         if not isinstance(open_ports, list):
             return []
+        host = str(port_scan.input_json.get("target_host") or port_scan.input_json.get("target") or "").strip()
+        if not host:
+            return []
         targets: list[str] = []
         for port_data in open_ports:
             if not isinstance(port_data, dict):
                 continue
-            target = _web_target_from_port(session.target_value, port_data)
+            target = _web_target_from_port(host, port_data)
             if target is not None and target not in targets:
                 targets.append(target)
         return targets
@@ -161,6 +171,7 @@ class CTFAgentService(ControlCenterService):
         object.__setattr__(self, "planner", planner or EnumerationPlanner())
         object.__setattr__(self, "reducer", reducer or EnumerationResultReducer())
         object.__setattr__(self, "scanner_service", scanner_service or ScannerService.from_settings(settings))
+        object.__setattr__(self, "target_admission_service", TargetAdmissionService.from_settings(settings))
         object.__setattr__(self, "model_factory", model_factory)
         object.__setattr__(self, "project_repository", ProjectRepository(storage))
         object.__setattr__(self, "session_repository", TargetSessionRepository(storage))
@@ -263,7 +274,7 @@ class CTFAgentService(ControlCenterService):
         task = self.scanner_service.create_scan_task(
             session_identifier=session.id,
             task_type="port_scan",
-            input_data={"target_host": _scanner_host_for_session(session)},
+            input_data={},
         )
         self._record_agent_event(
             agent_task,
@@ -278,7 +289,7 @@ class CTFAgentService(ControlCenterService):
         task = self.scanner_service.create_scan_task(
             session_identifier=session.id,
             task_type=plan.task_type,
-            input_data=plan.input_data,
+            input_data=self._input_with_target_id(session=session, input_data=plan.input_data),
         )
         self._record_agent_event(
             agent_task,
@@ -293,7 +304,7 @@ class CTFAgentService(ControlCenterService):
         task = self.scanner_service.create_scan_task(
             session_identifier=session.id,
             task_type=plan.task_type,
-            input_data=plan.input_data,
+            input_data=self._input_with_target_id(session=session, input_data=plan.input_data),
         )
         self._record_agent_event(
             agent_task,
@@ -305,6 +316,23 @@ class CTFAgentService(ControlCenterService):
 
     def summarize_scan_result(self, task: Task) -> ScanSummary:
         return self.reducer.summarize_scan_result(task)
+
+    def _input_with_target_id(self, *, session: TargetSession, input_data: dict[str, Any]) -> dict[str, Any]:
+        if input_data.get("target_id"):
+            return dict(input_data)
+        value = input_data.get("base_url") or input_data.get("target_url") or input_data.get("target_host")
+        if value:
+            result = self.target_admission_service.propose_target(
+                project_identifier=session.project_id,
+                value=str(value),
+                discovered_by="ctf_agent",
+            )
+            if result.target.status.value != "active":
+                raise ValueError(f"Target {value} is not active: {result.reason}")
+            normalized = dict(input_data)
+            normalized["target_id"] = result.target.id
+            return normalized
+        raise ValueError("No active target_id is available for scanner task.")
 
     def create_attack_path_node(self, *, session: TargetSession, title: str, next_action: str, source_ref: str | None = None) -> AttackPathNode:
         return self.attack_path_repository.create(
@@ -425,13 +453,6 @@ class CTFAgentService(ControlCenterService):
                 payload=payload,
             )
         )
-
-def _scanner_host_for_session(session: TargetSession) -> str:
-    if session.target_type == TargetType.URL:
-        parsed = urlsplit(session.target_value)
-        return parsed.hostname or session.target_value
-    return session.target_value
-
 
 def _should_record_agent_summary(result: dict[str, Any]) -> bool:
     if result.get("error") or result.get("recoverable", False):

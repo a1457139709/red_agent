@@ -7,6 +7,7 @@ from agent.settings import Settings
 from app.ctf_agent_service import CTFAgentService, EnumerationPlanner
 from app.project_service import ProjectService
 from app.scanner_service import ScannerService
+from app.target_admission_service import TargetAdmissionService
 from app.target_session_service import TargetSessionService
 from models.control_center import Event, TargetType, Task
 from scanners.process_runner import ProcessResult
@@ -113,13 +114,30 @@ def build_settings(tmp_path):
 
 def prepare_session(settings):
     project = ProjectService.from_settings(settings).create_project(name="Phase 4")
+    admission = TargetAdmissionService.from_settings(settings)
+    admission.create_initial_target(
+        project_identifier=project.id,
+        value="10.10.10.5",
+        target_type=TargetType.IP,
+    )
+    admission.create_initial_target(
+        project_identifier=project.id,
+        value="http://10.10.10.5",
+        target_type=TargetType.URL,
+    )
     session = TargetSessionService.from_settings(settings).create_session(
         project_identifier=project.id,
         name="Target",
-        target_value="10.10.10.5",
-        target_type=TargetType.IP,
     )
     return project, session
+
+
+def target_id(settings, *, project_id: str, value: str) -> str:
+    targets = TargetAdmissionService.from_settings(settings).list_targets(
+        project_identifier=project_id,
+        limit=None,
+    )
+    return next(target.id for target in targets if target.value == value)
 
 
 def test_planner_selects_ffuf_only_for_http_services(tmp_path):
@@ -130,6 +148,7 @@ def test_planner_selects_ffuf_only_for_http_services(tmp_path):
         session_id=session.id,
         task_type="port_scan",
         executor="nmap",
+        input_json={"target_host": "10.10.10.5"},
         result_json={
             "structured": {
                 "open_ports": [
@@ -159,6 +178,7 @@ def test_planner_does_not_start_nuclei_without_candidate_target(tmp_path):
         session_id=session.id,
         task_type="port_scan",
         executor="nmap",
+        input_json={"target_host": "10.10.10.5"},
         result_json={"structured": {"open_ports": [{"port": 22, "protocol": "tcp", "service": "ssh"}]}},
     )
 
@@ -176,7 +196,9 @@ def test_planner_does_not_start_nuclei_without_candidate_target(tmp_path):
 
 def test_ctf_agent_service_runs_llm_selected_scan_tools_and_records_events(tmp_path):
     settings = build_settings(tmp_path)
-    _project, session = prepare_session(settings)
+    project, session = prepare_session(settings)
+    ip_target_id = target_id(settings, project_id=project.id, value="10.10.10.5")
+    url_target_id = target_id(settings, project_id=project.id, value="http://10.10.10.5")
     wordlist = tmp_path / "words.txt"
     wordlist.write_text("admin\n", encoding="utf-8")
     templates = tmp_path / "templates"
@@ -200,16 +222,16 @@ def test_ctf_agent_service_runs_llm_selected_scan_tools_and_records_events(tmp_p
             AIMessage(
                 content="I will run the selected scan tools.",
                 tool_calls=[
-                    {"name": "start_port_scan", "args": {"reason": "Initial recon"}, "id": "call-1", "type": "tool_call"},
+                    {"name": "start_port_scan", "args": {"target_id": ip_target_id, "reason": "Initial recon"}, "id": "call-1", "type": "tool_call"},
                     {
                         "name": "start_dir_scan",
-                        "args": {"base_url": "http://10.10.10.5", "reason": "HTTP service discovered"},
+                        "args": {"target_id": url_target_id, "base_url": "http://10.10.10.5", "reason": "HTTP service discovered"},
                         "id": "call-2",
                         "type": "tool_call",
                     },
                     {
                         "name": "start_poc_scan",
-                        "args": {"target_url": "http://10.10.10.5", "reason": "Validate web findings"},
+                        "args": {"target_id": url_target_id, "target_url": "http://10.10.10.5", "reason": "Validate web findings"},
                         "id": "call-3",
                         "type": "tool_call",
                     },
@@ -243,14 +265,15 @@ def test_ctf_agent_service_runs_llm_selected_scan_tools_and_records_events(tmp_p
 
 def test_failed_port_scan_tool_call_records_diagnostic_event(tmp_path):
     settings = build_settings(tmp_path)
-    _project, session = prepare_session(settings)
+    project, session = prepare_session(settings)
+    ip_target_id = target_id(settings, project_id=project.id, value="10.10.10.5")
     scanner = ScannerService.from_settings(settings)
     scanner.update_config({"tools": {"nmap": {"binary_path": str(tmp_path / "missing-nmap")}}})
     model = FakeToolCallingModel(
         [
             AIMessage(
                 content="I will try the port scan.",
-                tool_calls=[{"name": "start_port_scan", "args": {"reason": "Initial recon"}, "id": "call-1", "type": "tool_call"}],
+                tool_calls=[{"name": "start_port_scan", "args": {"target_id": ip_target_id, "reason": "Initial recon"}, "id": "call-1", "type": "tool_call"}],
             ),
             AIMessage(content="Port scan could not run with the current scanner configuration.", tool_calls=[]),
         ]
@@ -276,7 +299,8 @@ def test_failed_port_scan_tool_call_records_diagnostic_event(tmp_path):
 
 def test_llm_agent_answers_general_questions_without_phase4_fallback(tmp_path):
     settings = build_settings(tmp_path)
-    _project, session = prepare_session(settings)
+    project, session = prepare_session(settings)
+    ip_target_id = target_id(settings, project_id=project.id, value="10.10.10.5")
     model = FakeToolCallingModel([AIMessage(content="我是 red-code Control Center Agent。", tool_calls=[])])
     service = CTFAgentService(settings=settings, model_factory=lambda _settings: model)
 
@@ -296,7 +320,8 @@ def test_llm_agent_answers_general_questions_without_phase4_fallback(tmp_path):
 
 def test_llm_agent_tool_call_creates_scan_task_and_tool_events(tmp_path):
     settings = build_settings(tmp_path)
-    _project, session = prepare_session(settings)
+    project, session = prepare_session(settings)
+    ip_target_id = target_id(settings, project_id=project.id, value="10.10.10.5")
     binary = tmp_path / "nmap"
     binary.write_text("#!/bin/sh\n", encoding="utf-8")
     scanner = ScannerService(settings=settings, runner=RoutingRunner())
@@ -305,7 +330,7 @@ def test_llm_agent_tool_call_creates_scan_task_and_tool_events(tmp_path):
         [
             AIMessage(
                 content="I will scan the target.",
-                tool_calls=[{"name": "start_port_scan", "args": {"reason": "Initial recon"}, "id": "call-1", "type": "tool_call"}],
+                tool_calls=[{"name": "start_port_scan", "args": {"target_id": ip_target_id, "reason": "Initial recon"}, "id": "call-1", "type": "tool_call"}],
             ),
             AIMessage(content="Port scan completed.", tool_calls=[]),
         ]

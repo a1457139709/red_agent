@@ -9,7 +9,8 @@ import logging
 from urllib.parse import urlsplit
 
 from agent.settings import Settings, get_settings
-from models.control_center import AttackPathNode, Event, Evidence, Finding, Task, TaskStatus
+from models.control_center import AttackPathNode, Event, Evidence, Finding, TargetPoolStatus, TargetType, Task, TaskStatus
+from orchestration.scope_validator import AdmissionOutcome, AdmissionRequest, ScopeValidator
 from models.run import utc_now_iso
 from scanners.contracts import (
     AttackPathCandidate,
@@ -28,6 +29,8 @@ from storage.repositories.control_center import (
     EvidenceRepository,
     EventRepository,
     FindingRepository,
+    CampaignTargetRepository,
+    ProjectScopePolicyRepository,
     ProjectRepository,
     TargetSessionRepository,
     TaskRepository,
@@ -182,8 +185,13 @@ class ScannerService(ControlCenterService):
         project = self.project_repository.require(session.project_id)
         adapter = self.registry.require_by_task_type(task_type)
         tool_config = self.get_config().for_tool(adapter.name)
-        normalized_input = adapter.validate_input(_apply_config_defaults(adapter.name, input_data, tool_config))
-        _validate_session_target(session.target_value, normalized_input, adapter=adapter)
+        scoped_input = self._resolve_scoped_scan_input(
+            session=session,
+            adapter=adapter,
+            input_data=_apply_config_defaults(adapter.name, input_data, tool_config),
+        )
+        normalized_input = adapter.validate_input(scoped_input)
+        normalized_input["target_id"] = scoped_input["target_id"]
         task = Task.create(
             project_id=project.id,
             session_id=session.id,
@@ -195,6 +203,54 @@ class ScannerService(ControlCenterService):
         if emit_queued_event:
             self._record_task_event(created, "task.queued", level="info", payload={"task_type": created.task_type})
         return created
+
+    def _resolve_scoped_scan_input(
+        self,
+        *,
+        session,
+        adapter: ScannerAdapter,
+        input_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        target_id = str(input_data.get("target_id") or "").strip()
+        if not target_id:
+            raise ValueError("scan input must include target_id.")
+        storage = SQLiteStorage(self.settings.sqlite_path)
+        target = CampaignTargetRepository(storage).require(target_id)
+        if target.project_id != session.project_id:
+            raise ValueError("scan target does not belong to the selected project.")
+        if target.status != TargetPoolStatus.ACTIVE:
+            raise ValueError("scan target must be active.")
+        policy = ProjectScopePolicyRepository(storage).require_by_project_id(session.project_id)
+        scan_value = _scanner_target_value(input_data, adapter=adapter) or _scanner_value_for_target(target, adapter=adapter)
+        target_scan_value = _host_value_for_target(target)
+        if _host_identity(scan_value) != _host_identity(target_scan_value):
+            raise ValueError(
+                f"scan target {_host_identity(scan_value)} is outside the selected project target "
+                f"{_host_identity(target_scan_value)} and does not match target_id."
+            )
+        decision = ScopeValidator().evaluate(
+            policy,
+            AdmissionRequest(
+                session_id=session.id,
+                job_id=None,
+                tool_name=adapter.name,
+                tool_category="recon",
+                raw_target=scan_value,
+                metadata={"ports": input_data.get("ports", [])},
+                skip_confirmation=True,
+            ),
+        )
+        if decision.outcome != AdmissionOutcome.ALLOWED:
+            raise ValueError(decision.message)
+        normalized = dict(input_data)
+        normalized["target_id"] = target.id
+        if adapter.name == "nmap":
+            normalized["target_host"] = _scanner_value_for_target(target, adapter=adapter)
+        elif adapter.name == "ffuf":
+            normalized["base_url"] = scan_value
+        elif adapter.name == "nuclei":
+            normalized["target_url"] = scan_value
+        return normalized
 
     def list_tasks(self, *, session_identifier: str, limit: int | None = 50) -> list[Task]:
         session = self.session_repository.require(session_identifier)
@@ -631,6 +687,26 @@ def _scanner_target_value(input_data: dict[str, Any], *, adapter: ScannerAdapter
     if adapter.name == "nuclei":
         return str(input_data.get("target_url") or "")
     return str(input_data.get("target") or "")
+
+
+def _scanner_value_for_target(target, *, adapter: ScannerAdapter) -> str:
+    if adapter.name == "nmap":
+        if target.target_type == TargetType.URL:
+            parsed = urlsplit(target.value)
+            return parsed.hostname or target.value
+        return target.normalized_host or target.value
+    if adapter.name in {"ffuf", "nuclei"}:
+        if target.target_type != TargetType.URL:
+            raise ValueError(f"{adapter.task_type} requires a URL target.")
+        return target.value
+    return target.value
+
+
+def _host_value_for_target(target) -> str:
+    if target.target_type == TargetType.URL:
+        parsed = urlsplit(target.value)
+        return parsed.hostname or target.value
+    return target.normalized_host or target.value
 
 
 def _host_identity(value: str) -> str:

@@ -302,7 +302,6 @@ class WriteupService:
             "## Session",
             f"- Session id: {_public(session)}",
             f"- Name: {session.name}",
-            f"- Target: {session.target_type.value} {session.target_value}",
             f"- Summary: {session.summary or 'TODO: not recorded'}",
             "",
             "## Required Writeup Sections",

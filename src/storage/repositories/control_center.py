@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import sqlite3
 
+from models.scope_policy import ScopePolicy
 from models.control_center import (
     AttackPathNode,
+    CampaignTarget,
     CTFReport,
     CommandRun,
     Event,
@@ -12,13 +14,16 @@ from models.control_center import (
     Flag,
     Project,
     ProjectStatus,
+    TargetPoolStatus,
     TargetSession,
     TargetSessionStatus,
+    TargetSource,
     Task,
     TaskStatus,
 )
 from models.run import utc_now_iso
 from storage.sqlite import SQLiteStorage
+import json
 
 from ._common import allocate_public_id, get_row_by_identifier
 
@@ -39,13 +44,11 @@ CREATE TABLE IF NOT EXISTS ctf_projects (
 CREATE INDEX IF NOT EXISTS idx_ctf_projects_updated_at ON ctf_projects(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ctf_projects_status ON ctf_projects(status);
 
-CREATE TABLE IF NOT EXISTS ctf_target_sessions (
+CREATE TABLE IF NOT EXISTS ctf_sessions (
     id TEXT PRIMARY KEY,
     public_id TEXT NOT NULL UNIQUE,
     project_id TEXT NOT NULL,
     name TEXT NOT NULL,
-    target_value TEXT NOT NULL,
-    target_type TEXT NOT NULL,
     status TEXT NOT NULL,
     summary TEXT,
     created_at TEXT NOT NULL,
@@ -54,9 +57,57 @@ CREATE TABLE IF NOT EXISTS ctf_target_sessions (
     FOREIGN KEY(project_id) REFERENCES ctf_projects(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_ctf_target_sessions_project_updated_at
-    ON ctf_target_sessions(project_id, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_ctf_target_sessions_status ON ctf_target_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_ctf_sessions_project_updated_at
+    ON ctf_sessions(project_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ctf_sessions_status ON ctf_sessions(status);
+
+CREATE TABLE IF NOT EXISTS ctf_targets (
+    id TEXT PRIMARY KEY,
+    public_id TEXT NOT NULL UNIQUE,
+    project_id TEXT NOT NULL,
+    value TEXT NOT NULL,
+    target_type TEXT NOT NULL,
+    normalized_host TEXT,
+    source TEXT NOT NULL,
+    status TEXT NOT NULL,
+    confidence REAL,
+    discovered_by TEXT,
+    discovered_from TEXT,
+    scope_reason TEXT,
+    rejection_key TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    FOREIGN KEY(project_id) REFERENCES ctf_projects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ctf_targets_project_status_updated_at
+    ON ctf_targets(project_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ctf_targets_project_normalized_host
+    ON ctf_targets(project_id, normalized_host);
+CREATE INDEX IF NOT EXISTS idx_ctf_targets_project_rejection_key
+    ON ctf_targets(project_id, rejection_key);
+
+CREATE TABLE IF NOT EXISTS ctf_project_scope_policies (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL UNIQUE,
+    allowed_hosts TEXT NOT NULL DEFAULT '[]',
+    allowed_domains TEXT NOT NULL DEFAULT '[]',
+    allowed_cidrs TEXT NOT NULL DEFAULT '[]',
+    allowed_ports TEXT NOT NULL DEFAULT '[]',
+    allowed_protocols TEXT NOT NULL DEFAULT '[]',
+    denied_targets TEXT NOT NULL DEFAULT '[]',
+    allowed_tool_categories TEXT NOT NULL DEFAULT '[]',
+    max_concurrency INTEGER NOT NULL DEFAULT 1,
+    rate_limit_per_minute INTEGER,
+    confirmation_required_actions TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(project_id) REFERENCES ctf_projects(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ctf_project_scope_policies_project_id
+    ON ctf_project_scope_policies(project_id);
 
 CREATE TABLE IF NOT EXISTS ctf_tasks (
     id TEXT PRIMARY KEY,
@@ -74,7 +125,7 @@ CREATE TABLE IF NOT EXISTS ctf_tasks (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY(project_id) REFERENCES ctf_projects(id),
-    FOREIGN KEY(session_id) REFERENCES ctf_target_sessions(id)
+    FOREIGN KEY(session_id) REFERENCES ctf_sessions(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_ctf_tasks_session_updated_at ON ctf_tasks(session_id, updated_at DESC);
@@ -91,7 +142,7 @@ CREATE TABLE IF NOT EXISTS ctf_events (
     sequence INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     FOREIGN KEY(project_id) REFERENCES ctf_projects(id),
-    FOREIGN KEY(session_id) REFERENCES ctf_target_sessions(id),
+    FOREIGN KEY(session_id) REFERENCES ctf_sessions(id),
     FOREIGN KEY(task_id) REFERENCES ctf_tasks(id)
 );
 
@@ -112,7 +163,7 @@ CREATE TABLE IF NOT EXISTS ctf_evidence (
     payload_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
     FOREIGN KEY(project_id) REFERENCES ctf_projects(id),
-    FOREIGN KEY(session_id) REFERENCES ctf_target_sessions(id),
+    FOREIGN KEY(session_id) REFERENCES ctf_sessions(id),
     FOREIGN KEY(source_task_id) REFERENCES ctf_tasks(id)
 );
 
@@ -131,7 +182,7 @@ CREATE TABLE IF NOT EXISTS ctf_findings (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY(project_id) REFERENCES ctf_projects(id),
-    FOREIGN KEY(session_id) REFERENCES ctf_target_sessions(id)
+    FOREIGN KEY(session_id) REFERENCES ctf_sessions(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_ctf_findings_session_created_at
@@ -150,7 +201,7 @@ CREATE TABLE IF NOT EXISTS ctf_attack_path_nodes (
     next_action TEXT,
     created_at TEXT NOT NULL,
     FOREIGN KEY(project_id) REFERENCES ctf_projects(id),
-    FOREIGN KEY(session_id) REFERENCES ctf_target_sessions(id)
+    FOREIGN KEY(session_id) REFERENCES ctf_sessions(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_ctf_attack_path_nodes_session_created_at
@@ -184,7 +235,7 @@ CREATE TABLE IF NOT EXISTS ctf_command_runs (
     ended_at TEXT,
     created_at TEXT NOT NULL,
     FOREIGN KEY(project_id) REFERENCES ctf_projects(id),
-    FOREIGN KEY(session_id) REFERENCES ctf_target_sessions(id)
+    FOREIGN KEY(session_id) REFERENCES ctf_sessions(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_ctf_command_runs_session_created_at
@@ -200,7 +251,7 @@ CREATE TABLE IF NOT EXISTS ctf_flags (
     source_evidence_id TEXT,
     created_at TEXT NOT NULL,
     FOREIGN KEY(project_id) REFERENCES ctf_projects(id),
-    FOREIGN KEY(session_id) REFERENCES ctf_target_sessions(id),
+    FOREIGN KEY(session_id) REFERENCES ctf_sessions(id),
     FOREIGN KEY(source_evidence_id) REFERENCES ctf_evidence(id)
 );
 
@@ -219,7 +270,7 @@ CREATE TABLE IF NOT EXISTS ctf_reports (
     created_at TEXT NOT NULL,
     metadata TEXT NOT NULL DEFAULT '{}',
     FOREIGN KEY(project_id) REFERENCES ctf_projects(id),
-    FOREIGN KEY(session_id) REFERENCES ctf_target_sessions(id)
+    FOREIGN KEY(session_id) REFERENCES ctf_sessions(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_ctf_reports_session_created_at
@@ -309,7 +360,7 @@ class ControlCenterSchemaRepository:
                 created_at TEXT NOT NULL,
                 metadata TEXT NOT NULL DEFAULT '{}',
                 FOREIGN KEY(project_id) REFERENCES ctf_projects(id),
-                FOREIGN KEY(session_id) REFERENCES ctf_target_sessions(id)
+                FOREIGN KEY(session_id) REFERENCES ctf_sessions(id)
             );
             INSERT INTO ctf_reports (
                 id, public_id, project_id, session_id, report_type, title,
@@ -415,6 +466,247 @@ class ProjectRepository:
         return project
 
 
+class ProjectScopePolicyRepository:
+    def __init__(self, storage: SQLiteStorage) -> None:
+        self.storage = storage
+        ControlCenterSchemaRepository(storage)
+
+    def create(self, policy: ScopePolicy) -> ScopePolicy:
+        with self.storage.connect() as connection:
+            self.create_in_connection(connection, policy)
+            connection.commit()
+        return policy
+
+    def create_in_connection(self, connection: sqlite3.Connection, policy: ScopePolicy) -> ScopePolicy:
+        connection.execute(
+            """
+            INSERT INTO ctf_project_scope_policies (
+                id, project_id, allowed_hosts, allowed_domains, allowed_cidrs, allowed_ports,
+                allowed_protocols, denied_targets, allowed_tool_categories, max_concurrency,
+                rate_limit_per_minute, confirmation_required_actions, created_at, updated_at
+            ) VALUES (
+                :id, :project_id, :allowed_hosts, :allowed_domains, :allowed_cidrs, :allowed_ports,
+                :allowed_protocols, :denied_targets, :allowed_tool_categories, :max_concurrency,
+                :rate_limit_per_minute, :confirmation_required_actions, :created_at, :updated_at
+            )
+            """,
+            self._to_row(policy),
+        )
+        return policy
+
+    def get_by_project_id(self, project_id: str) -> ScopePolicy | None:
+        with self.storage.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM ctf_project_scope_policies WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()
+        return self._from_row(dict(row)) if row else None
+
+    def require_by_project_id(self, project_id: str) -> ScopePolicy:
+        policy = self.get_by_project_id(project_id)
+        if policy is None:
+            raise ValueError(f"Scope policy not found for project: {project_id}")
+        return policy
+
+    def update(self, policy: ScopePolicy) -> ScopePolicy:
+        with self.storage.connect() as connection:
+            self.update_in_connection(connection, policy)
+            connection.commit()
+        return policy
+
+    def update_in_connection(self, connection: sqlite3.Connection, policy: ScopePolicy) -> ScopePolicy:
+        connection.execute(
+            """
+            UPDATE ctf_project_scope_policies
+            SET
+                project_id = :project_id,
+                allowed_hosts = :allowed_hosts,
+                allowed_domains = :allowed_domains,
+                allowed_cidrs = :allowed_cidrs,
+                allowed_ports = :allowed_ports,
+                allowed_protocols = :allowed_protocols,
+                denied_targets = :denied_targets,
+                allowed_tool_categories = :allowed_tool_categories,
+                max_concurrency = :max_concurrency,
+                rate_limit_per_minute = :rate_limit_per_minute,
+                confirmation_required_actions = :confirmation_required_actions,
+                created_at = :created_at,
+                updated_at = :updated_at
+            WHERE id = :id
+            """,
+            self._to_row(policy),
+        )
+        return policy
+
+    def _from_row(self, row: dict[str, object]) -> ScopePolicy:
+        return ScopePolicy(
+            id=str(row["id"]),
+            session_id=str(row["project_id"]),
+            allowed_hosts=json.loads(str(row["allowed_hosts"])) if row.get("allowed_hosts") else [],
+            allowed_domains=json.loads(str(row["allowed_domains"])) if row.get("allowed_domains") else [],
+            allowed_cidrs=json.loads(str(row["allowed_cidrs"])) if row.get("allowed_cidrs") else [],
+            allowed_ports=json.loads(str(row["allowed_ports"])) if row.get("allowed_ports") else [],
+            allowed_protocols=json.loads(str(row["allowed_protocols"])) if row.get("allowed_protocols") else [],
+            denied_targets=json.loads(str(row["denied_targets"])) if row.get("denied_targets") else [],
+            allowed_tool_categories=json.loads(str(row["allowed_tool_categories"]))
+            if row.get("allowed_tool_categories")
+            else [],
+            max_concurrency=int(row["max_concurrency"]),
+            rate_limit_per_minute=row["rate_limit_per_minute"],  # type: ignore[arg-type]
+            confirmation_required_actions=json.loads(str(row["confirmation_required_actions"]))
+            if row.get("confirmation_required_actions")
+            else [],
+            created_at=str(row["created_at"]),
+            updated_at=str(row["updated_at"]),
+        )
+
+    def _to_row(self, policy: ScopePolicy) -> dict[str, object]:
+        return {
+            "id": policy.id,
+            "project_id": policy.session_id,
+            "allowed_hosts": json.dumps(policy.allowed_hosts, ensure_ascii=False),
+            "allowed_domains": json.dumps(policy.allowed_domains, ensure_ascii=False),
+            "allowed_cidrs": json.dumps(policy.allowed_cidrs, ensure_ascii=False),
+            "allowed_ports": json.dumps(policy.allowed_ports, ensure_ascii=False),
+            "allowed_protocols": json.dumps(policy.allowed_protocols, ensure_ascii=False),
+            "denied_targets": json.dumps(policy.denied_targets, ensure_ascii=False),
+            "allowed_tool_categories": json.dumps(policy.allowed_tool_categories, ensure_ascii=False),
+            "max_concurrency": policy.max_concurrency,
+            "rate_limit_per_minute": policy.rate_limit_per_minute,
+            "confirmation_required_actions": json.dumps(
+                policy.confirmation_required_actions,
+                ensure_ascii=False,
+            ),
+            "created_at": policy.created_at,
+            "updated_at": policy.updated_at,
+        }
+
+
+class CampaignTargetRepository:
+    def __init__(self, storage: SQLiteStorage) -> None:
+        self.storage = storage
+        ControlCenterSchemaRepository(storage)
+
+    def create(self, target: CampaignTarget) -> CampaignTarget:
+        with self.storage.connect() as connection:
+            self.create_in_connection(connection, target)
+            connection.commit()
+        return target
+
+    def create_in_connection(self, connection: sqlite3.Connection, target: CampaignTarget) -> CampaignTarget:
+        if not target.public_id:
+            target.public_id = allocate_public_id(connection, table_name="ctf_targets", prefix="TG")
+        connection.execute(
+            """
+            INSERT INTO ctf_targets (
+                id, public_id, project_id, value, target_type, normalized_host, source, status,
+                confidence, discovered_by, discovered_from, scope_reason, rejection_key,
+                created_at, updated_at, metadata
+            ) VALUES (
+                :id, :public_id, :project_id, :value, :target_type, :normalized_host, :source, :status,
+                :confidence, :discovered_by, :discovered_from, :scope_reason, :rejection_key,
+                :created_at, :updated_at, :metadata
+            )
+            """,
+            target.to_row(),
+        )
+        return target
+
+    def get(self, identifier: str) -> CampaignTarget | None:
+        with self.storage.connect() as connection:
+            row = get_row_by_identifier(
+                connection,
+                table_name="ctf_targets",
+                identifier=identifier,
+                order_column="updated_at",
+            )
+        return CampaignTarget.from_row(dict(row)) if row else None
+
+    def require(self, identifier: str) -> CampaignTarget:
+        target = self.get(identifier)
+        if target is None:
+            raise ValueError(f"Target not found: {identifier}")
+        return target
+
+    def find_by_value(self, *, project_id: str, value: str) -> CampaignTarget | None:
+        with self.storage.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM ctf_targets
+                WHERE project_id = ? AND lower(value) = lower(?)
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                (project_id, value),
+            ).fetchone()
+        return CampaignTarget.from_row(dict(row)) if row else None
+
+    def find_rejected_by_key(self, *, project_id: str, rejection_key: str) -> CampaignTarget | None:
+        with self.storage.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM ctf_targets
+                WHERE project_id = ? AND status = ? AND rejection_key = ?
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                (project_id, TargetPoolStatus.REJECTED.value, rejection_key),
+            ).fetchone()
+        return CampaignTarget.from_row(dict(row)) if row else None
+
+    def list(
+        self,
+        *,
+        project_id: str,
+        status: TargetPoolStatus | None = None,
+        limit: int | None = 50,
+    ) -> list[CampaignTarget]:
+        query = "SELECT * FROM ctf_targets WHERE project_id = ?"
+        params: list[object] = [project_id]
+        if status is not None:
+            query += " AND status = ?"
+            params.append(TargetPoolStatus(status).value)
+        query += " ORDER BY updated_at DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        with self.storage.connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [CampaignTarget.from_row(dict(row)) for row in rows]
+
+    def update(self, target: CampaignTarget) -> CampaignTarget:
+        with self.storage.connect() as connection:
+            self.update_in_connection(connection, target)
+            connection.commit()
+        return target
+
+    def update_in_connection(self, connection: sqlite3.Connection, target: CampaignTarget) -> CampaignTarget:
+        connection.execute(
+            """
+            UPDATE ctf_targets
+            SET
+                public_id = :public_id,
+                project_id = :project_id,
+                value = :value,
+                target_type = :target_type,
+                normalized_host = :normalized_host,
+                source = :source,
+                status = :status,
+                confidence = :confidence,
+                discovered_by = :discovered_by,
+                discovered_from = :discovered_from,
+                scope_reason = :scope_reason,
+                rejection_key = :rejection_key,
+                created_at = :created_at,
+                updated_at = :updated_at,
+                metadata = :metadata
+            WHERE id = :id
+            """,
+            target.to_row(),
+        )
+        return target
+
+
 class TargetSessionRepository:
     def __init__(self, storage: SQLiteStorage) -> None:
         self.storage = storage
@@ -430,16 +722,16 @@ class TargetSessionRepository:
         if not session.public_id:
             session.public_id = allocate_public_id(
                 connection,
-                table_name="ctf_target_sessions",
+                table_name="ctf_sessions",
                 prefix="T",
             )
         connection.execute(
             """
-            INSERT INTO ctf_target_sessions (
-                id, public_id, project_id, name, target_value, target_type, status,
+            INSERT INTO ctf_sessions (
+                id, public_id, project_id, name, status,
                 summary, created_at, updated_at, metadata
             ) VALUES (
-                :id, :public_id, :project_id, :name, :target_value, :target_type, :status,
+                :id, :public_id, :project_id, :name, :status,
                 :summary, :created_at, :updated_at, :metadata
             )
             """,
@@ -451,7 +743,7 @@ class TargetSessionRepository:
         with self.storage.connect() as connection:
             row = get_row_by_identifier(
                 connection,
-                table_name="ctf_target_sessions",
+                table_name="ctf_sessions",
                 identifier=identifier,
                 order_column="updated_at",
             )
@@ -460,7 +752,7 @@ class TargetSessionRepository:
     def require(self, identifier: str) -> TargetSession:
         session = self.get(identifier)
         if session is None:
-            raise ValueError(f"Target session not found: {identifier}")
+            raise ValueError(f"Session not found: {identifier}")
         return session
 
     def list(
@@ -470,7 +762,7 @@ class TargetSessionRepository:
         status: TargetSessionStatus | None = None,
         limit: int | None = 50,
     ) -> list[TargetSession]:
-        query = "SELECT * FROM ctf_target_sessions WHERE project_id = ?"
+        query = "SELECT * FROM ctf_sessions WHERE project_id = ?"
         params: list[object] = [project_id]
         if status is not None:
             query += " AND status = ?"
@@ -492,13 +784,11 @@ class TargetSessionRepository:
     def update_in_connection(self, connection: sqlite3.Connection, session: TargetSession) -> TargetSession:
         connection.execute(
             """
-            UPDATE ctf_target_sessions
+            UPDATE ctf_sessions
             SET
                 public_id = :public_id,
                 project_id = :project_id,
                 name = :name,
-                target_value = :target_value,
-                target_type = :target_type,
                 status = :status,
                 summary = :summary,
                 created_at = :created_at,

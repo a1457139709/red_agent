@@ -40,8 +40,6 @@ def prepare_session(settings):
     session = TargetSessionService.from_settings(settings).create_session(
         project_identifier=project.id,
         name="Target",
-        target_value="10.10.10.5",
-        target_type=TargetType.IP,
         summary="Linux CTF target",
     )
     return project, session
@@ -214,8 +212,6 @@ def test_phase7_project_report_api_aggregates_sessions(tmp_path, monkeypatch):
     second_session = TargetSessionService.from_settings(settings).create_session(
         project_identifier=project.id,
         name="Second target",
-        target_value="10.10.10.6",
-        target_type=TargetType.IP,
     )
 
     monkeypatch.setattr("server.lifecycle.get_settings", lambda: settings)

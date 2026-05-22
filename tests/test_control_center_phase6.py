@@ -36,8 +36,6 @@ def prepare_session(settings):
     session = TargetSessionService.from_settings(settings).create_session(
         project_identifier=project.id,
         name="Target",
-        target_value="10.10.10.5",
-        target_type=TargetType.IP,
     )
     return project, session
 

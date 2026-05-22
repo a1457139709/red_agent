@@ -15,35 +15,63 @@ describe("mapServerEventToChatMessage", () => {
         next_actions: ["Review HTTP service"],
       })),
     ).toMatchObject({
-      role: "agent",
-      title: "Plan created",
-      steps: ["Review HTTP service"],
+      role: "execution",
+      title: "Execution steps",
+      executionSteps: [{
+        kind: "plan",
+        title: "Plan created",
+        chips: ["Review HTTP service"],
+      }],
     });
     expect(mapServerEventToChatMessage(event("agent.scan_summary", {summary: "nmap found 2 open ports"}))).toMatchObject({
-      title: "Scan summary",
-      body: "nmap found 2 open ports",
+      role: "execution",
+      executionSteps: [{
+        kind: "result",
+        title: "Scan summary",
+        body: "nmap found 2 open ports",
+      }],
     });
     expect(mapServerEventToChatMessage(event("agent.tool.completed", {tool: "start_port_scan", status: "succeeded"}))).toMatchObject({
-      title: "Tool completed",
-      body: "start_port_scan succeeded.",
+      role: "execution",
+      executionSteps: [{
+        kind: "tool",
+        title: "Tool completed",
+        body: "start_port_scan succeeded.",
+      }],
     });
     expect(
       mapServerEventToChatMessage(event("agent.tool_call.completed", {tool: "start_port_scan", status: "succeeded", summary: "Started port scan."})),
     ).toMatchObject({
-      title: "Tool completed",
-      body: "Started port scan.",
+      role: "execution",
+      executionSteps: [{
+        kind: "tool",
+        title: "Tool completed",
+        body: "Started port scan.",
+      }],
     });
     expect(mapServerEventToChatMessage(event("conversation.completed", {content: "I am red-code."}))).toMatchObject({
-      title: "Agent response",
-      body: "I am red-code.",
+      role: "execution",
+      executionSteps: [{
+        kind: "thinking",
+        title: "Agent response",
+        body: "I am red-code.",
+      }],
     });
     expect(mapServerEventToChatMessage(event("agent.next_action.suggested", {message: "Run ffuf"}))).toMatchObject({
-      title: "Next action",
-      body: "Run ffuf",
+      role: "execution",
+      executionSteps: [{
+        kind: "plan",
+        title: "Next action",
+        body: "Run ffuf",
+      }],
     });
     expect(mapServerEventToChatMessage(event("task.completed", {summary: "scan complete"}))).toMatchObject({
-      role: "system",
-      body: "scan complete",
+      role: "execution",
+      executionSteps: [{
+        kind: "result",
+        title: "Task completed",
+        body: "scan complete",
+      }],
     });
   });
 
@@ -68,9 +96,46 @@ describe("mapServerEventToChatMessage", () => {
 
     expect(messages).toHaveLength(1);
     expect(messages[0]).toMatchObject({
+      role: "execution",
       eventKind: "conversation.completed",
-      title: "Agent response",
-      body: "I am red-code.",
+      title: "Execution steps",
+      body: "Agent execution completed.",
+      executionSteps: [{
+        eventKind: "conversation.completed",
+        title: "Agent response",
+        body: "I am red-code.",
+      }],
+    });
+  });
+
+  it("collapses same-task execution events into one visible step block", () => {
+    const events = [
+      event("agent.workflow.started", {status: "running"}),
+      event("agent.tool_call.started", {tool: "propose_target"}),
+      event("agent.tool_call.completed", {tool: "propose_target", status: "succeeded", summary: "Target accepted."}),
+      event("agent.terminal_command.suggested", {command: "which nmap"}),
+      event("task.failed", {summary: "nmap binary was not found."}),
+      event("conversation.completed", {content: "The port scan attempt failed because nmap is missing."}),
+    ];
+
+    const messages = events
+      .map(mapServerEventToChatMessage)
+      .reduce<ChatMessage[]>((current, message) => (message ? appendChatMessage(current, message) : current), []);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      role: "execution",
+      taskId: "task-1",
+      body: "Agent execution needs attention.",
+      executionStatus: "failed",
+      executionSteps: [
+        {kind: "workflow", title: "Workflow"},
+        {kind: "tool", title: "Tool started"},
+        {kind: "tool", title: "Tool completed"},
+        {kind: "command", title: "Terminal command"},
+        {kind: "result", title: "Task failed", status: "failed"},
+        {kind: "thinking", title: "Agent response"},
+      ],
     });
   });
 });

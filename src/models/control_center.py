@@ -21,6 +21,19 @@ class TargetSessionStatus(StrEnum):
     ARCHIVED = "archived"
 
 
+class TargetPoolStatus(StrEnum):
+    ACTIVE = "active"
+    PENDING = "pending"
+    REJECTED = "rejected"
+    ARCHIVED = "archived"
+
+
+class TargetSource(StrEnum):
+    USER_ADDED = "user_added"
+    AGENT_DISCOVERED = "agent_discovered"
+    IMPORTED = "imported"
+
+
 class TargetType(StrEnum):
     IP = "ip"
     DOMAIN = "domain"
@@ -128,8 +141,6 @@ class TargetSession:
     public_id: str
     project_id: str
     name: str
-    target_value: str
-    target_type: TargetType
     status: TargetSessionStatus = TargetSessionStatus.ACTIVE
     summary: str | None = None
     created_at: str = field(default_factory=utc_now_iso)
@@ -139,8 +150,6 @@ class TargetSession:
     def __post_init__(self) -> None:
         self.project_id = _normalize_required_text(self.project_id, field_name="project id")
         self.name = _normalize_required_text(self.name, field_name="session name")
-        self.target_value = _normalize_required_text(self.target_value, field_name="target value")
-        self.target_type = TargetType(self.target_type)
         self.status = TargetSessionStatus(self.status)
         self.summary = _normalize_optional_text(self.summary)
         self.metadata = dict(self.metadata)
@@ -151,8 +160,6 @@ class TargetSession:
         *,
         project_id: str,
         name: str,
-        target_value: str,
-        target_type: TargetType,
         summary: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> "TargetSession":
@@ -161,8 +168,6 @@ class TargetSession:
             public_id="",
             project_id=project_id,
             name=name,
-            target_value=target_value,
-            target_type=target_type,
             summary=summary,
             metadata=dict(metadata or {}),
         )
@@ -175,8 +180,6 @@ class TargetSession:
             public_id=row.get("public_id") or "",
             project_id=row["project_id"],
             name=row["name"],
-            target_value=row["target_value"],
-            target_type=TargetType(row["target_type"]),
             status=TargetSessionStatus(row["status"]),
             summary=row.get("summary"),
             created_at=row["created_at"],
@@ -190,10 +193,117 @@ class TargetSession:
             "public_id": self.public_id,
             "project_id": self.project_id,
             "name": self.name,
-            "target_value": self.target_value,
-            "target_type": self.target_type.value,
             "status": self.status.value,
             "summary": self.summary,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "metadata": json.dumps(self.metadata, ensure_ascii=False),
+        }
+
+
+@dataclass(slots=True)
+class CampaignTarget:
+    id: str
+    public_id: str
+    project_id: str
+    value: str
+    target_type: TargetType
+    normalized_host: str | None
+    source: TargetSource
+    status: TargetPoolStatus
+    confidence: float | None = None
+    discovered_by: str | None = None
+    discovered_from: str | None = None
+    scope_reason: str | None = None
+    rejection_key: str | None = None
+    created_at: str = field(default_factory=utc_now_iso)
+    updated_at: str = field(default_factory=utc_now_iso)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.project_id = _normalize_required_text(self.project_id, field_name="project id")
+        self.value = _normalize_required_text(self.value, field_name="target value")
+        self.target_type = TargetType(self.target_type)
+        self.normalized_host = _normalize_optional_text(self.normalized_host)
+        self.source = TargetSource(self.source)
+        self.status = TargetPoolStatus(self.status)
+        self.discovered_by = _normalize_optional_text(self.discovered_by)
+        self.discovered_from = _normalize_optional_text(self.discovered_from)
+        self.scope_reason = _normalize_optional_text(self.scope_reason)
+        self.rejection_key = _normalize_optional_text(self.rejection_key)
+        self.metadata = dict(self.metadata)
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        project_id: str,
+        value: str,
+        target_type: TargetType,
+        normalized_host: str | None,
+        source: TargetSource,
+        status: TargetPoolStatus,
+        confidence: float | None = None,
+        discovered_by: str | None = None,
+        discovered_from: str | None = None,
+        scope_reason: str | None = None,
+        rejection_key: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> "CampaignTarget":
+        return cls(
+            id=str(uuid4()),
+            public_id="",
+            project_id=project_id,
+            value=value,
+            target_type=target_type,
+            normalized_host=normalized_host,
+            source=source,
+            status=status,
+            confidence=confidence,
+            discovered_by=discovered_by,
+            discovered_from=discovered_from,
+            scope_reason=scope_reason,
+            rejection_key=rejection_key,
+            metadata=dict(metadata or {}),
+        )
+
+    @classmethod
+    def from_row(cls, row: dict[str, Any]) -> "CampaignTarget":
+        raw_metadata = row.get("metadata")
+        return cls(
+            id=row["id"],
+            public_id=row.get("public_id") or "",
+            project_id=row["project_id"],
+            value=row["value"],
+            target_type=TargetType(row["target_type"]),
+            normalized_host=row.get("normalized_host"),
+            source=TargetSource(row["source"]),
+            status=TargetPoolStatus(row["status"]),
+            confidence=row.get("confidence"),
+            discovered_by=row.get("discovered_by"),
+            discovered_from=row.get("discovered_from"),
+            scope_reason=row.get("scope_reason"),
+            rejection_key=row.get("rejection_key"),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            metadata=json.loads(raw_metadata) if raw_metadata else {},
+        )
+
+    def to_row(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "public_id": self.public_id,
+            "project_id": self.project_id,
+            "value": self.value,
+            "target_type": self.target_type.value,
+            "normalized_host": self.normalized_host,
+            "source": self.source.value,
+            "status": self.status.value,
+            "confidence": self.confidence,
+            "discovered_by": self.discovered_by,
+            "discovered_from": self.discovered_from,
+            "scope_reason": self.scope_reason,
+            "rejection_key": self.rejection_key,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "metadata": json.dumps(self.metadata, ensure_ascii=False),
@@ -204,6 +314,8 @@ class TargetSession:
 class SessionDashboard:
     project: Project
     session: TargetSession
+    active_targets: list[dict[str, Any]] = field(default_factory=list)
+    pending_targets: list[dict[str, Any]] = field(default_factory=list)
     task_counts: dict[str, int] = field(default_factory=dict)
     finding_counts: dict[str, int] = field(default_factory=dict)
     evidence_count: int = 0

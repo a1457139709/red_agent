@@ -7,6 +7,7 @@ from agent.settings import Settings
 from app.attack_path_service import AttackPathService
 from app.project_service import ProjectService
 from app.scanner_service import ScannerService
+from app.target_admission_service import TargetAdmissionService
 from app.target_session_service import TargetSessionService
 from models.control_center import TargetType
 from scanners.process_runner import ProcessResult
@@ -79,27 +80,46 @@ def build_settings(tmp_path):
 
 def prepare_session(settings):
     project = ProjectService.from_settings(settings).create_project(name="Phase 5")
+    admission = TargetAdmissionService.from_settings(settings)
+    admission.create_initial_target(
+        project_identifier=project.id,
+        value="10.10.10.5",
+        target_type=TargetType.IP,
+    )
+    admission.create_initial_target(
+        project_identifier=project.id,
+        value="http://10.10.10.5",
+        target_type=TargetType.URL,
+    )
+    admission.propose_target(project_identifier=project.id, value="http://10.10.10.5/admin")
     session = TargetSessionService.from_settings(settings).create_session(
         project_identifier=project.id,
         name="Target",
-        target_value="10.10.10.5",
-        target_type=TargetType.IP,
     )
     return project, session
+
+
+def target_id(settings, *, project_id: str, value: str) -> str:
+    targets = TargetAdmissionService.from_settings(settings).list_targets(
+        project_identifier=project_id,
+        limit=None,
+    )
+    return next(target.id for target in targets if target.value == value)
 
 
 def test_nmap_result_creates_service_and_web_entry_nodes(tmp_path):
     settings = build_settings(tmp_path)
     binary = tmp_path / "nmap"
     binary.write_text("#!/bin/sh\n", encoding="utf-8")
-    _project, session = prepare_session(settings)
+    project, session = prepare_session(settings)
+    ip_target_id = target_id(settings, project_id=project.id, value="10.10.10.5")
     service = ScannerService(settings=settings, runner=FakeRunner(NMAP_HTTP_XML))
     service.update_config({"tools": {"nmap": {"binary_path": str(binary)}}})
 
     service.create_scan_task(
         session_identifier=session.id,
         task_type="port_scan",
-        input_data={"target_host": "10.10.10.5"},
+        input_data={"target_id": ip_target_id, "target_host": "10.10.10.5"},
     )
 
     storage = SQLiteStorage(settings.sqlite_path)
@@ -116,14 +136,15 @@ def test_ffuf_result_creates_web_enum_node(tmp_path):
     wordlist.write_text("admin\n", encoding="utf-8")
     binary = tmp_path / "ffuf"
     binary.write_text("#!/bin/sh\n", encoding="utf-8")
-    _project, session = prepare_session(settings)
+    project, session = prepare_session(settings)
+    url_target_id = target_id(settings, project_id=project.id, value="http://10.10.10.5")
     service = ScannerService(settings=settings, runner=FakeRunner(FFUF_JSON))
     service.update_config({"tools": {"ffuf": {"binary_path": str(binary), "default_wordlist": str(wordlist)}}})
 
     service.create_scan_task(
         session_identifier=session.id,
         task_type="dir_scan",
-        input_data={"base_url": "http://10.10.10.5"},
+        input_data={"target_id": url_target_id, "base_url": "http://10.10.10.5"},
     )
 
     nodes = AttackPathNodeRepository(SQLiteStorage(settings.sqlite_path)).list(session_id=session.id, limit=None)
@@ -137,14 +158,15 @@ def test_nuclei_result_creates_finding_and_verified_poc_node(tmp_path):
     templates.mkdir()
     binary = tmp_path / "nuclei"
     binary.write_text("#!/bin/sh\n", encoding="utf-8")
-    _project, session = prepare_session(settings)
+    project, session = prepare_session(settings)
+    url_target_id = target_id(settings, project_id=project.id, value="http://10.10.10.5/admin")
     service = ScannerService(settings=settings, runner=FakeRunner(NUCLEI_JSONL))
     service.update_config({"tools": {"nuclei": {"binary_path": str(binary), "templates_path": str(templates)}}})
 
     service.create_scan_task(
         session_identifier=session.id,
         task_type="poc_scan",
-        input_data={"target_url": "http://10.10.10.5/admin"},
+        input_data={"target_id": url_target_id, "target_url": "http://10.10.10.5/admin"},
     )
 
     storage = SQLiteStorage(settings.sqlite_path)

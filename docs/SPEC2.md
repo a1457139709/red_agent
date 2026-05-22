@@ -12,7 +12,8 @@
 
 - 面向个人安全从业者的 CTF/靶场桌面控制平台
 - 以 Agent 为核心的枚举、分析、行动建议和复盘助手
-- 以 Project 管理靶场，以 Session 跟踪单台靶机或单个目标
+- 以 Project 管理靶场，以 Session 承载 Agent 对话与执行上下文
+- 以 Project Target Pool 管理靶机、URL、域名、主机和目标准入状态
 - 以攻击路径视图组织资产、服务、线索、证据、命令、flag 和报告
 - 本地优先、单用户、单节点、可恢复、可复盘
 
@@ -98,27 +99,29 @@ Project 用于组织：
 - `VulnHub-OSCP-Practice`
 - `Local-AD-Lab`
 
-### 5.2 Target Session
+### 5.2 Session 与 Target Pool
 
-Session 表示 Project 中一个具体目标的攻击上下文。
+Session 表示 Project 中一个 Agent 对话与执行上下文，不绑定单个目标。
 
-一个 Session 通常对应：
+一个 Session 负责承载：
 
-- 一台靶机 IP
-- 一个域名
-- 一个 Web 目标
-- 一个靶场子目标
-
-Session 负责承载：
-
-- 目标范围
-- 扫描任务
+- Agent 对话历史
+- 扫描任务和 Agent 任务
 - 攻击路径
 - 关键命令线索
 - 证据
 - findings
 - flag/loot
 - Session writeup 草稿
+
+Target 只存在于 Project Target Pool。Target Pool 负责承载：
+
+- operator 初始添加的目标
+- Agent 发现并提交准入的目标
+- active / pending / rejected / archived 状态
+- scope policy 派生出的允许边界
+
+扫描任务必须显式引用 Target Pool 中 active 的 `target_id`。如果 Agent 从自然语言或工具结果中发现新目标，流程必须是 `propose_target(value)` -> 准入结果 -> 仅在 active 时调用扫描工具。
 
 ### 5.3 Task
 

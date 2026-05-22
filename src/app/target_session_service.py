@@ -6,7 +6,7 @@ import shutil
 from urllib.parse import urlsplit
 
 from agent.settings import Settings, get_settings
-from models.control_center import Project, SessionDashboard, TargetSession, TargetSessionStatus, TargetType
+from models.control_center import Project, SessionDashboard, TargetPoolStatus, TargetSession, TargetSessionStatus
 from models.run import utc_now_iso
 from storage.project_paths import (
     project_session_artifacts_dir,
@@ -18,6 +18,7 @@ from storage.project_paths import (
 from storage.repositories.control_center import ProjectRepository, TargetSessionRepository
 from storage.repositories.control_center import (
     AttackPathNodeRepository,
+    CampaignTargetRepository,
     CommandRunRepository,
     EvidenceRepository,
     FindingRepository,
@@ -61,8 +62,6 @@ class TargetSessionService(ControlCenterService):
         *,
         project_identifier: str,
         name: str,
-        target_value: str,
-        target_type: TargetType,
         summary: str | None = None,
     ) -> TargetSession:
         project = self.project_repository.require(project_identifier)
@@ -71,8 +70,6 @@ class TargetSessionService(ControlCenterService):
         session = TargetSession.create(
             project_id=project.id,
             name=name,
-            target_value=target_value,
-            target_type=TargetType(target_type),
             summary=summary,
         )
         session_root = project_session_root(
@@ -113,18 +110,12 @@ class TargetSessionService(ControlCenterService):
         identifier: str,
         *,
         name: str | None = None,
-        target_value: str | None = None,
-        target_type: TargetType | None = None,
         summary: str | None = None,
         status: TargetSessionStatus | None = None,
     ) -> TargetSession:
         session = self.repository.require(identifier)
         if name is not None:
             session.name = name
-        if target_value is not None:
-            session.target_value = target_value
-        if target_type is not None:
-            session.target_type = TargetType(target_type)
         if summary is not None:
             session.summary = summary
         if status is not None:
@@ -142,21 +133,24 @@ class TargetSessionService(ControlCenterService):
         attack_path = AttackPathNodeRepository(storage).list(session_id=session.id, limit=None)
         commands = CommandRunRepository(storage).list(session_id=session.id, limit=10)
         flags = FlagRepository(storage).list(session_id=session.id, limit=None)
+        target_repository = CampaignTargetRepository(storage)
+        active_targets = target_repository.list(project_id=project.id, status=TargetPoolStatus.ACTIVE, limit=None)
+        pending_targets = target_repository.list(project_id=project.id, status=TargetPoolStatus.PENDING, limit=None)
         open_ports = _collect_scan_items(tasks, "open_ports")
         directory_findings = _collect_scan_items(tasks, "results")
         poc_hits = _collect_scan_items(tasks, "matches")
         return SessionDashboard(
             project=project,
             session=session,
+            active_targets=[_serialize_target_summary(target) for target in active_targets],
+            pending_targets=[_serialize_target_summary(target) for target in pending_targets],
             task_counts=_count_by_status(tasks),
             finding_counts=_count_findings_by_severity(findings),
             evidence_count=len(evidence),
             flag_count=len(flags),
             open_ports=open_ports,
             web_entries=_collect_web_entries(
-                session=session,
                 tasks=tasks,
-                open_ports=open_ports,
             ),
             directory_findings=directory_findings,
             poc_hits=poc_hits,
@@ -234,14 +228,9 @@ def _collect_scan_items(tasks, key: str) -> list[dict[str, object]]:
     return items
 
 
-def _collect_web_entries(
-    *,
-    session: TargetSession,
-    tasks,
-    open_ports: list[dict[str, object]],
-) -> list[dict[str, object]]:
+def _collect_web_entries(*, tasks) -> list[dict[str, object]]:
     entries: dict[str, dict[str, object]] = {}
-    for url, source in _iter_session_web_urls(session=session, tasks=tasks, open_ports=open_ports):
+    for url, source in _iter_session_web_urls(tasks=tasks):
         if url in entries:
             continue
         parsed = urlsplit(url)
@@ -255,9 +244,7 @@ def _collect_web_entries(
     return list(entries.values())
 
 
-def _iter_session_web_urls(*, session: TargetSession, tasks, open_ports: list[dict[str, object]]):
-    if session.target_type == TargetType.URL:
-        yield session.target_value, "session.target"
+def _iter_session_web_urls(*, tasks):
     for task in tasks:
         input_data = task.input_json
         if task.task_type == "dir_scan":
@@ -268,13 +255,23 @@ def _iter_session_web_urls(*, session: TargetSession, tasks, open_ports: list[di
             target_url = input_data.get("target_url") or input_data.get("target")
             if isinstance(target_url, str) and target_url.strip():
                 yield target_url.strip(), "poc_scan"
-    if session.target_type == TargetType.URL:
-        return
-    host = session.target_value.strip()
-    for port in open_ports:
-        url = _infer_web_url(host=host, port_data=port)
-        if url is not None:
-            yield url, "port_scan"
+        if task.task_type == "port_scan":
+            host = input_data.get("target_host") or input_data.get("target")
+            if isinstance(host, str) and host.strip():
+                for port in _collect_task_scan_items(task, "open_ports"):
+                    url = _infer_web_url(host=host.strip(), port_data=port)
+                    if url is not None:
+                        yield url, "port_scan"
+
+
+def _collect_task_scan_items(task, key: str) -> list[dict[str, object]]:
+    structured = task.result_json.get("structured")
+    if not isinstance(structured, dict):
+        return []
+    value = structured.get(key)
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
 
 
 def _infer_web_url(*, host: str, port_data: dict[str, object]) -> str | None:
@@ -312,4 +309,15 @@ def _serialize_next_action(node) -> dict[str, object]:
         "source_ref": node.source_ref,
         "next_action": node.next_action,
         "created_at": node.created_at,
+    }
+
+
+def _serialize_target_summary(target) -> dict[str, object]:
+    return {
+        "id": target.id,
+        "public_id": target.public_id,
+        "value": target.value,
+        "target_type": target.target_type.value,
+        "status": target.status.value,
+        "scope_reason": target.scope_reason,
     }

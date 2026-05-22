@@ -3,13 +3,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlsplit
 
 from agent.provider import create_model
 from agent.settings import Settings
 from langchain.tools import StructuredTool
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from models.control_center import Event, Finding, TargetSession, TargetType, Task
+from models.control_center import Event, Finding, TargetSession, TargetSource, Task
 from pydantic import BaseModel, Field
 from storage.repositories.control_center import (
     AttackPathNodeRepository,
@@ -23,6 +22,7 @@ from storage.sqlite import SQLiteStorage
 
 from .attack_path_service import AttackPathService
 from .scanner_service import ScannerService
+from .target_admission_service import TargetAdmissionService
 from .writeup_service import WriteupService
 
 
@@ -37,19 +37,28 @@ class AgentToolResult:
 
 
 class StartPortScanInput(BaseModel):
+    target_id: str | None = Field(default=None, description="Active target id or public id from the Target Pool.")
     reason: str | None = Field(default=None, description="Why a port scan is useful now.")
 
 
 class StartDirScanInput(BaseModel):
-    base_url: str = Field(description="In-scope HTTP(S) URL to enumerate.")
+    target_id: str | None = Field(default=None, description="Active URL target id or public id from the Target Pool.")
+    base_url: str | None = Field(default=None, description="HTTP(S) URL to submit for target admission when target_id is not available.")
     wordlist: str | None = Field(default=None, description="Optional ffuf wordlist path.")
     reason: str | None = Field(default=None, description="Why directory enumeration is useful now.")
 
 
 class StartPocScanInput(BaseModel):
-    target_url: str = Field(description="In-scope HTTP(S) URL to validate with nuclei.")
+    target_id: str | None = Field(default=None, description="Active URL target id or public id from the Target Pool.")
+    target_url: str | None = Field(default=None, description="HTTP(S) URL to submit for target admission when target_id is not available.")
     templates: list[str] | None = Field(default=None, description="Optional nuclei template paths.")
     reason: str | None = Field(default=None, description="Why POC validation is useful now.")
+
+
+class ProposeTargetInput(BaseModel):
+    value: str = Field(description="Discovered host, IP, or URL to submit for scope admission.")
+    source: str | None = Field(default="agent_discovered", description="Discovery source label.")
+    evidence_id: str | None = Field(default=None, description="Optional evidence id or public id supporting the discovery.")
 
 
 class SummarizeTaskResultInput(BaseModel):
@@ -112,13 +121,15 @@ class AgentToolRouter:
         self.finding_repository = FindingRepository(storage)
         self.node_repository = AttackPathNodeRepository(storage)
         self.attack_path_service = AttackPathService.from_settings(settings)
+        self.target_admission_service = TargetAdmissionService.from_settings(settings)
         self.writeup_service = WriteupService.from_settings(settings)
         self._specs = {
             spec.name: spec
             for spec in (
-                AgentToolSpec("start_port_scan", "Start an in-scope nmap port scan for the active Session target.", StartPortScanInput),
-                AgentToolSpec("start_dir_scan", "Start an in-scope ffuf directory scan for an HTTP(S) URL.", StartDirScanInput),
-                AgentToolSpec("start_poc_scan", "Start an in-scope nuclei POC scan for an HTTP(S) URL.", StartPocScanInput),
+                AgentToolSpec("propose_target", "Submit a discovered target for scope admission.", ProposeTargetInput),
+                AgentToolSpec("start_port_scan", "Start an in-scope nmap port scan for an active Target Pool target.", StartPortScanInput),
+                AgentToolSpec("start_dir_scan", "Start an in-scope ffuf directory scan for an active URL target.", StartDirScanInput),
+                AgentToolSpec("start_poc_scan", "Start an in-scope nuclei POC scan for an active URL target.", StartPocScanInput),
                 AgentToolSpec("summarize_task_result", "Summarize a task result from the active Session.", SummarizeTaskResultInput),
                 AgentToolSpec("create_attack_path_node", "Create an attack path node in the active Session.", CreateAttackPathNodeInput),
                 AgentToolSpec("create_finding", "Create a structured finding in the active Session.", CreateFindingInput),
@@ -155,28 +166,47 @@ class AgentToolRouter:
 
     def _dispatch(self, *, agent_task: Task, tool_name: str, arguments: dict[str, Any]) -> AgentToolResult:
         session = self.session_repository.require(agent_task.session_id)
+        if tool_name == "propose_target":
+            result = self.target_admission_service.propose_target(
+                project_identifier=session.project_id,
+                value=str(arguments["value"]),
+                source=TargetSource(str(arguments.get("source") or "agent_discovered")),
+                evidence_id=arguments.get("evidence_id"),
+                discovered_by="ctf_agent",
+                discovered_from=agent_task.id,
+            )
+            text = f"Target {result.target.public_id} {result.status}: {result.reason}"
+            return AgentToolResult(
+                summary=text,
+                model_text=text,
+                data={"target_id": result.target.id, "public_id": result.target.public_id, "status": result.status},
+            )
         if tool_name == "start_port_scan":
             task = self.scanner_service.create_scan_task(
                 session_identifier=session.id,
                 task_type="port_scan",
-                input_data={"target_host": _scanner_host_for_session(session)},
+                input_data={"target_id": arguments.get("target_id")},
             )
             return _task_result(task, "Started port scan.")
         if tool_name == "start_dir_scan":
-            base_url = str(arguments["base_url"])
-            _require_url_in_scope(session, base_url)
             wordlist = arguments.get("wordlist") or self.scanner_service.get_config().for_tool("ffuf").default_wordlist
             if not wordlist:
                 raise ValueError("ffuf wordlist is not configured.")
             task = self.scanner_service.create_scan_task(
                 session_identifier=session.id,
                 task_type="dir_scan",
-                input_data={"base_url": base_url, "wordlist": wordlist, "filters": {}},
+                input_data=self._input_with_target_id(
+                    session=session,
+                    input_data={
+                        "target_id": arguments.get("target_id"),
+                        "base_url": arguments.get("base_url"),
+                        "wordlist": wordlist,
+                        "filters": {},
+                    },
+                ),
             )
             return _task_result(task, "Started directory scan.")
         if tool_name == "start_poc_scan":
-            target_url = str(arguments["target_url"])
-            _require_url_in_scope(session, target_url)
             templates = arguments.get("templates") or [self.scanner_service.get_config().for_tool("nuclei").templates_path]
             templates = [str(item) for item in templates if item]
             if not templates:
@@ -184,7 +214,14 @@ class AgentToolRouter:
             task = self.scanner_service.create_scan_task(
                 session_identifier=session.id,
                 task_type="poc_scan",
-                input_data={"target_url": target_url, "templates": templates},
+                input_data=self._input_with_target_id(
+                    session=session,
+                    input_data={
+                        "target_id": arguments.get("target_id"),
+                        "target_url": arguments.get("target_url"),
+                        "templates": templates,
+                    },
+                ),
             )
             return _task_result(task, "Started POC scan.")
         if tool_name == "summarize_task_result":
@@ -208,6 +245,7 @@ class AgentToolRouter:
                 model_text=f"Created attack path node {node.public_id}: {node.title}",
                 data={"node_id": node.id, "public_id": node.public_id},
             )
+
         if tool_name == "create_finding":
             evidence_refs = self._normalize_evidence_refs(session=session, refs=list(arguments.get("evidence_refs") or []))
             finding = self.finding_repository.create(
@@ -267,6 +305,23 @@ class AgentToolRouter:
                 data={"report_id": report.id, "public_id": report.public_id, "artifact_path": report.artifact_path},
             )
         raise ValueError(f"Tool is not implemented: {tool_name}")
+
+    def _input_with_target_id(self, *, session: TargetSession, input_data: dict[str, Any]) -> dict[str, Any]:
+        if input_data.get("target_id"):
+            return {key: value for key, value in input_data.items() if value is not None}
+        value = input_data.get("base_url") or input_data.get("target_url") or input_data.get("target_host")
+        if value:
+            result = self.target_admission_service.propose_target(
+                project_identifier=session.project_id,
+                value=str(value),
+                discovered_by="ctf_agent",
+            )
+            if result.target.status.value != "active":
+                raise ValueError(f"Target {value} is not active: {result.reason}")
+            normalized = {key: value for key, value in input_data.items() if value is not None}
+            normalized["target_id"] = result.target.id
+            return normalized
+        raise ValueError("No active target_id is available for scanner task.")
 
     def _normalize_evidence_refs(self, *, session: TargetSession, refs: list[str]) -> list[str]:
         evidence_refs: list[str] = []
@@ -359,7 +414,28 @@ class AgentOrchestrator:
         )
 
     def _context_message(self, session: TargetSession) -> str:
-        return f"Active Session: {session.name}\nTarget: {session.target_type.value} {session.target_value}\nSummary: {session.summary or '-'}"
+        targets = self.tool_router.target_admission_service.list_targets(
+            project_identifier=session.project_id,
+            limit=20,
+        )
+        active_targets = [target for target in targets if target.status.value == "active"]
+        pending_targets = [target for target in targets if target.status.value == "pending"]
+        active_lines = [
+            f"- {target.public_id or target.id}: {target.target_type.value} {target.value}"
+            for target in active_targets
+        ]
+        pending_lines = [
+            f"- {target.public_id or target.id}: {target.target_type.value} {target.value}"
+            for target in pending_targets
+        ]
+        return (
+            f"Active Session: {session.name}\n"
+            f"Session summary: {session.summary or '-'}\n"
+            f"Active targets:\n{chr(10).join(active_lines) if active_lines else '-'}\n"
+            f"Pending targets:\n{chr(10).join(pending_lines) if pending_lines else '-'}\n"
+            "Scanner tools require an active Target Pool target_id. "
+            "For a new host or URL, call propose_target first and scan only if it is accepted."
+        )
 
     def _record_event(self, task: Task, event_kind: str, *, level: str, payload: dict[str, Any]) -> Event:
         return self.event_repository.create(
@@ -378,25 +454,6 @@ def _task_result(task: Task, prefix: str) -> AgentToolResult:
     summary = str(task.result_json.get("summary") or task.error or f"{task.task_type} {task.status.value}.")
     text = f"{prefix} {task.public_id} {task.status.value}: {summary}"
     return AgentToolResult(summary=text, model_text=text, data={"task_id": task.id, "public_id": task.public_id, "status": task.status.value})
-
-
-def _scanner_host_for_session(session: TargetSession) -> str:
-    if session.target_type == TargetType.URL:
-        parsed = urlsplit(session.target_value)
-        return parsed.hostname or session.target_value
-    return session.target_value
-
-
-def _require_url_in_scope(session: TargetSession, value: str) -> None:
-    parsed = urlsplit(value)
-    host = parsed.hostname or value
-    target = session.target_value
-    if session.target_type == TargetType.URL:
-        target = urlsplit(session.target_value).hostname or session.target_value
-    if session.target_type == TargetType.NOTE:
-        raise ValueError("Scanner tools require a concrete Session target.")
-    if host != target:
-        raise ValueError(f"Target is outside the active Session scope: {value}")
 
 
 def _message_text(content: Any) -> str:

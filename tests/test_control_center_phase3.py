@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from agent.settings import Settings
 from app.project_service import ProjectService
 from app.scanner_service import ScannerService
+from app.target_admission_service import TargetAdmissionService
 from app.target_session_service import TargetSessionService
 from models.control_center import TargetType
 from scanners.ffuf_adapter import FfufAdapter
@@ -97,13 +98,30 @@ def build_settings(tmp_path):
 
 def prepare_session(settings):
     project = ProjectService.from_settings(settings).create_project(name="Phase 3")
+    target_service = TargetAdmissionService.from_settings(settings)
+    target_service.create_initial_target(
+        project_identifier=project.id,
+        value="10.10.10.5",
+        target_type=TargetType.IP,
+    )
+    target_service.create_initial_target(
+        project_identifier=project.id,
+        value="http://10.10.10.5",
+        target_type=TargetType.URL,
+    )
     session = TargetSessionService.from_settings(settings).create_session(
         project_identifier=project.id,
         name="Target",
-        target_value="10.10.10.5",
-        target_type=TargetType.IP,
     )
     return project, session
+
+
+def target_id(settings, *, project_id: str, value: str) -> str:
+    targets = TargetAdmissionService.from_settings(settings).list_targets(
+        project_identifier=project_id,
+        limit=None,
+    )
+    return next(target.id for target in targets if target.value == value)
 
 
 def test_nmap_argv_uses_list_and_parser_extracts_open_ports(tmp_path):
@@ -161,14 +179,15 @@ def test_nuclei_empty_result_is_successful_no_finding_state():
 
 def test_missing_binary_creates_failed_diagnostic_task(tmp_path):
     settings = build_settings(tmp_path)
-    _project, session = prepare_session(settings)
+    project, session = prepare_session(settings)
+    ip_target_id = target_id(settings, project_id=project.id, value="10.10.10.5")
     service = ScannerService.from_settings(settings)
     service.update_config({"tools": {"nmap": {"binary_path": str(tmp_path / "missing-nmap")}}})
 
     task = service.create_scan_task(
         session_identifier=session.id,
         task_type="port_scan",
-        input_data={"target_host": "10.10.10.5"},
+        input_data={"target_id": ip_target_id, "target_host": "10.10.10.5"},
     )
 
     assert task.status.value == "failed"
@@ -180,7 +199,8 @@ def test_non_zero_exit_records_stderr_artifact(tmp_path):
     settings = build_settings(tmp_path)
     binary = tmp_path / "nmap"
     binary.write_text("#!/bin/sh\n", encoding="utf-8")
-    _project, session = prepare_session(settings)
+    project, session = prepare_session(settings)
+    ip_target_id = target_id(settings, project_id=project.id, value="10.10.10.5")
     runner = FakeRunner(ProcessResult(argv=[str(binary)], return_code=2, stdout="", stderr="bad target"))
     service = ScannerService(settings=settings, runner=runner)
     service.update_config({"tools": {"nmap": {"binary_path": str(binary)}}})
@@ -188,7 +208,7 @@ def test_non_zero_exit_records_stderr_artifact(tmp_path):
     task = service.create_scan_task(
         session_identifier=session.id,
         task_type="port_scan",
-        input_data={"target_host": "10.10.10.5"},
+        input_data={"target_id": ip_target_id, "target_host": "10.10.10.5"},
     )
 
     assert task.status.value == "failed"
@@ -200,7 +220,8 @@ def test_successful_nmap_task_persists_structured_results_and_candidates(tmp_pat
     settings = build_settings(tmp_path)
     binary = tmp_path / "nmap"
     binary.write_text("#!/bin/sh\n", encoding="utf-8")
-    _project, session = prepare_session(settings)
+    project, session = prepare_session(settings)
+    ip_target_id = target_id(settings, project_id=project.id, value="10.10.10.5")
     runner = FakeRunner(ProcessResult(argv=[str(binary)], return_code=0, stdout=NMAP_XML, stderr=""))
     service = ScannerService(settings=settings, runner=runner)
     service.update_config({"tools": {"nmap": {"binary_path": str(binary)}}})
@@ -208,7 +229,7 @@ def test_successful_nmap_task_persists_structured_results_and_candidates(tmp_pat
     task = service.create_scan_task(
         session_identifier=session.id,
         task_type="port_scan",
-        input_data={"target_host": "10.10.10.5", "ports": [22]},
+        input_data={"target_id": ip_target_id, "target_host": "10.10.10.5", "ports": [22]},
     )
 
     storage = SQLiteStorage(settings.sqlite_path)
@@ -222,7 +243,25 @@ def test_successful_nmap_task_persists_structured_results_and_candidates(tmp_pat
     assert [event.event_kind for event in events] == ["task.started", "scanner.output", "task.completed"]
 
 
-def test_scan_task_rejects_target_outside_selected_session(tmp_path):
+def test_scan_task_rejects_target_outside_selected_project_target(tmp_path):
+    settings = build_settings(tmp_path)
+    project, session = prepare_session(settings)
+    ip_target_id = target_id(settings, project_id=project.id, value="10.10.10.5")
+    service = ScannerService.from_settings(settings)
+
+    try:
+        service.create_scan_task(
+            session_identifier=session.id,
+            task_type="port_scan",
+            input_data={"target_id": ip_target_id, "target_host": "10.10.10.6"},
+        )
+    except ValueError as exc:
+        assert "outside the selected project target" in str(exc)
+    else:
+        raise AssertionError("Expected scanner target validation failure.")
+
+
+def test_scan_task_requires_explicit_target_id(tmp_path):
     settings = build_settings(tmp_path)
     _project, session = prepare_session(settings)
     service = ScannerService.from_settings(settings)
@@ -231,22 +270,25 @@ def test_scan_task_rejects_target_outside_selected_session(tmp_path):
         service.create_scan_task(
             session_identifier=session.id,
             task_type="port_scan",
-            input_data={"target_host": "10.10.10.6"},
+            input_data={"target_host": "10.10.10.5"},
         )
     except ValueError as exc:
-        assert "outside the selected session target" in str(exc)
+        assert "target_id" in str(exc)
     else:
-        raise AssertionError("Expected scanner target validation failure.")
+        raise AssertionError("Expected scanner target_id validation failure.")
 
 
-def test_scan_task_rejects_bare_ipv6_target_outside_selected_session(tmp_path):
+def test_scan_task_rejects_bare_ipv6_target_outside_selected_project_target(tmp_path):
     settings = build_settings(tmp_path)
     project = ProjectService.from_settings(settings).create_project(name="IPv6")
+    ipv6_target = TargetAdmissionService.from_settings(settings).create_initial_target(
+        project_identifier=project.id,
+        value="2001:db8::1",
+        target_type=TargetType.IP,
+    )
     session = TargetSessionService.from_settings(settings).create_session(
         project_identifier=project.id,
         name="IPv6 target",
-        target_value="2001:db8::1",
-        target_type=TargetType.IP,
     )
     service = ScannerService.from_settings(settings)
 
@@ -254,7 +296,7 @@ def test_scan_task_rejects_bare_ipv6_target_outside_selected_session(tmp_path):
         service.create_scan_task(
             session_identifier=session.id,
             task_type="port_scan",
-            input_data={"target_host": "2001:dead::2"},
+            input_data={"target_id": ipv6_target.id, "target_host": "2001:dead::2"},
         )
     except ValueError as exc:
         assert "2001:dead::2" in str(exc)
@@ -269,7 +311,8 @@ def test_ffuf_uses_configured_default_wordlist_and_extra_args(tmp_path):
     wordlist.write_text("admin\n", encoding="utf-8")
     binary = tmp_path / "ffuf"
     binary.write_text("#!/bin/sh\n", encoding="utf-8")
-    _project, session = prepare_session(settings)
+    project, session = prepare_session(settings)
+    url_target_id = target_id(settings, project_id=project.id, value="http://10.10.10.5")
     runner = FakeRunner(ProcessResult(argv=[str(binary)], return_code=0, stdout=FFUF_JSON, stderr=""))
     service = ScannerService(settings=settings, runner=runner)
     service.update_config(
@@ -287,7 +330,7 @@ def test_ffuf_uses_configured_default_wordlist_and_extra_args(tmp_path):
     task = service.create_scan_task(
         session_identifier=session.id,
         task_type="dir_scan",
-        input_data={"base_url": "http://10.10.10.5"},
+        input_data={"target_id": url_target_id, "base_url": "http://10.10.10.5"},
     )
 
     assert task.status.value == "succeeded"
@@ -357,7 +400,8 @@ def test_enqueued_scan_task_executes_outside_creation_path(tmp_path):
     settings = build_settings(tmp_path)
     binary = tmp_path / "nmap"
     binary.write_text("#!/bin/sh\n", encoding="utf-8")
-    _project, session = prepare_session(settings)
+    project, session = prepare_session(settings)
+    ip_target_id = target_id(settings, project_id=project.id, value="10.10.10.5")
     runner = FakeRunner(ProcessResult(argv=[str(binary)], return_code=0, stdout=NMAP_XML, stderr=""))
     service = ScannerService(settings=settings, runner=runner)
     service.update_config({"tools": {"nmap": {"binary_path": str(binary)}}})
@@ -365,7 +409,7 @@ def test_enqueued_scan_task_executes_outside_creation_path(tmp_path):
     task = service.enqueue_scan_task(
         session_identifier=session.id,
         task_type="port_scan",
-        input_data={"target_host": "10.10.10.5"},
+        input_data={"target_id": ip_target_id, "target_host": "10.10.10.5"},
     )
 
     assert task.status.value == "pending"
@@ -377,7 +421,8 @@ def test_enqueued_scan_task_executes_outside_creation_path(tmp_path):
 
 def test_phase3_api_routes_expose_tools_and_tasks(tmp_path, monkeypatch):
     settings = build_settings(tmp_path)
-    _project, session = prepare_session(settings)
+    project, session = prepare_session(settings)
+    ip_target_id = target_id(settings, project_id=project.id, value="10.10.10.5")
 
     monkeypatch.setattr("server.lifecycle.get_settings", lambda: settings)
     monkeypatch.setattr("app.scanner_service.get_settings", lambda: settings)
@@ -395,7 +440,7 @@ def test_phase3_api_routes_expose_tools_and_tasks(tmp_path, monkeypatch):
 
         created = client.post(
             f"/api/sessions/{session.id}/tasks",
-            json={"task_type": "port_scan", "input": {"target_host": "10.10.10.5"}},
+            json={"task_type": "port_scan", "input": {"target_id": ip_target_id, "target_host": "10.10.10.5"}},
         )
         assert created.status_code == 201
         task = created.json()["task"]

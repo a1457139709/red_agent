@@ -35,8 +35,8 @@ import {
   type ProjectDto,
   type ReportDto,
   type ScanTaskDto,
+  type TargetDto,
   type TargetSessionDto,
-  type TargetType,
   type TerminalDto,
   type ToolConfigDto,
   type ToolStatusDto,
@@ -62,6 +62,7 @@ import {
   listFlags,
   listProjectReports,
   listProjectSessions,
+  listProjectTargets,
   listProjects,
   listSessionCommands,
   listSessionReports,
@@ -77,7 +78,7 @@ import {
   setBackendUrl,
   updateToolConfig,
 } from "./lib/api";
-import { TARGET_TYPE_OPTIONS, validateAgentMessageForm, validateProjectForm, validateTargetSessionForm } from "./lib/forms";
+import { validateAgentMessageForm, validateProjectForm, validateTargetSessionForm } from "./lib/forms";
 import { appendChatMessage, type ChatMessage, mapServerEventToChatMessage } from "./lib/agentEvents";
 import { type EventSocketController, backendHttpToWebSocketUrl, connectEventSocket } from "./lib/ws";
 
@@ -90,8 +91,6 @@ type ProjectGroup = {
 
 type SessionDraft = {
   name: string;
-  target_value: string;
-  target_type: TargetType;
   summary: string;
 };
 
@@ -168,6 +167,7 @@ type ToolConfigForm = Record<ToolStatusDto["name"], {
 }>;
 
 type ManualScanDraft = {
+  targetId: string;
   targetHost: string;
   baseUrl: string;
   targetUrl: string;
@@ -219,6 +219,7 @@ export function App() {
   const [sessionCommands, setSessionCommands] = useState<CommandRunDto[]>([]);
   const [reports, setReports] = useState<ReportItem[]>([]);
   const [projectReports, setProjectReports] = useState<ReportItem[]>([]);
+  const [targets, setTargets] = useState<TargetDto[]>([]);
   const [highlightedRef, setHighlightedRef] = useState<string | null>(null);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [reportError, setReportError] = useState<string | null>(null);
@@ -243,8 +244,6 @@ export function App() {
   const [initialDraft, setInitialDraft] = useState({
     projectName: "",
     sessionName: "",
-    targetValue: "",
-    targetType: "ip" as TargetType,
     summary: "",
   });
   const authToken = getApiAuthToken();
@@ -257,6 +256,10 @@ export function App() {
   const activeSession = useMemo(
     () => projectGroups.flatMap((group) => group.sessions).find((session) => session.id === activeSessionId) ?? null,
     [activeSessionId, projectGroups],
+  );
+  const activeTargets = useMemo(
+    () => targets.filter((target) => target.status === "active"),
+    [targets],
   );
 
   const handleAuthError = useCallback((error: unknown, fallback: string): string => {
@@ -364,6 +367,14 @@ export function App() {
     [backendUrl],
   );
 
+  const refreshProjectTargets = useCallback(
+    async (projectId: string) => {
+      const targetItems = await listProjectTargets(backendUrl, projectId);
+      setTargets(targetItems);
+    },
+    [backendUrl],
+  );
+
   useEffect(() => {
     let cancelled = false;
     async function loadWorkspaceSessions() {
@@ -400,6 +411,7 @@ export function App() {
         }
         if (nextProjectId) {
           void refreshProjectReports(nextProjectId);
+          void refreshProjectTargets(nextProjectId);
         }
         setWorkspaceError(null);
       } catch (error) {
@@ -412,7 +424,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeProjectId, backendUrl, connection.state, handleAuthError, refreshProjectReports]);
+  }, [activeProjectId, backendUrl, connection.state, handleAuthError, refreshProjectReports, refreshProjectTargets]);
 
   useEffect(() => {
     seenEventIdsRef.current = new Set();
@@ -440,10 +452,12 @@ export function App() {
   useEffect(() => {
     if (!activeProjectId) {
       setProjectReports([]);
+      setTargets([]);
       return;
     }
     void refreshProjectReports(activeProjectId);
-  }, [activeProjectId, refreshProjectReports]);
+    void refreshProjectTargets(activeProjectId);
+  }, [activeProjectId, refreshProjectReports, refreshProjectTargets]);
 
   const refreshToolSettings = useCallback(async () => {
     try {
@@ -503,8 +517,6 @@ export function App() {
     const projectError = validateProjectForm({name: initialDraft.projectName});
     const sessionError = validateTargetSessionForm({
       name: initialDraft.sessionName,
-      target_value: initialDraft.targetValue,
-      target_type: initialDraft.targetType,
     });
     if (projectError || sessionError || creationSubmitting) {
       setCreationError(projectError ?? sessionError);
@@ -518,14 +530,13 @@ export function App() {
       });
       const session = await createTargetSession(backendUrl, project.id, {
         name: initialDraft.sessionName.trim(),
-        target_value: initialDraft.targetValue.trim(),
-        target_type: initialDraft.targetType,
         summary: initialDraft.summary.trim() || null,
       });
       setProjectGroups([{project, sessions: [session]}]);
+      await refreshProjectTargets(project.id);
       setActiveProjectId(project.id);
       setActiveSessionId(session.id);
-      setInitialDraft({projectName: "", sessionName: "", targetValue: "", targetType: "ip", summary: ""});
+      setInitialDraft({projectName: "", sessionName: "", summary: ""});
       setCreationError(null);
     } catch (error) {
       setCreationError(error instanceof Error ? error.message : "Failed to initialize workspace.");
@@ -571,8 +582,6 @@ export function App() {
     try {
       const input: CreateTargetSessionInput = {
         name: sessionDraft.name.trim(),
-        target_value: sessionDraft.target_value.trim(),
-        target_type: sessionDraft.target_type,
         summary: sessionDraft.summary.trim() || null,
       };
       const session = await createTargetSession(backendUrl, projectId, input);
@@ -581,6 +590,7 @@ export function App() {
           group.project.id === projectId ? {...group, sessions: [...group.sessions, session]} : group
         )),
       );
+      await refreshProjectTargets(projectId);
       setActiveProjectId(projectId);
       setActiveSessionId(session.id);
       setSessionDraft(emptySessionDraft());
@@ -643,7 +653,13 @@ export function App() {
     if (!activeSession || workspaceAction) {
       return;
     }
-    const targetHost = scanDraft.targetHost.trim() || defaultTargetHost(activeSession);
+    const targetId = scanDraft.targetId || activeTargets[0]?.id || "";
+    if (!targetId) {
+      setWorkspaceError("Select an active target before queueing a scan.");
+      return;
+    }
+    const selectedTarget = activeTargets.find((target) => target.id === targetId);
+    const targetHost = scanDraft.targetHost.trim() || selectedTarget?.normalized_host || selectedTarget?.value || "";
     if (!targetHost) {
       setWorkspaceError("Port scan target cannot be empty.");
       return;
@@ -652,9 +668,9 @@ export function App() {
     try {
       await createScanTask(backendUrl, activeSession.id, {
         task_type: "port_scan",
-        input: {target_host: targetHost},
+        input: {target_id: targetId, target_host: targetHost},
       });
-      setScanDraft((current) => ({...current, targetHost}));
+      setScanDraft((current) => ({...current, targetId, targetHost}));
       await refreshWorkspace(activeSession.id);
       setWorkspaceError(null);
     } catch (error) {
@@ -669,7 +685,13 @@ export function App() {
     if (!activeSession || workspaceAction) {
       return;
     }
-    const baseUrl = scanDraft.baseUrl.trim();
+    const targetId = scanDraft.targetId || activeTargets[0]?.id || "";
+    if (!targetId) {
+      setWorkspaceError("Select an active target before queueing a scan.");
+      return;
+    }
+    const selectedTarget = activeTargets.find((target) => target.id === targetId);
+    const baseUrl = scanDraft.baseUrl.trim() || (selectedTarget?.target_type === "url" ? selectedTarget.value : "");
     if (!baseUrl) {
       setWorkspaceError("Directory scan base URL cannot be empty.");
       return;
@@ -678,7 +700,7 @@ export function App() {
     try {
       await createScanTask(backendUrl, activeSession.id, {
         task_type: "dir_scan",
-        input: {base_url: baseUrl},
+        input: {target_id: targetId, base_url: baseUrl},
       });
       await refreshWorkspace(activeSession.id);
       setWorkspaceError(null);
@@ -694,7 +716,13 @@ export function App() {
     if (!activeSession || workspaceAction) {
       return;
     }
-    const targetUrl = scanDraft.targetUrl.trim();
+    const targetId = scanDraft.targetId || activeTargets[0]?.id || "";
+    if (!targetId) {
+      setWorkspaceError("Select an active target before queueing a scan.");
+      return;
+    }
+    const selectedTarget = activeTargets.find((target) => target.id === targetId);
+    const targetUrl = scanDraft.targetUrl.trim() || (selectedTarget?.target_type === "url" ? selectedTarget.value : "");
     if (!targetUrl) {
       setWorkspaceError("POC scan target URL cannot be empty.");
       return;
@@ -703,7 +731,7 @@ export function App() {
     try {
       await createScanTask(backendUrl, activeSession.id, {
         task_type: "poc_scan",
-        input: {target_url: targetUrl},
+        input: {target_id: targetId, target_url: targetUrl},
       });
       await refreshWorkspace(activeSession.id);
       setWorkspaceError(null);
@@ -1153,11 +1181,11 @@ export function App() {
           <div className="header-status" aria-label="Session status">
             <span>
               <Target aria-hidden="true" size={15} />
-              {activeSession?.target_value ?? "No target"}
+              {activeTargets.length} active targets
             </span>
             <span>
               <ShieldCheck aria-hidden="true" size={15} />
-              {connection.authEnabled ? connection.username ?? "Signed in" : activeSession?.target_type ?? "Local"}
+              {connection.authEnabled ? connection.username ?? "Signed in" : activeSession?.status ?? "Local"}
             </span>
             {connection.authEnabled ? (
               <button type="button" className="mini-icon-button" onClick={signOut} aria-label="Sign out" title="Sign out">
@@ -1257,6 +1285,7 @@ export function App() {
             toolSettingsSaving={toolSettingsSaving}
             noteDisabled={!activeSession || noteSubmitting || workspaceAction !== null}
             scanDraft={scanDraft}
+            targets={activeTargets}
             attackPathDraft={attackPathDraft}
             flagDraft={flagDraft}
             workspaceBusy={!activeSession || workspaceAction !== null}
@@ -1498,15 +1527,15 @@ function formatCompactTime(value: string): string {
 }
 
 function emptySessionDraft(): SessionDraft {
-  return {name: "", target_value: "", target_type: "ip", summary: ""};
+  return {name: "", summary: ""};
 }
 
-function emptyManualScanDraft(session: TargetSessionDto | null = null): ManualScanDraft {
-  const defaultUrl = session?.target_type === "url" ? session.target_value : "";
+function emptyManualScanDraft(_session: TargetSessionDto | null = null): ManualScanDraft {
   return {
-    targetHost: defaultTargetHost(session),
-    baseUrl: defaultUrl,
-    targetUrl: defaultUrl,
+    targetId: "",
+    targetHost: "",
+    baseUrl: "",
+    targetUrl: "",
   };
 }
 
@@ -1526,13 +1555,6 @@ function emptyManualFlagDraft(): ManualFlagDraft {
     value: "",
     sourceEvidenceId: "",
   };
-}
-
-function defaultTargetHost(session: TargetSessionDto | null): string {
-  if (!session) {
-    return "";
-  }
-  return session.target_type === "url" ? "" : session.target_value;
 }
 
 function emptyToolConfigForm(): ToolConfigForm {
@@ -1658,24 +1680,13 @@ function ConversationPanel({
         </button>
       </div>
       {!collapsed && newProjectOpen ? (
-        <form className="rail-create-form" onSubmit={onCreateProject}>
-          <label htmlFor="new-project-name">Project name</label>
-          <input
-            id="new-project-name"
-            value={projectDraft.name}
-            disabled={creationSubmitting}
-            placeholder="Project name"
-            onChange={(event) => onProjectDraftChange({...projectDraft, name: event.target.value})}
-          />
-          <input
-            value={projectDraft.description}
-            disabled={creationSubmitting}
-            placeholder="Description"
-            onChange={(event) => onProjectDraftChange({...projectDraft, description: event.target.value})}
-          />
-          <button type="submit" disabled={creationSubmitting}>Create Project</button>
-          {creationError ? <p>{creationError}</p> : null}
-        </form>
+        <ProjectCreatePanel
+          draft={projectDraft}
+          error={creationError}
+          submitting={creationSubmitting}
+          onDraftChange={onProjectDraftChange}
+          onSubmit={onCreateProject}
+        />
       ) : null}
 
       {!collapsed ? <p className="rail-section-label">Projects</p> : null}
@@ -1745,7 +1756,7 @@ function ConversationPanel({
                 {!collapsed ? (
                   <span className="conversation-copy">
                     <strong>{session.name}</strong>
-                    <small>{session.target_type} · {session.target_value}</small>
+                    <small>{session.status}</small>
                   </span>
                 ) : null}
                 {!collapsed ? <span className="conversation-time">{formatCompactTime(session.updated_at)}</span> : null}
@@ -1770,6 +1781,51 @@ function ConversationPanel({
   );
 }
 
+function ProjectCreatePanel({
+  draft,
+  error,
+  submitting,
+  onDraftChange,
+  onSubmit,
+}: {
+  draft: {name: string; description: string};
+  error: string | null;
+  submitting: boolean;
+  onDraftChange: (draft: {name: string; description: string}) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <form className="project-create-panel" onSubmit={onSubmit}>
+      <div className="project-create-header">
+        <Layers3 aria-hidden="true" size={17} />
+        <span>New workspace</span>
+      </div>
+      <div className="project-create-fields">
+        <label htmlFor="new-project-name">Project name</label>
+        <input
+          id="new-project-name"
+          value={draft.name}
+          disabled={submitting}
+          placeholder="HTB Lab"
+          onChange={(event) => onDraftChange({...draft, name: event.target.value})}
+        />
+        <label htmlFor="new-project-description">Description</label>
+        <input
+          id="new-project-description"
+          value={draft.description}
+          disabled={submitting}
+          placeholder="Scope, platform, or engagement notes"
+          onChange={(event) => onDraftChange({...draft, description: event.target.value})}
+        />
+      </div>
+      <div className="project-create-actions">
+        {error ? <p>{error}</p> : <span>Project can be linked to Sessions after creation.</span>}
+        <button type="submit" disabled={submitting}>Create</button>
+      </div>
+    </form>
+  );
+}
+
 function InitializationPanel({
   draft,
   error,
@@ -1777,18 +1833,21 @@ function InitializationPanel({
   onDraftChange,
   onSubmit,
 }: {
-  draft: {projectName: string; sessionName: string; targetValue: string; targetType: TargetType; summary: string};
+  draft: {projectName: string; sessionName: string; summary: string};
   error: string | null;
   submitting: boolean;
-  onDraftChange: (draft: {projectName: string; sessionName: string; targetValue: string; targetType: TargetType; summary: string}) => void;
+  onDraftChange: (draft: {projectName: string; sessionName: string; summary: string}) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   return (
-    <section className="setup-panel" aria-label="Initialize workspace">
+    <section className="setup-panel workspace-create-panel" aria-label="Initialize workspace">
       <div className="welcome-icon" aria-hidden="true">
         <Target size={22} />
       </div>
-      <h2>Initialize Project</h2>
+      <div className="workspace-create-heading">
+        <span>Workspace setup</span>
+        <h2>Initialize Project</h2>
+      </div>
       <form className="setup-form" onSubmit={onSubmit}>
         <label htmlFor="initial-project-name">Project name</label>
         <input
@@ -1806,25 +1865,6 @@ function InitializationPanel({
           placeholder="Session name"
           onChange={(event) => onDraftChange({...draft, sessionName: event.target.value})}
         />
-        <div className="setup-row">
-          <label htmlFor="initial-target-type">Target type</label>
-          <select
-            id="initial-target-type"
-            value={draft.targetType}
-            disabled={submitting}
-            onChange={(event) => onDraftChange({...draft, targetType: event.target.value as TargetType})}
-          >
-            {TARGET_TYPE_OPTIONS.map((option) => <option value={option} key={option}>{option}</option>)}
-          </select>
-          <label htmlFor="initial-target-value">Target value</label>
-          <input
-            id="initial-target-value"
-            value={draft.targetValue}
-            disabled={submitting}
-            placeholder="10.10.10.5"
-            onChange={(event) => onDraftChange({...draft, targetValue: event.target.value})}
-          />
-        </div>
         <label htmlFor="initial-summary">Summary</label>
         <textarea
           id="initial-summary"
@@ -1833,8 +1873,10 @@ function InitializationPanel({
           placeholder="Scope notes"
           onChange={(event) => onDraftChange({...draft, summary: event.target.value})}
         />
-        <button type="submit" disabled={submitting}>Create Project and Session</button>
-        {error ? <p>{error}</p> : null}
+        <div className="setup-actions">
+          {error ? <p>{error}</p> : <span>Creates the Project and first Agent Session.</span>}
+          <button type="submit" disabled={submitting}>Create Project and Session</button>
+        </div>
       </form>
     </section>
   );
@@ -1911,25 +1953,6 @@ function SessionMiniForm({
         placeholder="Session name"
         onChange={(event) => onDraftChange({...draft, name: event.target.value})}
       />
-      <div className="setup-row">
-        <label htmlFor={expanded ? "setup-target-type" : "rail-target-type"}>Target type</label>
-        <select
-          id={expanded ? "setup-target-type" : "rail-target-type"}
-          value={draft.target_type}
-          disabled={submitting}
-          onChange={(event) => onDraftChange({...draft, target_type: event.target.value as TargetType})}
-        >
-          {TARGET_TYPE_OPTIONS.map((option) => <option value={option} key={option}>{option}</option>)}
-        </select>
-        <label htmlFor={expanded ? "setup-target-value" : "rail-target-value"}>Target value</label>
-        <input
-          id={expanded ? "setup-target-value" : "rail-target-value"}
-          value={draft.target_value}
-          disabled={submitting}
-          placeholder="Target"
-          onChange={(event) => onDraftChange({...draft, target_value: event.target.value})}
-        />
-      </div>
       <textarea
         value={draft.summary}
         disabled={submitting}
@@ -1966,6 +1989,7 @@ function IntelPanel({
   toolSettingsSaving,
   noteDisabled,
   scanDraft,
+  targets,
   attackPathDraft,
   flagDraft,
   workspaceBusy,
@@ -2013,6 +2037,7 @@ function IntelPanel({
   toolSettingsSaving: boolean;
   noteDisabled: boolean;
   scanDraft: ManualScanDraft;
+  targets: TargetDto[];
   attackPathDraft: ManualAttackPathDraft;
   flagDraft: ManualFlagDraft;
   workspaceBusy: boolean;
@@ -2037,6 +2062,7 @@ function IntelPanel({
   onCancelTask: (taskId: string) => void;
   onRerunTask: (taskId: string) => void;
 }) {
+  const scanDisabled = workspaceBusy || targets.length === 0;
   if (mode === "Settings") {
     return (
       <ToolSettingsPanel
@@ -2137,37 +2163,53 @@ function IntelPanel({
           <span>{tasks.length}</span>
         </div>
         <div className="compact-form-stack">
+          <div className="compact-form">
+            <div className="compact-form-row">
+              <select
+                value={scanDraft.targetId}
+                disabled={scanDisabled}
+                onChange={(event) => onScanDraftChange({...scanDraft, targetId: event.target.value})}
+              >
+                <option value="">{targets.length ? "Select active target" : "Add an active target first"}</option>
+                {targets.map((target) => (
+                  <option value={target.id} key={target.id}>
+                    {target.public_id} · {target.target_type} · {target.value}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
           <form className="compact-form" onSubmit={onQueuePortScan}>
             <div className="compact-form-row">
               <input
                 value={scanDraft.targetHost}
-                disabled={workspaceBusy}
-                placeholder={activeSession ? defaultTargetHost(activeSession) || "Target host" : "Target host"}
+                disabled={scanDisabled}
+                placeholder="Target host"
                 onChange={(event) => onScanDraftChange({...scanDraft, targetHost: event.target.value})}
               />
-              <button type="submit" disabled={workspaceBusy}>Port Scan</button>
+              <button type="submit" disabled={scanDisabled}>Port Scan</button>
             </div>
           </form>
           <form className="compact-form" onSubmit={onQueueDirectoryScan}>
             <div className="compact-form-row">
               <input
                 value={scanDraft.baseUrl}
-                disabled={workspaceBusy}
+                disabled={scanDisabled}
                 placeholder="http://target.local"
                 onChange={(event) => onScanDraftChange({...scanDraft, baseUrl: event.target.value})}
               />
-              <button type="submit" disabled={workspaceBusy}>Dir Scan</button>
+              <button type="submit" disabled={scanDisabled}>Dir Scan</button>
             </div>
           </form>
           <form className="compact-form" onSubmit={onQueuePocScan}>
             <div className="compact-form-row">
               <input
                 value={scanDraft.targetUrl}
-                disabled={workspaceBusy}
+                disabled={scanDisabled}
                 placeholder="http://target.local/admin"
                 onChange={(event) => onScanDraftChange({...scanDraft, targetUrl: event.target.value})}
               />
-              <button type="submit" disabled={workspaceBusy}>POC Scan</button>
+              <button type="submit" disabled={scanDisabled}>POC Scan</button>
             </div>
           </form>
         </div>
@@ -2697,6 +2739,42 @@ function MessageBubble({message}: { message: ChatMessage }) {
       </div>
     );
   }
+  if (message.role === "execution") {
+    return (
+      <article className={`message-row agent execution-message ${message.executionStatus ?? "running"}`}>
+        <div className="message-avatar" aria-hidden="true">
+          <Bot size={18} />
+        </div>
+        <div className="message-content">
+          <div className="message-meta">
+            <span>{message.title ?? "Execution steps"}</span>
+            <small>{message.meta}</small>
+          </div>
+          <p>{message.body}</p>
+          <div className="execution-step-list" aria-label="Agent execution steps">
+            {(message.executionSteps ?? []).map((step) => (
+              <div className={`execution-step ${step.kind} ${step.status ?? ""}`} key={step.id}>
+                <div className="execution-step-marker" aria-hidden="true" />
+                <div className="execution-step-copy">
+                  <div className="execution-step-header">
+                    <span>{stepLabel(step.kind)}</span>
+                    <strong>{step.title}</strong>
+                    {step.status ? <small>{step.status}</small> : null}
+                  </div>
+                  <p>{step.body}</p>
+                  {step.chips?.length ? (
+                    <div className="agent-steps compact" aria-label="Step details">
+                      {step.chips.map((chip) => <span key={chip}>{chip}</span>)}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </article>
+    );
+  }
 
   return (
     <article className={`message-row ${message.role}`}>
@@ -2719,4 +2797,25 @@ function MessageBubble({message}: { message: ChatMessage }) {
       </div>
     </article>
   );
+}
+
+function stepLabel(kind: NonNullable<ChatMessage["executionSteps"]>[number]["kind"]): string {
+  switch (kind) {
+    case "workflow":
+      return "workflow";
+    case "thinking":
+      return "agent";
+    case "tool":
+      return "tool";
+    case "command":
+      return "command";
+    case "result":
+      return "result";
+    case "plan":
+      return "plan";
+    case "artifact":
+      return "artifact";
+    default:
+      return "event";
+  }
 }

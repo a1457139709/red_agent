@@ -269,8 +269,6 @@ const session = {
   public_id: "T0001",
   project_id: "project-1",
   name: "Linux target",
-  target_value: "10.10.10.5",
-  target_type: "ip",
   status: "active",
   summary: null,
   created_at: "2026-05-03T00:00:00+00:00",
@@ -279,16 +277,17 @@ const session = {
 };
 
 describe("control center DTO parsers", () => {
-  it("parses project and target session DTOs", () => {
+  it("parses project and session DTOs", () => {
     expect(parseProject(project).public_id).toBe("P0001");
-    expect(parseTargetSession(session).target_type).toBe("ip");
+    expect(parseTargetSession(session).name).toBe("Linux target");
   });
 
   it("parses an empty dashboard DTO", () => {
     const dashboard = parseSessionDashboard({
       project,
       session,
-      target: {value: "10.10.10.5", type: "ip", summary: null},
+      active_targets: [],
+      pending_targets: [],
       task_counts: {},
       finding_counts: {},
       evidence_count: 0,
@@ -308,8 +307,8 @@ describe("control center DTO parsers", () => {
     expect(dashboard.evidence_count).toBe(0);
   });
 
-  it("rejects invalid target types", () => {
-    expect(() => parseTargetSession({...session, target_type: "invalid"})).toThrow("Invalid target type");
+  it("rejects malformed sessions", () => {
+    expect(() => parseTargetSession({...session, name: null})).toThrow("Invalid session name");
   });
 });
 
@@ -329,21 +328,19 @@ describe("control center API clients", () => {
     });
   });
 
-  it("creates a target Session and parses the response", async () => {
+  it("creates a Session and parses the response", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({session}));
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(
       createTargetSession("http://127.0.0.1:8000", "project-1", {
         name: "Linux target",
-        target_type: "ip",
-        target_value: "10.10.10.5",
       }),
     ).resolves.toMatchObject({id: "session-1", project_id: "project-1"});
     expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8000/api/projects/project-1/sessions", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({name: "Linux target", target_type: "ip", target_value: "10.10.10.5"}),
+      body: JSON.stringify({name: "Linux target"}),
     });
   });
 

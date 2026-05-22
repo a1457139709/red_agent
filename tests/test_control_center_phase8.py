@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from agent.settings import Settings
 from app.project_service import ProjectService
 from app.scanner_service import ScannerService
+from app.target_admission_service import TargetAdmissionService
 from app.target_session_service import TargetSessionService
 from models.control_center import TargetType
 from runtime.scanner_tasks import ScannerTaskRuntime
@@ -35,13 +36,16 @@ def write_auth_config(settings, *, enabled=True):
 
 def prepare_session(settings):
     project = ProjectService.from_settings(settings).create_project(name="Phase 8")
+    target = TargetAdmissionService.from_settings(settings).create_initial_target(
+        project_identifier=project.id,
+        value="10.10.10.5",
+        target_type=TargetType.IP,
+    )
     session = TargetSessionService.from_settings(settings).create_session(
         project_identifier=project.id,
         name="Target",
-        target_value="10.10.10.5",
-        target_type=TargetType.IP,
     )
-    return project, session
+    return project, session, target
 
 
 def test_phase8_auth_config_missing_keeps_local_api_unprotected(tmp_path, monkeypatch):
@@ -113,12 +117,12 @@ def test_phase8_scanner_runtime_can_cancel_pending_future(tmp_path):
 
 def test_phase8_cancelled_task_records_event_and_tool_config_validation(tmp_path):
     settings = build_settings(tmp_path)
-    _project, session = prepare_session(settings)
+    _project, session, target = prepare_session(settings)
     service = ScannerService.from_settings(settings)
     task = service.enqueue_scan_task(
         session_identifier=session.id,
         task_type="port_scan",
-        input_data={"target_host": "10.10.10.5"},
+        input_data={"target_id": target.id, "target_host": "10.10.10.5"},
     )
 
     cancelled = service.cancel_task(task.id)

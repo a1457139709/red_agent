@@ -107,10 +107,27 @@ export type TargetSessionDto = {
   public_id: string;
   project_id: string;
   name: string;
-  target_value: string;
-  target_type: TargetType;
   status: string;
   summary: string | null;
+  created_at: string;
+  updated_at: string;
+  metadata: Record<string, unknown>;
+};
+
+export type TargetDto = {
+  id: string;
+  public_id: string;
+  project_id: string;
+  value: string;
+  target_type: TargetType;
+  normalized_host: string | null;
+  source: string;
+  status: "active" | "pending" | "rejected" | "archived";
+  confidence: number | null;
+  discovered_by: string | null;
+  discovered_from: string | null;
+  scope_reason: string | null;
+  rejection_key: string | null;
   created_at: string;
   updated_at: string;
   metadata: Record<string, unknown>;
@@ -119,11 +136,8 @@ export type TargetSessionDto = {
 export type SessionDashboardDto = {
   project: ProjectDto;
   session: TargetSessionDto;
-  target: {
-    value: string;
-    type: TargetType;
-    summary: string | null;
-  };
+  active_targets: Record<string, unknown>[];
+  pending_targets: Record<string, unknown>[];
   task_counts: Record<string, number>;
   finding_counts: Record<string, number>;
   evidence_count: number;
@@ -290,8 +304,6 @@ export type CreateProjectInput = {
 
 export type CreateTargetSessionInput = {
   name: string;
-  target_value: string;
-  target_type: TargetType;
   summary?: string | null;
 };
 
@@ -361,18 +373,12 @@ export function parseProject(payload: unknown): ProjectDto {
 }
 
 export function parseTargetSession(payload: unknown): TargetSessionDto {
-  const record = requireRecord(payload, "Invalid target session.");
-  const targetType = requireString(record.target_type, "Invalid target type.");
-  if (!TARGET_TYPES.has(targetType as TargetType)) {
-    throw new Error("Invalid target type.");
-  }
+  const record = requireRecord(payload, "Invalid session.");
   return {
     id: requireString(record.id, "Invalid session id."),
     public_id: requireString(record.public_id, "Invalid session public id."),
     project_id: requireString(record.project_id, "Invalid session project id."),
     name: requireString(record.name, "Invalid session name."),
-    target_value: requireString(record.target_value, "Invalid target value."),
-    target_type: targetType as TargetType,
     status: requireString(record.status, "Invalid session status."),
     summary: requireNullableString(record.summary, "Invalid session summary."),
     created_at: requireString(record.created_at, "Invalid session created_at."),
@@ -381,21 +387,43 @@ export function parseTargetSession(payload: unknown): TargetSessionDto {
   };
 }
 
+export function parseTarget(payload: unknown): TargetDto {
+  const record = requireRecord(payload, "Invalid target.");
+  const targetType = requireString(record.target_type, "Invalid target type.");
+  if (!TARGET_TYPES.has(targetType as TargetType)) {
+    throw new Error("Invalid target type.");
+  }
+  const status = requireString(record.status, "Invalid target status.");
+  if (!["active", "pending", "rejected", "archived"].includes(status)) {
+    throw new Error("Invalid target status.");
+  }
+  return {
+    id: requireString(record.id, "Invalid target id."),
+    public_id: requireString(record.public_id, "Invalid target public id."),
+    project_id: requireString(record.project_id, "Invalid target project id."),
+    value: requireString(record.value, "Invalid target value."),
+    target_type: targetType as TargetType,
+    normalized_host: requireNullableString(record.normalized_host, "Invalid target host."),
+    source: requireString(record.source, "Invalid target source."),
+    status: status as TargetDto["status"],
+    confidence: typeof record.confidence === "number" ? record.confidence : null,
+    discovered_by: requireNullableString(record.discovered_by, "Invalid target discovered_by."),
+    discovered_from: requireNullableString(record.discovered_from, "Invalid target discovered_from."),
+    scope_reason: requireNullableString(record.scope_reason, "Invalid target scope reason."),
+    rejection_key: requireNullableString(record.rejection_key, "Invalid target rejection key."),
+    created_at: requireString(record.created_at, "Invalid target created_at."),
+    updated_at: requireString(record.updated_at, "Invalid target updated_at."),
+    metadata: requireRecord(record.metadata, "Invalid target metadata."),
+  };
+}
+
 export function parseSessionDashboard(payload: unknown): SessionDashboardDto {
   const record = requireRecord(payload, "Invalid session dashboard.");
-  const target = requireRecord(record.target, "Invalid dashboard target.");
-  const targetType = requireString(target.type, "Invalid dashboard target type.");
-  if (!TARGET_TYPES.has(targetType as TargetType)) {
-    throw new Error("Invalid dashboard target type.");
-  }
   return {
     project: parseProject(record.project),
     session: parseTargetSession(record.session),
-    target: {
-      value: requireString(target.value, "Invalid dashboard target value."),
-      type: targetType as TargetType,
-      summary: requireNullableString(target.summary, "Invalid dashboard target summary."),
-    },
+    active_targets: requireRecordArray(record.active_targets ?? [], "Invalid dashboard active targets."),
+    pending_targets: requireRecordArray(record.pending_targets ?? [], "Invalid dashboard pending targets."),
     task_counts: requireNumberRecord(record.task_counts, "Invalid task counts."),
     finding_counts: requireNumberRecord(record.finding_counts, "Invalid finding counts."),
     evidence_count: requireNumber(record.evidence_count, "Invalid evidence count."),
@@ -649,6 +677,17 @@ export async function listProjectSessions(baseUrl: string, projectId: string): P
     throw new Error("Invalid sessions response.");
   }
   return sessions.map(parseTargetSession);
+}
+
+export async function listProjectTargets(baseUrl: string, projectId: string): Promise<TargetDto[]> {
+  const payload = requireRecord(
+    await requestJson(`${baseUrl}/api/projects/${projectId}/targets`),
+    "Invalid targets response.",
+  );
+  if (!Array.isArray(payload.targets)) {
+    throw new Error("Invalid targets response.");
+  }
+  return payload.targets.map(parseTarget);
 }
 
 export async function createTargetSession(

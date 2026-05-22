@@ -12,6 +12,12 @@
 - `nmap`、`ffuf`、`nuclei` 如何通过统一执行层接入
 - 实时事件和报告如何从运行时流向桌面端
 
+## Architecture Revision: Session 与 Target Pool
+
+当前 Control Center 架构中，Session 是 Agent 对话与执行上下文，不再是目标绑定实体。创建 Session 只需要 `name` 和可选 `summary`；公开 API/DTO 不暴露 `target_value`、`target_type` 或 `target_id`。
+
+Target 只存在于 Project Target Pool，并由 scope policy 约束。扫描器和 Agent 工具必须显式使用 Target Pool 中 active 的 `target_id`；新发现目标必须先通过 `propose_target(value)` 进入准入流程，pending/rejected/out-of-scope 目标不得直接扫描。本文档后续早期草图中的 `TargetSession` 字样应按该修订理解为 “Session + Project Target Pool” 的组合边界，而不是单个目标绑定 Session。
+
 ## 2. Top-Level Architecture
 
 ```mermaid

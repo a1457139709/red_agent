@@ -347,7 +347,37 @@ button {
 }
 
 .rail-create-form,
+.project-create-panel,
 .setup-form {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.project-create-panel {
+  gap: 12px;
+  margin: 0 -4px;
+  border-top: 1px solid rgba(228, 234, 226, 0.12);
+  border-bottom: 1px solid rgba(228, 234, 226, 0.12);
+  padding: 14px 4px 16px;
+}
+
+.project-create-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: #dce6dd;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.project-create-header svg {
+  color: #9ce0b2;
+}
+
+.project-create-fields {
   display: grid;
   gap: 8px;
   min-width: 0;
@@ -361,6 +391,7 @@ button {
 }
 
 .rail-create-form label,
+.project-create-panel label,
 .setup-form label {
   color: #9ce0b2;
   font-size: 11px;
@@ -370,6 +401,7 @@ button {
 .rail-create-form input,
 .rail-create-form textarea,
 .rail-create-form select,
+.project-create-panel input,
 .setup-form input,
 .setup-form textarea,
 .setup-form select {
@@ -396,6 +428,7 @@ button {
 }
 
 .rail-create-form button,
+.project-create-panel button,
 .setup-form button,
 .connection-panel > button {
   min-height: 36px;
@@ -410,6 +443,8 @@ button {
 .rail-create-form input:disabled,
 .rail-create-form textarea:disabled,
 .rail-create-form select:disabled,
+.project-create-panel button:disabled,
+.project-create-panel input:disabled,
 .setup-form button:disabled,
 .connection-panel > button:disabled,
 .setup-form input:disabled,
@@ -420,10 +455,34 @@ button {
 }
 
 .rail-create-form p,
+.project-create-actions p,
 .setup-form p {
   margin: 0;
   color: #c58f8f;
   font-size: 12px;
+}
+
+.project-create-actions,
+.setup-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.project-create-actions span,
+.setup-actions span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #aeb8b1;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.project-create-actions button,
+.setup-actions button {
+  white-space: nowrap;
 }
 
 .agent-workspace {
@@ -629,6 +688,29 @@ button {
   padding: 42px 0 24px;
 }
 
+.workspace-create-panel {
+  justify-items: stretch;
+  width: min(100%, 760px);
+  padding: 36px 10px 24px;
+}
+
+.workspace-create-panel .welcome-icon {
+  justify-self: start;
+}
+
+.workspace-create-heading {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.workspace-create-heading span {
+  color: #9ce0b2;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
 .setup-panel h2 {
   margin: 0;
   overflow-wrap: anywhere;
@@ -640,6 +722,11 @@ button {
 .setup-form,
 .session-create-form.expanded {
   width: min(100%, 520px);
+}
+
+.workspace-create-panel .setup-form {
+  width: min(100%, 680px);
+  gap: 10px;
 }
 
 .setup-row {
@@ -744,6 +831,21 @@ button {
   padding: 14px;
 }
 
+.message-row.execution-message .message-content {
+  width: min(760px, 100%);
+  max-width: 100%;
+  border-color: rgba(115, 196, 151, 0.18);
+  background: rgba(236, 241, 234, 0.055);
+}
+
+.message-row.execution-message.completed .message-content {
+  border-color: rgba(115, 196, 151, 0.24);
+}
+
+.message-row.execution-message.failed .message-content {
+  border-color: rgba(213, 77, 85, 0.34);
+}
+
 .message-meta {
   display: flex;
   align-items: center;
@@ -788,6 +890,154 @@ button {
   color: #b9e6c8;
   padding: 0 9px;
   font-size: 12px;
+}
+
+.agent-steps.compact {
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.agent-steps.compact span {
+  min-height: 24px;
+  border-radius: 7px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+.execution-step-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.execution-step {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+}
+
+.execution-step-marker {
+  position: relative;
+  align-self: stretch;
+}
+
+.execution-step-marker::before {
+  position: absolute;
+  top: 6px;
+  left: 3px;
+  width: 8px;
+  height: 8px;
+  border: 2px solid rgba(155, 232, 184, 0.7);
+  border-radius: 999px;
+  background: #171a19;
+  content: "";
+}
+
+.execution-step-marker::after {
+  position: absolute;
+  top: 20px;
+  bottom: -16px;
+  left: 7px;
+  width: 1px;
+  background: rgba(228, 234, 226, 0.14);
+  content: "";
+}
+
+.execution-step:last-child .execution-step-marker::after {
+  display: none;
+}
+
+.execution-step-copy {
+  min-width: 0;
+  border: 1px solid rgba(228, 234, 226, 0.1);
+  border-radius: 8px;
+  background: rgba(9, 10, 10, 0.22);
+  padding: 10px 11px;
+}
+
+.execution-step-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.execution-step-header span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  border-radius: 999px;
+  padding: 0 7px;
+  background: rgba(228, 234, 226, 0.08);
+  color: #cad4cc;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.execution-step-header strong {
+  min-width: 0;
+  color: #f5f7f2;
+  font-size: 13px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.execution-step-header small {
+  color: #9aa59d;
+  font-size: 11px;
+}
+
+.execution-step-copy p {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.execution-step.tool .execution-step-marker::before,
+.execution-step.command .execution-step-marker::before {
+  border-color: rgba(236, 191, 105, 0.8);
+}
+
+.execution-step.tool .execution-step-header span,
+.execution-step.command .execution-step-header span {
+  background: rgba(236, 191, 105, 0.1);
+  color: #f0d39d;
+}
+
+.execution-step.thinking .execution-step-marker::before,
+.execution-step.plan .execution-step-marker::before {
+  border-color: rgba(122, 167, 255, 0.8);
+}
+
+.execution-step.thinking .execution-step-header span,
+.execution-step.plan .execution-step-header span {
+  background: rgba(122, 167, 255, 0.1);
+  color: #c4d4ff;
+}
+
+.execution-step.result .execution-step-marker::before,
+.execution-step.artifact .execution-step-marker::before,
+.execution-step.workflow .execution-step-marker::before {
+  border-color: rgba(115, 196, 151, 0.8);
+}
+
+.execution-step.result .execution-step-header span,
+.execution-step.artifact .execution-step-header span,
+.execution-step.workflow .execution-step-header span {
+  background: rgba(115, 196, 151, 0.1);
+  color: #b9e6c8;
+}
+
+.execution-step.failed .execution-step-marker::before,
+.execution-step.cancelled .execution-step-marker::before {
+  border-color: rgba(213, 77, 85, 0.84);
+}
+
+.execution-step.failed .execution-step-header span,
+.execution-step.cancelled .execution-step-header span {
+  background: rgba(213, 77, 85, 0.12);
+  color: #f0999f;
 }
 
 .sender-dock {
@@ -1650,6 +1900,20 @@ button {
 
   .welcome-panel h2 {
     font-size: 28px;
+  }
+
+  .workspace-create-panel {
+    padding: 28px 0 18px;
+  }
+
+  .project-create-actions,
+  .setup-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .project-create-actions button,
+  .setup-actions button {
+    width: 100%;
   }
 
   .message-row,

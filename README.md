@@ -212,6 +212,8 @@ Phase 6.5 LLM Agent Orchestrator baseline.
 The desktop UI groups Sessions under Projects, lets an empty workspace create the first Project
 and Session, and connects each selected Session to its own Agent event replay, workspace records,
 and terminal context.
+In the Control Center, a Session is an Agent conversation and execution context. It is not bound to
+one target. Targets live in the Project Target Pool and are selected explicitly for scanner tasks.
 
 Start the backend from the repository root:
 
@@ -249,6 +251,8 @@ Agent messages, or replaying event streams.
 
 Project lifecycle endpoints now include `PATCH /api/projects/{project_id}`,
 `GET /api/projects/{project_id}/dashboard`, and `PATCH /api/sessions/{session_id}`.
+`POST /api/projects/{project_id}/sessions` creates an Agent Session from `name` plus optional
+`summary`; it does not accept or persist `target_value`, `target_type`, or `target_id`.
 The project dashboard summarizes Session counts by status, running scan tasks, open services derived
 from persisted scan results, finding/flag totals, and recent project activity. Archiving a Project
 also archives its Sessions and blocks creation of new Sessions inside that archived Project.
@@ -278,18 +282,30 @@ wordlists, templates, artifacts, and optional single-user auth.
 In remote mode, the desktop client uses report preview/download over HTTP; the Tauri `Open File`
 action is only shown for `localhost` or `127.0.0.1` backends.
 
-Phase 3 scanner endpoints are available under `/api/tools` and `/api/sessions/{session_id}/tasks`.
+Scanner endpoints are available under `/api/tools` and `/api/sessions/{session_id}/tasks`.
 They expose local `nmap`, `ffuf`, and `nuclei` status/configuration, enqueue scan tasks for
 in-process background execution, stream stdout/stderr into persisted scanner output events and
 session artifacts, and generate structured results plus evidence and attack-path candidates from
-successful scans. Scanner tasks are constrained to the selected Session target; ffuf can use a
-configured default wordlist, nuclei can use a configured templates path, and each tool can receive
-configured extra argv entries.
+successful scans. Scanner tasks are constrained by Project scope and the Target Pool: a scan resolves
+an active `target_id`, verifies that it belongs to the selected Project, and then rechecks the target
+against the Project scope policy before invoking the scanner adapter. ffuf can use a configured
+default wordlist, nuclei can use a configured templates path, and each tool can receive configured
+extra argv entries.
+Scanner tasks without `input.target_id` are rejected; Sessions are never used as an implicit target
+fallback.
+
+Project target management is available under `/api/projects/{project_id}/targets` and
+`/api/projects/{project_id}/scope`. Initial IP targets authorize only that IP. Initial domain targets
+authorize that domain and its subdomains. Newly discovered targets are admitted automatically when
+they match scope, placed into pending review when they do not match, or rejected when they match an
+explicit deny or a previously rejected root-domain key.
 
 In Recon/Exploit mode, the desktop client also exposes operator-side manual actions for the current
 Session: queue a port scan, queue a directory scan, queue a nuclei/POC scan, create an attack-path
 node linked to existing evidence, record manual evidence notes, and save flag/loot entries with an
 optional evidence link.
+Manual scan controls use the Project Target Pool active-target selector. When there are no active
+targets, scanning stays disabled while the Agent conversation remains available.
 
 The Settings mode in the desktop client shows `nmap`, `ffuf`, and `nuclei` availability, resolved
 path, version, and diagnostic error. It can update `binary_path`, `timeout_seconds`, `extra_args`,
@@ -301,12 +317,14 @@ does not use hand-written natural-language keyword routing for prompts such as `
 `enumerate target`, or similar scan requests. Instead, general questions are sent to the configured
 LangChain/OpenAI-compatible model, and model tool calls are routed through
 registered Control Center tools such as `start_port_scan`, `start_dir_scan`, `start_poc_scan`,
-`summarize_task_result`, `create_attack_path_node`, `create_finding`, `suggest_terminal_command`,
+`propose_target`, `summarize_task_result`, `create_attack_path_node`, `create_finding`, `suggest_terminal_command`,
 and `create_writeup_draft`. The Agent still cannot call raw `bash`; all scanner targets are validated
-against the active Session scope. The desktop client sends messages only for the active Session and
+against Project scope and active Target Pool entries. The desktop client sends messages only for the active Session and
 renders `agent.*` and `task.*` events from `ws://127.0.0.1:8000/ws/events?session_id=...&limit=...`
 with replay enabled. Switching Sessions closes the old event socket, clears the current Agent and
 terminal views, and replays the newly selected Session scope.
+For a new host or URL, the Agent must call `propose_target` first. It can start scanner tools only
+after admission returns an active target id; pending or rejected targets are not scanned.
 
 ## Usage Examples
 

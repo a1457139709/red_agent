@@ -5,6 +5,7 @@ from importlib import import_module
 __all__ = [
     "ArtifactRepository",
     "AttackPathNodeRepository",
+    "CampaignTargetRepository",
     "CTFReportRepository",
     "CommandRunRepository",
     "ControlCenterSchemaRepository",
@@ -19,6 +20,7 @@ __all__ = [
     "SessionEventRepository",
     "ScopePolicyRepository",
     "ProjectRepository",
+    "ProjectScopePolicyRepository",
     "TargetSessionRepository",
     "TaskRepository",
 ]
@@ -26,6 +28,7 @@ __all__ = [
 _EXPORTS = {
     "ArtifactRepository": ".artifacts",
     "AttackPathNodeRepository": ".control_center",
+    "CampaignTargetRepository": ".control_center",
     "CTFReportRepository": ".control_center",
     "CommandRunRepository": ".control_center",
     "ControlCenterSchemaRepository": ".control_center",
@@ -40,6 +43,7 @@ _EXPORTS = {
     "SessionEventRepository": ".session_events",
     "ScopePolicyRepository": ".scope_policies",
     "ProjectRepository": ".control_center",
+    "ProjectScopePolicyRepository": ".control_center",
     "TargetSessionRepository": ".control_center",
     "TaskRepository": ".control_center",
 }
