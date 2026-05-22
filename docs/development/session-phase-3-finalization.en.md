@@ -1,3 +1,5 @@
+# RETIRED DOCUMENT
+
 # Phase 3 Finalization: Foreground Execution Closure
 
 ## Purpose

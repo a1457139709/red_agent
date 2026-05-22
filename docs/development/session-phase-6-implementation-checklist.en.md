@@ -1,3 +1,5 @@
+# RETIRED DOCUMENT
+
 # Phase 6 Implementation Checklist: Session Storage Split
 
 ## Purpose

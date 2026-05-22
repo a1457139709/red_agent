@@ -1,3 +1,5 @@
+# RETIRED DOCUMENT
+
 # Phase 4 Finalization: Risk Policy and Confirmation System
 
 ## Purpose

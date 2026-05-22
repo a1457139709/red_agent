@@ -1,3 +1,5 @@
+# RETIRED DOCUMENT
+
 # Phase 5 Implementation Checklist: Skill and Module Unification
 
 ## Purpose

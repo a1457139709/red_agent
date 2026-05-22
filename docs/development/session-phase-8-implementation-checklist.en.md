@@ -1,3 +1,5 @@
+# RETIRED DOCUMENT
+
 # Phase 8 Implementation Checklist: Web Adapter Readiness
 
 ## Purpose

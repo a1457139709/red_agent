@@ -1,3 +1,5 @@
+# RETIRED DOCUMENT
+
 # Phase 6 Finalization: Session Storage Split
 
 ## Purpose

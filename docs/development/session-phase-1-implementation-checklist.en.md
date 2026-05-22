@@ -1,3 +1,5 @@
+# RETIRED DOCUMENT
+
 # Phase 1 Implementation Checklist: Session Domain Reset
 
 ## Purpose

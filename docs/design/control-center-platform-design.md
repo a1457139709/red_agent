@@ -7,7 +7,7 @@
 本文档回答：
 
 - 系统由哪些子系统组成
-- UI、API、Agent、扫描器、终端和存储如何协作
+- UI、API、Agent、扫描器、外部命令结果采集和存储如何协作
 - Project、Session、Task、Evidence、Attack Path 如何建模
 - `nmap`、`ffuf`、`nuclei` 如何通过统一执行层接入
 - 实时事件和报告如何从运行时流向桌面端
@@ -23,7 +23,7 @@ graph TD
     Agent[Agent Orchestrator\nLangChain]
     Runtime[Task Runtime\nScheduler + Workers]
     Scanner[Scanner Adapter Layer\nnmap / ffuf / nuclei]
-    Terminal[Terminal Runtime\nPTY Sessions]
+    Capture[Command Result Capture\nmanual evidence / notes / uploads]
     DB[(SQLite)]
     Files[Filesystem Artifacts\noutputs / screenshots / scripts / writeups]
 
@@ -34,21 +34,21 @@ graph TD
     WS --> Agent
     Agent --> Runtime
     Runtime --> Scanner
-    Runtime --> Terminal
+    Runtime --> Capture
     Runtime --> DB
     Scanner --> Files
-    Terminal --> Files
+    Capture --> Files
     API --> DB
     API --> Files
 ```
 
 核心原则：
 
-- 桌面端负责交互、展示、连接、终端视图和本地用户体验。
+- 桌面端负责交互、展示、连接和本地用户体验。
 - 后端负责业务状态、Agent 编排、任务调度、工具调用和持久化。
-- Agent 不直接执行 shell 字符串扫描，必须通过 Scanner Adapter 或 Terminal Runtime。
+- Agent 不直接执行 shell 字符串扫描，必须通过 Scanner Adapter。
 - Scanner Adapter 输出结构化结果，同时保存原始输出。
-- Terminal Runtime 面向用户交互命令，不替代结构化扫描执行层。
+- 外部命令执行发生在系统外部；v1 只负责建议、结果整理与证据归档。
 - SQLite 是 v1 结构化事实来源，文件系统保存大对象和原始材料。
 
 ## 3. Repository Shape
@@ -70,13 +70,11 @@ src/
       evidence.py
       findings.py
       reports.py
-      terminal.py
   app/
     project_service.py
     target_session_service.py
     attack_path_service.py
     scanner_service.py
-    terminal_service.py
     ctf_agent_service.py
     writeup_service.py
   scanners/
@@ -87,9 +85,6 @@ src/
     nuclei_adapter.py
     process_runner.py
     parsers/
-  terminal/
-    pty_manager.py
-    command_log.py
   storage/
     repositories/
   web/
@@ -105,7 +100,6 @@ desktop-client/
       agent-console/
       attack-path/
       scans/
-      terminal/
       evidence/
       writeup/
       settings/
@@ -209,18 +203,6 @@ classDiagram
       created_at
     }
 
-    class CommandRun {
-      command_run_id
-      project_id
-      session_id
-      terminal_id
-      command
-      exit_code
-      output_ref
-      tags
-      created_at
-    }
-
     class Flag {
       flag_id
       project_id
@@ -246,7 +228,6 @@ classDiagram
     Task --> Evidence
     Evidence --> Finding
     Evidence --> AttackPathNode
-    TargetSession --> CommandRun
     TargetSession --> Flag
     Project --> Report
 ```
@@ -261,7 +242,7 @@ classDiagram
   - 单台靶机或单个目标上下文
   - 绑定 target scope、攻击路径、任务和证据
 - `Task`
-  - 所有自动扫描、Agent 分析、终端命令记录和报告生成的执行事实
+  - 所有自动扫描、Agent 分析和报告生成的执行事实
   - 不承载 UI 临时状态
 - `Event`
   - 实时 UI、审计、恢复和时间线的统一事实
@@ -273,9 +254,6 @@ classDiagram
 - `AttackPathNode`
   - 攻击路径视图的基本单位
   - 可以来自 Task、Evidence、Finding、Flag 或用户手动创建
-- `CommandRun`
-  - 终端命令执行记录
-  - 保存完整输出引用和摘要
 - `Flag`
   - CTF 成果记录
   - 值可以选择遮蔽显示，但本地存储保留原文
@@ -294,7 +272,6 @@ graph TD
     Agent[Agent Console]
     Path[Attack Path]
     Scans[Scan Tasks]
-    Terminal[Terminal]
     Evidence[Evidence and Findings]
     Writeup[Writeup]
     Settings[Settings]
@@ -304,7 +281,6 @@ graph TD
     Workspace --> Agent
     Workspace --> Path
     Workspace --> Scans
-    Workspace --> Terminal
     Workspace --> Evidence
     Workspace --> Writeup
     Shell --> Settings
@@ -315,7 +291,7 @@ graph TD
 主工作区采用三栏结构：
 
 - 左侧：Project / Session 导航、目标摘要、任务队列
-- 中间：Agent Chat、实时工具调用、扫描进度、终端切换
+- 中间：Agent Chat、实时工具调用、扫描进度、命令建议
 - 右侧：攻击路径、证据、flag、下一步建议、writeup 摘要
 
 推荐最终布局采用 `Attack Decision Cockpit` 方案：
@@ -332,7 +308,7 @@ graph TD
   - 顶部固定 `Agent Loop`，展示 `Plan -> Act -> Observe -> Reflect`
   - 展示当前阶段、迭代次数和是否正在收敛
   - Agent Console 不只显示聊天文本，还要显示 tool call cards、task progress cards、decision summary、next command suggestion
-  - 底部采用 `Scans / Terminal` 切换或上下分区，保证工具结果与交互终端始终可达
+  - 底部采用 `Scans / Evidence Intake` 切换或上下分区，保证工具结果与外部命令结果整理入口始终可达
 - 右侧情报栏
   - 顶部固定 `Attack Reasoning Panel`
   - 中部展示双层 `Attack Graph`
@@ -370,7 +346,7 @@ graph TD
 - 扫描任务必须可见，不隐藏在聊天文本中。
 - Agent 工具调用必须有结构化卡片。
 - 攻击路径节点必须能展开查看证据。
-- 终端输出必须可标记为 evidence。
+- 外部命令结果必须可整理为 evidence。
 - UI 必须支持在 Project、Session 和 Task 之间快速跳转。
 - Agent Console 必须展示 reasoning，而不是只展示 tool log。
 - Attack Path 必须支持从抽象阶段视图切换到操作级 attack graph。
@@ -402,7 +378,6 @@ App Server 负责：
 - Agent 消息路由
 - Task 调度
 - Scanner Adapter 调用
-- Terminal Runtime 管理
 - Evidence / Finding / Attack Path 生成
 - Writeup 生成
 - Artifact 下载
@@ -458,10 +433,6 @@ GET    /api/reports/{report_id}/download
 GET    /api/tools/status
 GET    /api/tools/config
 PATCH  /api/tools/config
-
-POST   /api/sessions/{session_id}/terminals
-GET    /api/terminals/{terminal_id}/commands
-POST   /api/commands/{command_run_id}/evidence
 ```
 
 ### 6.3 WebSocket Message Families
@@ -477,10 +448,6 @@ session.bind
 session.unbind
 task.start
 task.cancel
-terminal.open
-terminal.input
-terminal.resize
-terminal.close
 evidence.create_from_selection
 ```
 
@@ -497,8 +464,6 @@ task.progress
 task.completed
 task.failed
 scanner.output
-terminal.output
-terminal.exited
 evidence.created
 finding.created
 attack_path.node_created
@@ -531,7 +496,7 @@ Agent Orchestrator 负责：
 - 调用任务服务创建扫描任务
 - 分析扫描结果
 - 生成 finding 和下一步建议
-- 生成终端命令建议
+- 生成命令建议
 - 生成 writeup 草稿
 
 ### 7.2 Agent Context
@@ -561,7 +526,7 @@ Agent 可调用的高层工具：
 - `summarize_task_result`
 - `create_attack_path_node`
 - `create_finding`
-- `suggest_terminal_command`
+- `suggest_command`
 - `create_writeup_draft`
 
 Agent 不直接调用：
@@ -570,7 +535,7 @@ Agent 不直接调用：
 - 任意 shell 字符串扫描
 - 未注册外部工具
 
-终端命令由 Agent 建议，用户通过终端执行。
+命令由 Agent 建议，用户在系统外部执行。
 
 ## 8. Scanner Adapter Design
 
@@ -714,36 +679,28 @@ nuclei -target <target> -jsonl -o <jsonl_output>
 - curl command when available
 - evidence: raw JSONL、stdout、解析 JSON
 
-## 9. Terminal Runtime Design
+## 9. External Command Result Capture
 
 ### 9.1 Responsibilities
 
-Terminal Runtime 负责：
+v1 不提供内置交互终端。
 
-- 创建 PTY session
-- 接收用户输入
-- 流式返回输出
-- 处理 resize
-- 记录命令边界
-- 保存输出 artifact
-- 生成 CommandRun
-- 支持输出片段转 evidence
+系统只负责：
 
-### 9.2 Command Recording
+- 展示 Agent 命令建议
+- 接收用户手动整理的命令结果、文本摘录、文件与截图
+- 将这些材料保存为 artifact 与 evidence
+- 把命令结果与 finding、attack path、writeup 建立关联
 
-命令记录必须包含：
+### 9.2 Evidence Expectations
 
-- command text
-- working directory
-- environment summary
-- started_at
-- ended_at
-- exit_code when available
-- output artifact ref
-- tags
-- linked attack path node
+与外部命令相关的 evidence 应尽量包含：
 
-交互命令可能没有清晰退出码。系统应允许用户手动结束记录并保存片段。
+- command text when known
+- execution context summary when known
+- result excerpt or uploaded raw output
+- operator note about why the command mattered
+- linked attack path node or finding when applicable
 
 ## 10. Persistence Design
 
@@ -758,7 +715,6 @@ SQLite 保存：
 - evidence
 - findings
 - attack_path_nodes
-- command_runs
 - flags
 - reports
 - tool_configs
@@ -784,7 +740,6 @@ SQLite 保存：
         <session_id>/
           artifacts/
             scans/
-            terminal/
             evidence/
           reports/
             writeup.md
@@ -799,7 +754,6 @@ SQLite 保存：
 - ffuf JSON
 - nuclei JSONL
 - stdout/stderr
-- terminal output
 - screenshots
 - user-uploaded files
 - generated scripts
@@ -815,7 +769,7 @@ SQLite 中保存文件引用和摘要。
 - HTTP/HTTPS 服务生成 web-entry 节点。
 - ffuf 发现的重要路径生成 web-enum 节点。
 - nuclei 命中生成 poc-verified 节点。
-- 用户保存命令输出可生成 manual-evidence 节点。
+- 用户保存外部命令结果可生成 manual-evidence 节点。
 - flag 记录生成 flag 节点。
 - Agent 分析可以生成 hypothesis 和 next-action 节点。
 
@@ -841,7 +795,6 @@ Writeup Service 从结构化数据生成 Markdown。
 - Attack path nodes
 - Evidence summaries
 - Findings
-- Command runs
 - Scanner Task argv
 - Flags
 
@@ -853,9 +806,9 @@ Writeup Service 从结构化数据生成 Markdown。
 生成规则：
 
 - 不编造未记录步骤。
-- 命令必须来自 CommandRun 或 Scanner Task。
+- 命令必须来自 Scanner Task `argv` 或用户明确录入到 evidence/notes 的命令文本。
 - 事实性条目必须带 public id 引用；未知 public id 会导致生成失败。
-- Command Log 中的命令必须匹配已记录的 CommandRun 命令或 Scanner Task `argv`。
+- Command Log 中的命令必须匹配已记录的 evidence/notes 命令文本或 Scanner Task `argv`。
 - 证据、finding、task、command、flag 引用可在桌面端跳转或高亮。
 - 未完成事项写入 TODO。
 - flag 默认保留原值，后续可增加遮蔽选项。
@@ -873,7 +826,6 @@ Writeup Service 从结构化数据生成 Markdown。
 - 输出文件缺失或不可解析
 - WebSocket 断开
 - 客户端重连
-- 终端进程退出
 
 错误必须同时：
 
@@ -889,7 +841,7 @@ v1 安全边界为轻量防误操作：
 - Scanner Adapter 只接受结构化参数。
 - 执行外部工具时使用 argv list，不使用 shell 拼接。
 - Agent 不直接获得任意 shell 执行工具。
-- 终端命令由用户主动输入或明确触发。
+- 命令建议仅供用户在系统外部自主执行。
 - 危险命令在 UI 中标识。
 - 所有扫描和命令执行都可追溯。
 
@@ -907,11 +859,10 @@ v1 安全边界为轻量防误操作：
 必须注意：
 
 - 外部工具路径可配置。
-- PTY 实现按平台适配。
 - 文件路径使用跨平台 API。
 - 默认 wordlist 路径不能写死为 Linux 专用路径。
 - Tauri shell 权限最小化配置。
-- Windows 下终端 shell、换行和编码需要单独测试。
+- Windows、macOS、Linux 下的文件选择、结果导入和路径序列化需要单独测试。
 
 ## 16. Acceptance Criteria
 
@@ -922,8 +873,7 @@ v1 安全边界为轻量防误操作：
 3. 后端调用 nmap、ffuf、nuclei 并产生结构化结果。
 4. WebSocket 实时推送任务状态和工具输出。
 5. 攻击路径自动出现服务、Web、POC 和 flag 节点。
-6. 内置终端执行命令并保存输出。
-7. 用户把终端输出保存为 evidence。
-8. 生成 Markdown writeup。
-9. 重启客户端后恢复 Project 状态。
-10. 外部工具缺失时展示明确错误。
+6. 用户能把外部命令结果、文件或笔记保存为 evidence。
+7. 生成 Markdown writeup。
+8. 重启客户端后恢复 Project 状态。
+9. 外部工具缺失时展示明确错误。

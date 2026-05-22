@@ -41,10 +41,13 @@ import {
   type ToolConfigDto,
   type ToolStatusDto,
   cancelScanTask,
+  createAttackPathNode,
   createCommandEvidence,
   createEvidence,
+  createFlag,
   createProject,
   createProjectReport,
+  createScanTask,
   createSessionReport,
   createTargetSession,
   getApiAuthToken,
@@ -164,6 +167,26 @@ type ToolConfigForm = Record<ToolStatusDto["name"], {
   templates_path: string;
 }>;
 
+type ManualScanDraft = {
+  targetHost: string;
+  baseUrl: string;
+  targetUrl: string;
+};
+
+type ManualAttackPathDraft = {
+  stage: string;
+  title: string;
+  status: string;
+  nextAction: string;
+  evidenceId: string;
+};
+
+type ManualFlagDraft = {
+  flagType: string;
+  value: string;
+  sourceEvidenceId: string;
+};
+
 const promptSuggestions = [
   "枚举这台靶机的初始攻击面",
   "基于当前证据生成下一步侦察计划",
@@ -200,6 +223,7 @@ export function App() {
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [reportError, setReportError] = useState<string | null>(null);
   const [reportGenerating, setReportGenerating] = useState(false);
+  const [workspaceAction, setWorkspaceAction] = useState<string | null>(null);
   const [noteSubmitting, setNoteSubmitting] = useState(false);
   const [agentSubmitting, setAgentSubmitting] = useState(false);
   const [agentError, setAgentError] = useState<string | null>(null);
@@ -213,6 +237,9 @@ export function App() {
   const [creationSubmitting, setCreationSubmitting] = useState(false);
   const [projectDraft, setProjectDraft] = useState({name: "", description: ""});
   const [sessionDraft, setSessionDraft] = useState<SessionDraft>(emptySessionDraft());
+  const [scanDraft, setScanDraft] = useState<ManualScanDraft>(emptyManualScanDraft());
+  const [attackPathDraft, setAttackPathDraft] = useState<ManualAttackPathDraft>(emptyManualAttackPathDraft());
+  const [flagDraft, setFlagDraft] = useState<ManualFlagDraft>(emptyManualFlagDraft());
   const [initialDraft, setInitialDraft] = useState({
     projectName: "",
     sessionName: "",
@@ -393,6 +420,10 @@ export function App() {
     setTerminalTabs([]);
     setActiveTerminalId(null);
     setTerminalError(null);
+    setNoteDraft("");
+    setScanDraft(emptyManualScanDraft(activeSession));
+    setAttackPathDraft(emptyManualAttackPathDraft());
+    setFlagDraft(emptyManualFlagDraft());
     if (!activeSessionId) {
       setEvidence([]);
       setNodes([]);
@@ -604,6 +635,138 @@ export function App() {
       setWorkspaceError(error instanceof Error ? error.message : "Failed to create evidence.");
     } finally {
       setNoteSubmitting(false);
+    }
+  };
+
+  const queuePortScan = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!activeSession || workspaceAction) {
+      return;
+    }
+    const targetHost = scanDraft.targetHost.trim() || defaultTargetHost(activeSession);
+    if (!targetHost) {
+      setWorkspaceError("Port scan target cannot be empty.");
+      return;
+    }
+    setWorkspaceAction("port-scan");
+    try {
+      await createScanTask(backendUrl, activeSession.id, {
+        task_type: "port_scan",
+        input: {target_host: targetHost},
+      });
+      setScanDraft((current) => ({...current, targetHost}));
+      await refreshWorkspace(activeSession.id);
+      setWorkspaceError(null);
+    } catch (error) {
+      setWorkspaceError(handleAuthError(error, "Failed to create port scan task."));
+    } finally {
+      setWorkspaceAction(null);
+    }
+  };
+
+  const queueDirectoryScan = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!activeSession || workspaceAction) {
+      return;
+    }
+    const baseUrl = scanDraft.baseUrl.trim();
+    if (!baseUrl) {
+      setWorkspaceError("Directory scan base URL cannot be empty.");
+      return;
+    }
+    setWorkspaceAction("dir-scan");
+    try {
+      await createScanTask(backendUrl, activeSession.id, {
+        task_type: "dir_scan",
+        input: {base_url: baseUrl},
+      });
+      await refreshWorkspace(activeSession.id);
+      setWorkspaceError(null);
+    } catch (error) {
+      setWorkspaceError(handleAuthError(error, "Failed to create directory scan task."));
+    } finally {
+      setWorkspaceAction(null);
+    }
+  };
+
+  const queuePocScan = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!activeSession || workspaceAction) {
+      return;
+    }
+    const targetUrl = scanDraft.targetUrl.trim();
+    if (!targetUrl) {
+      setWorkspaceError("POC scan target URL cannot be empty.");
+      return;
+    }
+    setWorkspaceAction("poc-scan");
+    try {
+      await createScanTask(backendUrl, activeSession.id, {
+        task_type: "poc_scan",
+        input: {target_url: targetUrl},
+      });
+      await refreshWorkspace(activeSession.id);
+      setWorkspaceError(null);
+    } catch (error) {
+      setWorkspaceError(handleAuthError(error, "Failed to create POC scan task."));
+    } finally {
+      setWorkspaceAction(null);
+    }
+  };
+
+  const createManualAttackPathNode = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!activeSession || workspaceAction) {
+      return;
+    }
+    const title = attackPathDraft.title.trim();
+    if (!title) {
+      setWorkspaceError("Attack path title cannot be empty.");
+      return;
+    }
+    setWorkspaceAction("attack-path");
+    try {
+      await createAttackPathNode(backendUrl, activeSession.id, {
+        stage: attackPathDraft.stage.trim() || "enumeration",
+        title,
+        status: attackPathDraft.status.trim() || "open",
+        next_action: attackPathDraft.nextAction.trim() || null,
+        evidence_ids: attackPathDraft.evidenceId ? [attackPathDraft.evidenceId] : [],
+      });
+      setAttackPathDraft(emptyManualAttackPathDraft());
+      await refreshWorkspace(activeSession.id);
+      setWorkspaceError(null);
+    } catch (error) {
+      setWorkspaceError(handleAuthError(error, "Failed to create attack path node."));
+    } finally {
+      setWorkspaceAction(null);
+    }
+  };
+
+  const createManualFlag = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!activeSession || workspaceAction) {
+      return;
+    }
+    const value = flagDraft.value.trim();
+    if (!value) {
+      setWorkspaceError("Flag or loot value cannot be empty.");
+      return;
+    }
+    setWorkspaceAction("flag");
+    try {
+      await createFlag(backendUrl, activeSession.id, {
+        flag_type: flagDraft.flagType.trim() || "loot",
+        value,
+        source_evidence_id: flagDraft.sourceEvidenceId || null,
+      });
+      setFlagDraft(emptyManualFlagDraft());
+      await refreshWorkspace(activeSession.id);
+      setWorkspaceError(null);
+    } catch (error) {
+      setWorkspaceError(handleAuthError(error, "Failed to record flag or loot."));
+    } finally {
+      setWorkspaceAction(null);
     }
   };
 
@@ -1072,6 +1235,7 @@ export function App() {
 
           <IntelPanel
             mode={mode}
+            activeSession={activeSession}
             nodes={nodes}
             evidence={evidence}
             findings={findings}
@@ -1091,9 +1255,21 @@ export function App() {
             toolConfig={toolConfig}
             toolSettingsError={toolSettingsError}
             toolSettingsSaving={toolSettingsSaving}
-            noteDisabled={!activeSession || noteSubmitting}
+            noteDisabled={!activeSession || noteSubmitting || workspaceAction !== null}
+            scanDraft={scanDraft}
+            attackPathDraft={attackPathDraft}
+            flagDraft={flagDraft}
+            workspaceBusy={!activeSession || workspaceAction !== null}
             onNoteChange={setNoteDraft}
+            onScanDraftChange={setScanDraft}
+            onAttackPathDraftChange={setAttackPathDraft}
+            onFlagDraftChange={setFlagDraft}
             onCreateNote={createManualNote}
+            onQueuePortScan={queuePortScan}
+            onQueueDirectoryScan={queueDirectoryScan}
+            onQueuePocScan={queuePocScan}
+            onCreateAttackPathNode={createManualAttackPathNode}
+            onCreateFlag={createManualFlag}
             onGenerateReport={generateReport}
             onGenerateProjectReport={generateProjectReport}
             onDownloadReport={downloadReportFile}
@@ -1323,6 +1499,40 @@ function formatCompactTime(value: string): string {
 
 function emptySessionDraft(): SessionDraft {
   return {name: "", target_value: "", target_type: "ip", summary: ""};
+}
+
+function emptyManualScanDraft(session: TargetSessionDto | null = null): ManualScanDraft {
+  const defaultUrl = session?.target_type === "url" ? session.target_value : "";
+  return {
+    targetHost: defaultTargetHost(session),
+    baseUrl: defaultUrl,
+    targetUrl: defaultUrl,
+  };
+}
+
+function emptyManualAttackPathDraft(): ManualAttackPathDraft {
+  return {
+    stage: "enumeration",
+    title: "",
+    status: "open",
+    nextAction: "",
+    evidenceId: "",
+  };
+}
+
+function emptyManualFlagDraft(): ManualFlagDraft {
+  return {
+    flagType: "loot",
+    value: "",
+    sourceEvidenceId: "",
+  };
+}
+
+function defaultTargetHost(session: TargetSessionDto | null): string {
+  if (!session) {
+    return "";
+  }
+  return session.target_type === "url" ? "" : session.target_value;
 }
 
 function emptyToolConfigForm(): ToolConfigForm {
@@ -1734,6 +1944,7 @@ function SessionMiniForm({
 
 function IntelPanel({
   mode,
+  activeSession,
   nodes,
   evidence,
   findings,
@@ -1754,8 +1965,20 @@ function IntelPanel({
   toolSettingsError,
   toolSettingsSaving,
   noteDisabled,
+  scanDraft,
+  attackPathDraft,
+  flagDraft,
+  workspaceBusy,
   onNoteChange,
+  onScanDraftChange,
+  onAttackPathDraftChange,
+  onFlagDraftChange,
   onCreateNote,
+  onQueuePortScan,
+  onQueueDirectoryScan,
+  onQueuePocScan,
+  onCreateAttackPathNode,
+  onCreateFlag,
   onGenerateReport,
   onGenerateProjectReport,
   onDownloadReport,
@@ -1768,6 +1991,7 @@ function IntelPanel({
   onRerunTask,
 }: {
   mode: WorkspaceMode;
+  activeSession: TargetSessionDto | null;
   nodes: AttackNode[];
   evidence: EvidenceItem[];
   findings: FindingItem[];
@@ -1788,8 +2012,20 @@ function IntelPanel({
   toolSettingsError: string | null;
   toolSettingsSaving: boolean;
   noteDisabled: boolean;
+  scanDraft: ManualScanDraft;
+  attackPathDraft: ManualAttackPathDraft;
+  flagDraft: ManualFlagDraft;
+  workspaceBusy: boolean;
   onNoteChange: (value: string) => void;
+  onScanDraftChange: (draft: ManualScanDraft) => void;
+  onAttackPathDraftChange: (draft: ManualAttackPathDraft) => void;
+  onFlagDraftChange: (draft: ManualFlagDraft) => void;
   onCreateNote: (event: FormEvent<HTMLFormElement>) => void;
+  onQueuePortScan: (event: FormEvent<HTMLFormElement>) => void;
+  onQueueDirectoryScan: (event: FormEvent<HTMLFormElement>) => void;
+  onQueuePocScan: (event: FormEvent<HTMLFormElement>) => void;
+  onCreateAttackPathNode: (event: FormEvent<HTMLFormElement>) => void;
+  onCreateFlag: (event: FormEvent<HTMLFormElement>) => void;
   onGenerateReport: () => void;
   onGenerateProjectReport: () => void;
   onDownloadReport: (reportId: string) => void;
@@ -1841,6 +2077,45 @@ function IntelPanel({
           <h2>Attack Path</h2>
           <span>{mode}</span>
         </div>
+        <form className="compact-form" onSubmit={onCreateAttackPathNode}>
+          <div className="compact-form-row split">
+            <input
+              value={attackPathDraft.stage}
+              disabled={workspaceBusy}
+              placeholder="Stage"
+              onChange={(event) => onAttackPathDraftChange({...attackPathDraft, stage: event.target.value})}
+            />
+            <input
+              value={attackPathDraft.status}
+              disabled={workspaceBusy}
+              placeholder="Status"
+              onChange={(event) => onAttackPathDraftChange({...attackPathDraft, status: event.target.value})}
+            />
+          </div>
+          <input
+            value={attackPathDraft.title}
+            disabled={workspaceBusy}
+            placeholder="Manual attack path node title"
+            onChange={(event) => onAttackPathDraftChange({...attackPathDraft, title: event.target.value})}
+          />
+          <div className="compact-form-row split">
+            <input
+              value={attackPathDraft.nextAction}
+              disabled={workspaceBusy}
+              placeholder="Next action"
+              onChange={(event) => onAttackPathDraftChange({...attackPathDraft, nextAction: event.target.value})}
+            />
+            <select
+              value={attackPathDraft.evidenceId}
+              disabled={workspaceBusy}
+              onChange={(event) => onAttackPathDraftChange({...attackPathDraft, evidenceId: event.target.value})}
+            >
+              <option value="">Link evidence (optional)</option>
+              {evidence.map((item) => <option value={item.id} key={item.id}>{item.id} · {item.title}</option>)}
+            </select>
+          </div>
+          <button type="submit" disabled={workspaceBusy}>Create Node</button>
+        </form>
         <div className="attack-board">
           {nodes.map((node) => (
             <article className={`attack-node ${node.status} ${node.id === highlightedRef ? "highlighted" : ""}`} key={node.id}>
@@ -1860,6 +2135,41 @@ function IntelPanel({
           <Layers3 aria-hidden="true" size={17} />
           <h2>Tasks</h2>
           <span>{tasks.length}</span>
+        </div>
+        <div className="compact-form-stack">
+          <form className="compact-form" onSubmit={onQueuePortScan}>
+            <div className="compact-form-row">
+              <input
+                value={scanDraft.targetHost}
+                disabled={workspaceBusy}
+                placeholder={activeSession ? defaultTargetHost(activeSession) || "Target host" : "Target host"}
+                onChange={(event) => onScanDraftChange({...scanDraft, targetHost: event.target.value})}
+              />
+              <button type="submit" disabled={workspaceBusy}>Port Scan</button>
+            </div>
+          </form>
+          <form className="compact-form" onSubmit={onQueueDirectoryScan}>
+            <div className="compact-form-row">
+              <input
+                value={scanDraft.baseUrl}
+                disabled={workspaceBusy}
+                placeholder="http://target.local"
+                onChange={(event) => onScanDraftChange({...scanDraft, baseUrl: event.target.value})}
+              />
+              <button type="submit" disabled={workspaceBusy}>Dir Scan</button>
+            </div>
+          </form>
+          <form className="compact-form" onSubmit={onQueuePocScan}>
+            <div className="compact-form-row">
+              <input
+                value={scanDraft.targetUrl}
+                disabled={workspaceBusy}
+                placeholder="http://target.local/admin"
+                onChange={(event) => onScanDraftChange({...scanDraft, targetUrl: event.target.value})}
+              />
+              <button type="submit" disabled={workspaceBusy}>POC Scan</button>
+            </div>
+          </form>
         </div>
         <div className="task-list">
           {tasks.map((task) => (
@@ -1934,6 +2244,37 @@ function IntelPanel({
             <h2>Flags</h2>
             <span>{flags.length}</span>
           </div>
+          <form className="compact-form" onSubmit={onCreateFlag}>
+            <div className="compact-form-row split">
+              <select
+                value={flagDraft.flagType}
+                disabled={workspaceBusy}
+                onChange={(event) => onFlagDraftChange({...flagDraft, flagType: event.target.value})}
+              >
+                <option value="loot">loot</option>
+                <option value="user">user</option>
+                <option value="root">root</option>
+                <option value="proof">proof</option>
+              </select>
+              <select
+                value={flagDraft.sourceEvidenceId}
+                disabled={workspaceBusy}
+                onChange={(event) => onFlagDraftChange({...flagDraft, sourceEvidenceId: event.target.value})}
+              >
+                <option value="">Source evidence (optional)</option>
+                {evidence.map((item) => <option value={item.id} key={item.id}>{item.id} · {item.title}</option>)}
+              </select>
+            </div>
+            <div className="compact-form-row">
+              <input
+                value={flagDraft.value}
+                disabled={workspaceBusy}
+                placeholder="admin:admin or flag{...}"
+                onChange={(event) => onFlagDraftChange({...flagDraft, value: event.target.value})}
+              />
+              <button type="submit" disabled={workspaceBusy}>Record</button>
+            </div>
+          </form>
           <div className="flag-list">
             {flags.map((flag) => (
               <article className={flag.id === highlightedRef ? "highlighted" : ""} key={flag.id}>

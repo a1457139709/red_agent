@@ -1,3 +1,5 @@
+# RETIRED DOCUMENT
+
 # Phase 7 Finalization: Record Retrieval and Report Flows
 
 ## Purpose

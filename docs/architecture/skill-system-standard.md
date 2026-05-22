@@ -1,4 +1,6 @@
-﻿# Skill System Standard
+﻿# RETIRED DOCUMENT
+
+# Skill System Standard
 
 ## Summary
 

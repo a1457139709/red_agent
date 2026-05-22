@@ -247,6 +247,12 @@ precedence over `VITE_BACKEND_URL`.
 The shell expects the backend when creating Projects/Sessions, loading workspace records, sending
 Agent messages, or replaying event streams.
 
+Project lifecycle endpoints now include `PATCH /api/projects/{project_id}`,
+`GET /api/projects/{project_id}/dashboard`, and `PATCH /api/sessions/{session_id}`.
+The project dashboard summarizes Session counts by status, running scan tasks, open services derived
+from persisted scan results, finding/flag totals, and recent project activity. Archiving a Project
+also archives its Sessions and blocks creation of new Sessions inside that archived Project.
+
 The Control Center event socket is `ws://127.0.0.1:8000/ws/events` by default. It accepts optional replay scope parameters such as `session_id`, `project_id`, `limit`, and `since_sequence` so the desktop client can restore persisted session history after reconnect or backend restart. When Control Center auth is enabled, the client appends `auth_token=<token>` to the WebSocket URL.
 
 Single-user auth is configured locally at `.red-code/config/control-center-auth.json`:
@@ -279,6 +285,11 @@ session artifacts, and generate structured results plus evidence and attack-path
 successful scans. Scanner tasks are constrained to the selected Session target; ffuf can use a
 configured default wordlist, nuclei can use a configured templates path, and each tool can receive
 configured extra argv entries.
+
+In Recon/Exploit mode, the desktop client also exposes operator-side manual actions for the current
+Session: queue a port scan, queue a directory scan, queue a nuclei/POC scan, create an attack-path
+node linked to existing evidence, record manual evidence notes, and save flag/loot entries with an
+optional evidence link.
 
 The Settings mode in the desktop client shows `nmap`, `ffuf`, and `nuclei` availability, resolved
 path, version, and diagnostic error. It can update `binary_path`, `timeout_seconds`, `extra_args`,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+import pytest
 
 from agent.settings import Settings
 from app.attack_path_service import AttackPathService
@@ -222,3 +223,37 @@ def test_phase5_workspace_api_routes(tmp_path, monkeypatch):
         assert client.get(f"/api/sessions/{session.id}/attack-path").json()["nodes"]
         assert client.get(f"/api/sessions/{session.id}/evidence").json()["evidence"][0]["title"] == "Manual note"
         assert client.get(f"/api/sessions/{session.id}/flags").json()["flags"][0]["value"] == "admin:admin"
+
+
+def test_attack_path_creation_rolls_back_when_evidence_validation_fails(tmp_path):
+    settings = build_settings(tmp_path)
+    _project, session = prepare_session(settings)
+    service = AttackPathService.from_settings(settings)
+
+    with pytest.raises(ValueError, match="Evidence not found in session"):
+        service.create_attack_path_node(
+            session_identifier=session.id,
+            stage="exploit",
+            title="Try admin shell",
+            evidence_ids=["EVID9999"],
+        )
+
+    storage = SQLiteStorage(settings.sqlite_path)
+    assert AttackPathNodeRepository(storage).list(session_id=session.id, limit=None) == []
+
+
+def test_evidence_creation_rolls_back_when_attack_path_node_is_missing(tmp_path):
+    settings = build_settings(tmp_path)
+    _project, session = prepare_session(settings)
+    service = AttackPathService.from_settings(settings)
+
+    with pytest.raises(ValueError, match="Attack path node not found in session"):
+        service.create_evidence(
+            session_identifier=session.id,
+            evidence_type="note",
+            title="Should not persist",
+            attack_path_node_id="AP9999",
+        )
+
+    storage = SQLiteStorage(settings.sqlite_path)
+    assert EvidenceRepository(storage).list(session_id=session.id, limit=None) == []

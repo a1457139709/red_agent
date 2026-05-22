@@ -1051,7 +1051,8 @@ button {
 }
 
 .task-actions button,
-.tool-config-form button {
+.tool-config-form button,
+.compact-form button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1103,9 +1104,48 @@ button {
 }
 
 .tool-config-form button:disabled,
-.tool-config-form input:disabled {
+.tool-config-form input:disabled,
+.compact-form button:disabled,
+.compact-form input:disabled,
+.compact-form select:disabled {
   cursor: not-allowed;
   opacity: 0.45;
+}
+
+.compact-form-stack {
+  display: grid;
+  gap: 8px;
+}
+
+.compact-form {
+  display: grid;
+  gap: 8px;
+}
+
+.compact-form-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.compact-form-row.split {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.compact-form input,
+.compact-form select {
+  min-width: 0;
+  min-height: 34px;
+  border: 1px solid rgba(228, 234, 226, 0.14);
+  border-radius: 8px;
+  outline: 0;
+  background: rgba(244, 247, 242, 0.065);
+  color: #f7fbf6;
+  padding: 0 10px;
+}
+
+.compact-form input::placeholder {
+  color: #7f8a83;
 }
 
 .note-form {

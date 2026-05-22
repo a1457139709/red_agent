@@ -6,7 +6,7 @@ import pytest
 from agent.settings import Settings
 from app.project_service import ProjectService
 from app.target_session_service import TargetSessionService
-from models.control_center import AttackPathNode, CommandRun, Event, Evidence, Flag, TargetType, Task
+from models.control_center import AttackPathNode, CommandRun, Event, Evidence, Flag, TargetSessionStatus, TargetType, Task
 from server.app import create_app
 from storage.project_paths import (
     project_manifest_path,
@@ -437,6 +437,146 @@ def test_phase2_project_and_session_api_routes(tmp_path, monkeypatch):
         assert payload["open_ports"] == []
         assert payload["attack_path"] == []
         assert payload["next_actions"] == []
+
+
+def test_project_and_session_lifecycle_routes_include_project_dashboard(tmp_path, monkeypatch):
+    settings = build_settings(tmp_path)
+
+    monkeypatch.setattr("server.lifecycle.get_settings", lambda: settings)
+    monkeypatch.setattr("app.project_service.get_settings", lambda: settings)
+    monkeypatch.setattr("app.target_session_service.get_settings", lambda: settings)
+
+    with TestClient(create_app()) as client:
+        project = client.post("/api/projects", json={"name": "Archive Lab"}).json()["project"]
+        session = client.post(
+            f"/api/projects/{project['id']}/sessions",
+            json={
+                "name": "Initial target",
+                "target_value": "10.10.10.20",
+                "target_type": "ip",
+            },
+        ).json()["session"]
+
+        patched_project = client.patch(
+            f"/api/projects/{project['public_id']}",
+            json={"description": "Project overview", "name": "Archive Lab Updated"},
+        )
+        assert patched_project.status_code == 200
+        assert patched_project.json()["project"]["name"] == "Archive Lab Updated"
+
+        patched_session = client.patch(
+            f"/api/sessions/{session['public_id']}",
+            json={"summary": "Track exposed services.", "status": "paused"},
+        )
+        assert patched_session.status_code == 200
+        assert patched_session.json()["session"]["status"] == "paused"
+        assert patched_session.json()["session"]["summary"] == "Track exposed services."
+
+        dashboard = client.get(f"/api/projects/{project['id']}/dashboard")
+        assert dashboard.status_code == 200
+        dashboard_payload = dashboard.json()["dashboard"]
+        assert dashboard_payload["session_count"] == 1
+        assert dashboard_payload["session_counts"]["paused"] == 1
+        assert dashboard_payload["running_task_count"] == 0
+        assert dashboard_payload["finding_count"] == 0
+        assert dashboard_payload["flag_count"] == 0
+
+        archived = client.patch(
+            f"/api/projects/{project['id']}",
+            json={"status": "archived"},
+        )
+        assert archived.status_code == 200
+        assert archived.json()["project"]["status"] == "archived"
+
+        archived_session = client.get(f"/api/sessions/{session['id']}")
+        assert archived_session.status_code == 200
+        assert archived_session.json()["session"]["status"] == "archived"
+
+        create_session = client.post(
+            f"/api/projects/{project['id']}/sessions",
+            json={
+                "name": "Should fail",
+                "target_value": "10.10.10.21",
+                "target_type": "ip",
+            },
+        )
+        assert create_session.status_code == 400
+
+
+def test_project_dashboard_aggregates_project_activity(tmp_path):
+    settings = build_settings(tmp_path)
+    project = ProjectService.from_settings(settings).create_project(name="Overview Lab")
+    session_service = TargetSessionService.from_settings(settings)
+    first_session = session_service.create_session(
+        project_identifier=project.id,
+        name="First target",
+        target_value="10.10.10.30",
+        target_type=TargetType.IP,
+    )
+    second_session = session_service.create_session(
+        project_identifier=project.id,
+        name="Second target",
+        target_value="10.10.10.31",
+        target_type=TargetType.IP,
+    )
+    second_session.status = TargetSessionStatus.PAUSED
+    TargetSessionRepository(SQLiteStorage(settings.sqlite_path)).update(second_session)
+
+    storage = SQLiteStorage(settings.sqlite_path)
+    running_task = TaskRepository(storage).create(
+        Task.create(
+            project_id=project.id,
+            session_id=first_session.id,
+            task_type="port_scan",
+            executor="nmap",
+            status="running",
+            result_json={"structured": {"open_ports": [{"port": 80, "protocol": "tcp", "service": "http"}]}},
+        )
+    )
+    TaskRepository(storage).create(
+        Task.create(
+            project_id=project.id,
+            session_id=second_session.id,
+            task_type="dir_scan",
+            executor="ffuf",
+            status="succeeded",
+        )
+    )
+    EvidenceRepository(storage).create(
+        Evidence.create(
+            project_id=project.id,
+            session_id=first_session.id,
+            evidence_type="note",
+            title="Interesting panel",
+        )
+    )
+    FlagRepository(storage).create(
+        Flag.create(
+            project_id=project.id,
+            session_id=first_session.id,
+            flag_type="loot",
+            value="admin:admin",
+        )
+    )
+    EventRepository(storage).create(
+        Event.create(
+            project_id=project.id,
+            session_id=first_session.id,
+            task_id=running_task.id,
+            event_kind="task.started",
+            level="info",
+            payload={"task_id": running_task.id},
+        )
+    )
+
+    dashboard = ProjectService.from_settings(settings).build_dashboard(project.public_id)
+
+    assert dashboard.session_counts == {"paused": 1, "active": 1}
+    assert dashboard.task_counts["running"] == 1
+    assert dashboard.running_task_count == 1
+    assert dashboard.open_service_count == 1
+    assert dashboard.flag_count == 1
+    assert dashboard.recent_activity[0]["event_kind"] == "task.started"
 
 
 def test_event_websocket_replays_persisted_session_history(tmp_path, monkeypatch):

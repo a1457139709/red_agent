@@ -1,6 +1,5 @@
 # Environment files
 .env
-!.env.example
 
 # Python caches and bytecode
 __pycache__/

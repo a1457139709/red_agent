@@ -1,3 +1,5 @@
+# RETIRED DOCUMENT
+
 # Session Refactor Development Plan
 
 ## Purpose

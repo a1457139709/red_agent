@@ -117,7 +117,7 @@ implemented yet.
 
 1. `design/control-center-platform-design.md`
    Target design for the CTF Control Center platform, including desktop client, App Server,
-   domain model, scanner adapter layer, terminal runtime, persistence, and reporting flow.
+   domain model, scanner adapter layer, external command-result capture, persistence, and reporting flow.
 
 ## Read These First
 

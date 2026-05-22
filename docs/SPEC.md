@@ -1,3 +1,5 @@
+# RETIRED DOCUMENT
+
 # red-code Target SPEC
 
 ## 1. Background

@@ -1,3 +1,5 @@
+# RETIRED DOCUMENT
+
 # Phase 3 Implementation Checklist: Foreground Execution Closure
 
 ## Purpose

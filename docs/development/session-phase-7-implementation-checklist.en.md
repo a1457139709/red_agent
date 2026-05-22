@@ -1,3 +1,5 @@
+# RETIRED DOCUMENT
+
 # Phase 7 Implementation Checklist: Record Retrieval and Report Flows
 
 ## Purpose

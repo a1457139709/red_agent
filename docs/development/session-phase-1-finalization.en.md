@@ -1,3 +1,5 @@
+# RETIRED DOCUMENT
+
 # Phase 1 Finalization: Session Domain Reset
 
 ## Purpose

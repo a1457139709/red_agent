@@ -219,6 +219,20 @@ class SessionDashboard:
     next_actions: list[dict[str, Any]] = field(default_factory=list)
 
 
+@dataclass(frozen=True, slots=True)
+class ProjectDashboard:
+    project: Project
+    sessions: list[TargetSession] = field(default_factory=list)
+    session_counts: dict[str, int] = field(default_factory=dict)
+    task_counts: dict[str, int] = field(default_factory=dict)
+    finding_counts: dict[str, int] = field(default_factory=dict)
+    running_task_count: int = 0
+    open_service_count: int = 0
+    finding_count: int = 0
+    flag_count: int = 0
+    recent_activity: list[dict[str, Any]] = field(default_factory=list)
+
+
 @dataclass(slots=True)
 class Task:
     id: str

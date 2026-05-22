@@ -1,3 +1,5 @@
+# RETIRED DOCUMENT
+
 # Phase 2 Finalization: Controller-First CLI and Intent Flow
 
 ## Purpose

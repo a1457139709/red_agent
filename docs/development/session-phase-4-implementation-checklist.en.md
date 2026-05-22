@@ -1,3 +1,5 @@
+# RETIRED DOCUMENT
+
 # Phase 4 Implementation Checklist: Risk Policy and Confirmation System
 
 ## Purpose

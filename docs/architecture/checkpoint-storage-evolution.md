@@ -1,3 +1,5 @@
+# RETIRED DOCUMENT
+
 # Checkpoint Storage Redesign
 
 ## 1. Purpose

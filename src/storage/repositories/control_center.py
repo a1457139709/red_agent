@@ -391,23 +391,27 @@ class ProjectRepository:
 
     def update(self, project: Project) -> Project:
         with self.storage.connect() as connection:
-            connection.execute(
-                """
-                UPDATE ctf_projects
-                SET
-                    public_id = :public_id,
-                    name = :name,
-                    description = :description,
-                    root_path = :root_path,
-                    status = :status,
-                    created_at = :created_at,
-                    updated_at = :updated_at,
-                    metadata = :metadata
-                WHERE id = :id
-                """,
-                project.to_row(),
-            )
+            self.update_in_connection(connection, project)
             connection.commit()
+        return project
+
+    def update_in_connection(self, connection: sqlite3.Connection, project: Project) -> Project:
+        connection.execute(
+            """
+            UPDATE ctf_projects
+            SET
+                public_id = :public_id,
+                name = :name,
+                description = :description,
+                root_path = :root_path,
+                status = :status,
+                created_at = :created_at,
+                updated_at = :updated_at,
+                metadata = :metadata
+            WHERE id = :id
+            """,
+            project.to_row(),
+        )
         return project
 
 
@@ -481,25 +485,29 @@ class TargetSessionRepository:
 
     def update(self, session: TargetSession) -> TargetSession:
         with self.storage.connect() as connection:
-            connection.execute(
-                """
-                UPDATE ctf_target_sessions
-                SET
-                    public_id = :public_id,
-                    project_id = :project_id,
-                    name = :name,
-                    target_value = :target_value,
-                    target_type = :target_type,
-                    status = :status,
-                    summary = :summary,
-                    created_at = :created_at,
-                    updated_at = :updated_at,
-                    metadata = :metadata
-                WHERE id = :id
-                """,
-                session.to_row(),
-            )
+            self.update_in_connection(connection, session)
             connection.commit()
+        return session
+
+    def update_in_connection(self, connection: sqlite3.Connection, session: TargetSession) -> TargetSession:
+        connection.execute(
+            """
+            UPDATE ctf_target_sessions
+            SET
+                public_id = :public_id,
+                project_id = :project_id,
+                name = :name,
+                target_value = :target_value,
+                target_type = :target_type,
+                status = :status,
+                summary = :summary,
+                created_at = :created_at,
+                updated_at = :updated_at,
+                metadata = :metadata
+            WHERE id = :id
+            """,
+            session.to_row(),
+        )
         return session
 
 
@@ -563,6 +571,26 @@ class TaskRepository:
             rows = connection.execute(query, params).fetchall()
         return [Task.from_row(dict(row)) for row in rows]
 
+    def list_by_project(
+        self,
+        *,
+        project_id: str,
+        status: TaskStatus | None = None,
+        limit: int | None = 50,
+    ) -> list[Task]:
+        query = "SELECT * FROM ctf_tasks WHERE project_id = ?"
+        params: list[object] = [project_id]
+        if status is not None:
+            query += " AND status = ?"
+            params.append(TaskStatus(status).value)
+        query += " ORDER BY updated_at DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        with self.storage.connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [Task.from_row(dict(row)) for row in rows]
+
     def update(self, task: Task) -> Task:
         task.updated_at = utc_now_iso()
         with self.storage.connect() as connection:
@@ -599,21 +627,25 @@ class EventRepository:
     def create(self, event: Event) -> Event:
         with self.storage.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            if event.sequence <= 0:
-                event.sequence = self._next_sequence(connection)
-            connection.execute(
-                """
-                INSERT INTO ctf_events (
-                    id, project_id, session_id, task_id, event_kind, level,
-                    payload_json, sequence, created_at
-                ) VALUES (
-                    :id, :project_id, :session_id, :task_id, :event_kind, :level,
-                    :payload_json, :sequence, :created_at
-                )
-                """,
-                event.to_row(),
-            )
+            self.create_in_connection(connection, event)
             connection.commit()
+        return event
+
+    def create_in_connection(self, connection: sqlite3.Connection, event: Event) -> Event:
+        if event.sequence <= 0:
+            event.sequence = self._next_sequence(connection)
+        connection.execute(
+            """
+            INSERT INTO ctf_events (
+                id, project_id, session_id, task_id, event_kind, level,
+                payload_json, sequence, created_at
+            ) VALUES (
+                :id, :project_id, :session_id, :task_id, :event_kind, :level,
+                :payload_json, :sequence, :created_at
+            )
+            """,
+            event.to_row(),
+        )
         return event
 
     def get(self, event_id: str) -> Event | None:
@@ -671,21 +703,25 @@ class EvidenceRepository:
 
     def create(self, evidence: Evidence) -> Evidence:
         with self.storage.connect() as connection:
-            if not evidence.public_id:
-                evidence.public_id = allocate_public_id(connection, table_name="ctf_evidence", prefix="EVID")
-            connection.execute(
-                """
-                INSERT INTO ctf_evidence (
-                    id, public_id, project_id, session_id, source_task_id, evidence_type,
-                    title, summary, content_ref, payload_json, created_at
-                ) VALUES (
-                    :id, :public_id, :project_id, :session_id, :source_task_id, :evidence_type,
-                    :title, :summary, :content_ref, :payload_json, :created_at
-                )
-                """,
-                evidence.to_row(),
-            )
+            self.create_in_connection(connection, evidence)
             connection.commit()
+        return evidence
+
+    def create_in_connection(self, connection: sqlite3.Connection, evidence: Evidence) -> Evidence:
+        if not evidence.public_id:
+            evidence.public_id = allocate_public_id(connection, table_name="ctf_evidence", prefix="EVID")
+        connection.execute(
+            """
+            INSERT INTO ctf_evidence (
+                id, public_id, project_id, session_id, source_task_id, evidence_type,
+                title, summary, content_ref, payload_json, created_at
+            ) VALUES (
+                :id, :public_id, :project_id, :session_id, :source_task_id, :evidence_type,
+                :title, :summary, :content_ref, :payload_json, :created_at
+            )
+            """,
+            evidence.to_row(),
+        )
         return evidence
 
     def get(self, identifier: str) -> Evidence | None:
@@ -704,6 +740,15 @@ class EvidenceRepository:
             table_name="ctf_evidence",
             model_cls=Evidence,
             session_id=session_id,
+            limit=limit,
+        )
+
+    def list_by_project(self, *, project_id: str, limit: int | None = 50) -> list[Evidence]:
+        return _list_project_entities(
+            self.storage,
+            table_name="ctf_evidence",
+            model_cls=Evidence,
+            project_id=project_id,
             limit=limit,
         )
 
@@ -757,6 +802,15 @@ class FindingRepository:
             limit=limit,
         )
 
+    def list_by_project(self, *, project_id: str, limit: int | None = 50) -> list[Finding]:
+        return _list_project_entities(
+            self.storage,
+            table_name="ctf_findings",
+            model_cls=Finding,
+            project_id=project_id,
+            limit=limit,
+        )
+
     def update(self, finding: Finding) -> Finding:
         finding.updated_at = utc_now_iso()
         with self.storage.connect() as connection:
@@ -789,25 +843,29 @@ class AttackPathNodeRepository:
 
     def create(self, node: AttackPathNode) -> AttackPathNode:
         with self.storage.connect() as connection:
-            if not node.public_id:
-                node.public_id = allocate_public_id(
-                    connection,
-                    table_name="ctf_attack_path_nodes",
-                    prefix="AP",
-                )
-            connection.execute(
-                """
-                INSERT INTO ctf_attack_path_nodes (
-                    id, public_id, project_id, session_id, stage, title, status,
-                    source_ref, next_action, created_at
-                ) VALUES (
-                    :id, :public_id, :project_id, :session_id, :stage, :title, :status,
-                    :source_ref, :next_action, :created_at
-                )
-                """,
-                node.to_row(),
-            )
+            self.create_in_connection(connection, node)
             connection.commit()
+        return node
+
+    def create_in_connection(self, connection: sqlite3.Connection, node: AttackPathNode) -> AttackPathNode:
+        if not node.public_id:
+            node.public_id = allocate_public_id(
+                connection,
+                table_name="ctf_attack_path_nodes",
+                prefix="AP",
+            )
+        connection.execute(
+            """
+            INSERT INTO ctf_attack_path_nodes (
+                id, public_id, project_id, session_id, stage, title, status,
+                source_ref, next_action, created_at
+            ) VALUES (
+                :id, :public_id, :project_id, :session_id, :stage, :title, :status,
+                :source_ref, :next_action, :created_at
+            )
+            """,
+            node.to_row(),
+        )
         return node
 
     def get(self, identifier: str) -> AttackPathNode | None:
@@ -837,15 +895,18 @@ class AttackPathEvidenceLinkRepository:
 
     def link(self, *, node_id: str, evidence_id: str) -> None:
         with self.storage.connect() as connection:
-            connection.execute(
-                """
-                INSERT OR IGNORE INTO ctf_attack_path_evidence_links (
-                    node_id, evidence_id, created_at
-                ) VALUES (?, ?, ?)
-                """,
-                (node_id, evidence_id, utc_now_iso()),
-            )
+            self.link_in_connection(connection, node_id=node_id, evidence_id=evidence_id)
             connection.commit()
+
+    def link_in_connection(self, connection: sqlite3.Connection, *, node_id: str, evidence_id: str) -> None:
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO ctf_attack_path_evidence_links (
+                node_id, evidence_id, created_at
+            ) VALUES (?, ?, ?)
+            """,
+            (node_id, evidence_id, utc_now_iso()),
+        )
 
     def list_evidence_ids(self, *, node_id: str) -> list[str]:
         with self.storage.connect() as connection:
@@ -967,21 +1028,25 @@ class FlagRepository:
 
     def create(self, flag: Flag) -> Flag:
         with self.storage.connect() as connection:
-            if not flag.public_id:
-                flag.public_id = allocate_public_id(connection, table_name="ctf_flags", prefix="FLAG")
-            connection.execute(
-                """
-                INSERT INTO ctf_flags (
-                    id, public_id, project_id, session_id, flag_type, value,
-                    source_evidence_id, created_at
-                ) VALUES (
-                    :id, :public_id, :project_id, :session_id, :flag_type, :value,
-                    :source_evidence_id, :created_at
-                )
-                """,
-                flag.to_row(),
-            )
+            self.create_in_connection(connection, flag)
             connection.commit()
+        return flag
+
+    def create_in_connection(self, connection: sqlite3.Connection, flag: Flag) -> Flag:
+        if not flag.public_id:
+            flag.public_id = allocate_public_id(connection, table_name="ctf_flags", prefix="FLAG")
+        connection.execute(
+            """
+            INSERT INTO ctf_flags (
+                id, public_id, project_id, session_id, flag_type, value,
+                source_evidence_id, created_at
+            ) VALUES (
+                :id, :public_id, :project_id, :session_id, :flag_type, :value,
+                :source_evidence_id, :created_at
+            )
+            """,
+            flag.to_row(),
+        )
         return flag
 
     def get(self, identifier: str) -> Flag | None:
@@ -1000,6 +1065,15 @@ class FlagRepository:
             table_name="ctf_flags",
             model_cls=Flag,
             session_id=session_id,
+            limit=limit,
+        )
+
+    def list_by_project(self, *, project_id: str, limit: int | None = 50) -> list[Flag]:
+        return _list_project_entities(
+            self.storage,
+            table_name="ctf_flags",
+            model_cls=Flag,
+            project_id=project_id,
             limit=limit,
         )
 
@@ -1097,6 +1171,24 @@ def _list_session_entities(
 ):
     query = f"SELECT * FROM {table_name} WHERE session_id = ? ORDER BY created_at DESC"
     params: list[object] = [session_id]
+    if limit is not None:
+        query += " LIMIT ?"
+        params.append(limit)
+    with storage.connect() as connection:
+        rows = connection.execute(query, params).fetchall()
+    return [model_cls.from_row(dict(row)) for row in rows]
+
+
+def _list_project_entities(
+    storage: SQLiteStorage,
+    *,
+    table_name: str,
+    model_cls,
+    project_id: str,
+    limit: int | None,
+):
+    query = f"SELECT * FROM {table_name} WHERE project_id = ? ORDER BY created_at DESC"
+    params: list[object] = [project_id]
     if limit is not None:
         query += " LIMIT ?"
         params.append(limit)

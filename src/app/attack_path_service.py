@@ -60,27 +60,37 @@ class AttackPathService(ControlCenterService):
         evidence_ids: list[str] | None = None,
     ) -> AttackPathNodeDetail:
         session = self.session_repository.require(session_identifier)
-        node = self.node_repository.create(
-            AttackPathNode.create(
-                project_id=session.project_id,
-                session_id=session.id,
-                stage=stage,
-                title=title,
-                status=status,
-                source_ref=source_ref,
-                next_action=next_action,
-            )
+        linked_evidence = self._resolve_evidence_refs(session_id=session.id, evidence_ids=evidence_ids or [])
+        node = AttackPathNode.create(
+            project_id=session.project_id,
+            session_id=session.id,
+            stage=stage,
+            title=title,
+            status=status,
+            source_ref=source_ref,
+            next_action=next_action,
         )
-        for evidence_id in evidence_ids or []:
-            evidence = self.evidence_repository.get(evidence_id)
-            if evidence is None or evidence.session_id != session.id:
-                raise ValueError(f"Evidence not found in session: {evidence_id}")
-            self.link_repository.link(node_id=node.id, evidence_id=evidence.id)
-        self._record_event(
-            session,
-            "attack_path.node_created",
-            {"node_id": node.id, "public_id": node.public_id, "stage": node.stage, "title": node.title},
-        )
+        storage = SQLiteStorage(self.settings.sqlite_path)
+        with storage.connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                self.node_repository.create_in_connection(connection, node)
+                for evidence in linked_evidence:
+                    self.link_repository.link_in_connection(connection, node_id=node.id, evidence_id=evidence.id)
+                self.event_repository.create_in_connection(
+                    connection,
+                    Event.create(
+                        project_id=session.project_id,
+                        session_id=session.id,
+                        event_kind="attack_path.node_created",
+                        level="info",
+                        payload={"node_id": node.id, "public_id": node.public_id, "stage": node.stage, "title": node.title},
+                    ),
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
         return AttackPathNodeDetail(node=node, evidence=self._node_evidence(node))
 
     def list_evidence(self, *, session_identifier: str, limit: int | None = None) -> list[Evidence]:
@@ -100,46 +110,67 @@ class AttackPathService(ControlCenterService):
         attack_path_node_id: str | None = None,
     ) -> tuple[Evidence, AttackPathNodeDetail]:
         session = self.session_repository.require(session_identifier)
-        evidence = self.evidence_repository.create(
-            Evidence.create(
-                project_id=session.project_id,
-                session_id=session.id,
-                source_task_id=source_task_id,
-                evidence_type=evidence_type,
-                title=title,
-                summary=summary,
-                content_ref=content_ref,
-                payload=dict(payload or {}),
-            )
-        )
+        node: AttackPathNode | None = None
         if attack_path_node_id:
             node = self.node_repository.get(attack_path_node_id)
             if node is None or node.session_id != session.id:
                 raise ValueError(f"Attack path node not found in session: {attack_path_node_id}")
-            self.link_repository.link(node_id=node.id, evidence_id=evidence.id)
-        else:
-            node = self.node_repository.create(
-                AttackPathNode.create(
-                    project_id=session.project_id,
-                    session_id=session.id,
-                    stage="note",
-                    title=title,
-                    status="open",
-                    source_ref=evidence.id,
-                    next_action="Review and classify this manual note.",
-                )
-            )
-            self.link_repository.link(node_id=node.id, evidence_id=evidence.id)
-            self._record_event(
-                session,
-                "attack_path.node_created",
-                {"node_id": node.id, "public_id": node.public_id, "stage": node.stage, "title": node.title},
-            )
-        self._record_event(
-            session,
-            "evidence.created",
-            {"evidence_id": evidence.id, "public_id": evidence.public_id, "evidence_type": evidence.evidence_type},
+
+        evidence = Evidence.create(
+            project_id=session.project_id,
+            session_id=session.id,
+            source_task_id=source_task_id,
+            evidence_type=evidence_type,
+            title=title,
+            summary=summary,
+            content_ref=content_ref,
+            payload=dict(payload or {}),
         )
+        created_node = False
+        if node is None:
+            node = AttackPathNode.create(
+                project_id=session.project_id,
+                session_id=session.id,
+                stage="note",
+                title=title,
+                status="open",
+                source_ref=evidence.id,
+                next_action="Review and classify this manual note.",
+            )
+            created_node = True
+        storage = SQLiteStorage(self.settings.sqlite_path)
+        with storage.connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                self.evidence_repository.create_in_connection(connection, evidence)
+                if created_node:
+                    self.node_repository.create_in_connection(connection, node)
+                self.link_repository.link_in_connection(connection, node_id=node.id, evidence_id=evidence.id)
+                if created_node:
+                    self.event_repository.create_in_connection(
+                        connection,
+                        Event.create(
+                            project_id=session.project_id,
+                            session_id=session.id,
+                            event_kind="attack_path.node_created",
+                            level="info",
+                            payload={"node_id": node.id, "public_id": node.public_id, "stage": node.stage, "title": node.title},
+                        ),
+                    )
+                self.event_repository.create_in_connection(
+                    connection,
+                    Event.create(
+                        project_id=session.project_id,
+                        session_id=session.id,
+                        event_kind="evidence.created",
+                        level="info",
+                        payload={"evidence_id": evidence.id, "public_id": evidence.public_id, "evidence_type": evidence.evidence_type},
+                    ),
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
         return evidence, AttackPathNodeDetail(node=node, evidence=self._node_evidence(node))
 
     def list_findings(self, *, session_identifier: str, limit: int | None = None) -> list[Finding]:
@@ -201,38 +232,55 @@ class AttackPathService(ControlCenterService):
             if evidence is None or evidence.session_id != session.id:
                 raise ValueError(f"Evidence not found in session: {source_evidence_id}")
             source_evidence_id = evidence.id
-        flag = self.flag_repository.create(
-            Flag.create(
-                project_id=session.project_id,
-                session_id=session.id,
-                flag_type=flag_type,
-                value=value,
-                source_evidence_id=source_evidence_id,
-            )
+        flag = Flag.create(
+            project_id=session.project_id,
+            session_id=session.id,
+            flag_type=flag_type,
+            value=value,
+            source_evidence_id=source_evidence_id,
         )
-        node = self.node_repository.create(
-            AttackPathNode.create(
-                project_id=session.project_id,
-                session_id=session.id,
-                stage="flag",
-                title=f"Captured {flag.flag_type} flag/loot",
-                status="verified",
-                source_ref=flag.id,
-                next_action="Add this result to the writeup.",
-            )
+        node = AttackPathNode.create(
+            project_id=session.project_id,
+            session_id=session.id,
+            stage="flag",
+            title=f"Captured {flag.flag_type} flag/loot",
+            status="verified",
+            source_ref=flag.id,
+            next_action="Add this result to the writeup.",
         )
-        if source_evidence_id:
-            self.link_repository.link(node_id=node.id, evidence_id=source_evidence_id)
-        self._record_event(
-            session,
-            "flag.created",
-            {"flag_id": flag.id, "public_id": flag.public_id, "flag_type": flag.flag_type},
-        )
-        self._record_event(
-            session,
-            "attack_path.node_created",
-            {"node_id": node.id, "public_id": node.public_id, "stage": node.stage, "title": node.title},
-        )
+        storage = SQLiteStorage(self.settings.sqlite_path)
+        with storage.connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                self.flag_repository.create_in_connection(connection, flag)
+                node.source_ref = flag.id
+                self.node_repository.create_in_connection(connection, node)
+                if source_evidence_id:
+                    self.link_repository.link_in_connection(connection, node_id=node.id, evidence_id=source_evidence_id)
+                self.event_repository.create_in_connection(
+                    connection,
+                    Event.create(
+                        project_id=session.project_id,
+                        session_id=session.id,
+                        event_kind="flag.created",
+                        level="info",
+                        payload={"flag_id": flag.id, "public_id": flag.public_id, "flag_type": flag.flag_type},
+                    ),
+                )
+                self.event_repository.create_in_connection(
+                    connection,
+                    Event.create(
+                        project_id=session.project_id,
+                        session_id=session.id,
+                        event_kind="attack_path.node_created",
+                        level="info",
+                        payload={"node_id": node.id, "public_id": node.public_id, "stage": node.stage, "title": node.title},
+                    ),
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
         return flag, AttackPathNodeDetail(node=node, evidence=self._node_evidence(node))
 
     def _node_evidence(self, node: AttackPathNode) -> list[Evidence]:
@@ -257,3 +305,12 @@ class AttackPathService(ControlCenterService):
                 payload=payload,
             )
         )
+
+    def _resolve_evidence_refs(self, *, session_id: str, evidence_ids: list[str]) -> list[Evidence]:
+        resolved: list[Evidence] = []
+        for evidence_id in evidence_ids:
+            evidence = self.evidence_repository.get(evidence_id)
+            if evidence is None or evidence.session_id != session_id:
+                raise ValueError(f"Evidence not found in session: {evidence_id}")
+            resolved.append(evidence)
+        return resolved

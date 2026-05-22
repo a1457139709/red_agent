@@ -8,7 +8,7 @@ This document records the Phase 0 foundation alignment for the CTF Control Cente
 - `docs/design/control-center-platform-design.md`
 - `docs/development/control-center-platform-development.md`
 
-Phase 0 deliberately does not implement the FastAPI server, Tauri desktop client, scanner adapters, terminal runtime, or the CTF persistence tables. Its role is to freeze the module boundary so later phases do not push CTF platform behavior into the existing CLI entrypoint or overload the current session runtime with incompatible product concepts.
+Phase 0 deliberately does not implement the FastAPI server, Tauri desktop client, scanner adapters, external-command capture workflows, or the CTF persistence tables. Its role is to freeze the module boundary so later phases do not push CTF platform behavior into the existing CLI entrypoint or overload the current session runtime with incompatible product concepts.
 
 ## 2. Current Baseline
 
@@ -30,7 +30,6 @@ The following Phase 0 boundaries are now reserved under `src/app/`:
 - `TargetSessionService`
 - `AttackPathService`
 - `ScannerService`
-- `TerminalService`
 - `WriteupService`
 
 The service classes are intentionally lightweight in Phase 0. They are importable and constructible with `Settings`, which gives later phases stable module names without pretending that Phase 2+ business behavior exists.
@@ -49,7 +48,7 @@ The current repository style is repository-local SQLite initialization using `CR
 
 Phase 2 should keep that style for new CTF tables:
 
-- Add new repositories for `projects`, `target_sessions`, `tasks`, `events`, `evidence`, `findings`, `attack_path_nodes`, `command_runs`, `flags`, and `reports`.
+- Add new repositories for `projects`, `target_sessions`, `tasks`, `events`, `evidence`, `findings`, `attack_path_nodes`, `flags`, and `reports`.
 - Initialize new tables and indexes from repository-owned schema strings.
 - Prefer forward-only table/index creation for Phase 2.
 - Do not build compatibility paths for obsolete development data.
@@ -94,7 +93,7 @@ Project and session identifiers must be single path segments. Relative path reso
 
 Phase 0 is complete when:
 
-- The six Control Center service boundaries can be imported and constructed.
+- The five Control Center service boundaries can be imported and constructed.
 - `.red-code/projects/` has a single canonical Settings property and path helper module.
 - Path helper tests prove the expected layout and reject path escape attempts.
 - Existing CLI and session runtime entrypoints are unchanged.

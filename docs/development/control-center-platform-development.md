@@ -31,7 +31,7 @@ Phase 2: Project / Session / Task Persistence
 Phase 3: Scanner Adapter Layer
 Phase 4: Realtime Agent Enumeration Loop
 Phase 5: Attack Path and Evidence Workspace
-Phase 6: Embedded Terminal
+Phase 6: External Command Result Capture
 Phase 6.5: LLM Agent Orchestrator and Tool Router
 Phase 7: Writeup Generation
 Phase 8: Hardening and Packaging
@@ -54,7 +54,6 @@ Phase 8: Hardening and Packaging
   - `TargetSessionService`
   - `AttackPathService`
   - `ScannerService`
-  - `TerminalService`
   - `WriteupService`
 - 定义新增表的迁移方式。
 - 定义 `.red-code/projects/` 文件目录规范。
@@ -160,7 +159,6 @@ Frontend:
 - `Event`
 - `Evidence`
 - `AttackPathNode`
-- `CommandRun`
 - `Flag`
 
 新增服务：
@@ -353,7 +351,7 @@ Agent tools:
 - `start_poc_scan`
 - `summarize_scan_result`
 - `create_attack_path_node`
-- `suggest_terminal_command`
+- `suggest_command`
 
 Behavior:
 
@@ -497,88 +495,53 @@ Minimum rules:
 - Session dashboard 会统计 finding severity，并继续展示证据、flag、攻击路径和下一步建议。
 - 桌面端增加 Attack Path、Evidence、Findings、Flags/Loot 的 workspace 面板，并提供手动 note/evidence 节点入口。
 
-## 10. Phase 6: Embedded Terminal
+## 10. Phase 6: External Command Result Capture
 
 ### 10.1 Goal
 
-提供内置交互终端并将命令执行纳入 Project 证据流。
+v1 不提供内置交互终端。Phase 6 的目标是把用户在系统外部执行得到的命令结果、文件和笔记整理进 evidence 流，而不是在产品内承载命令执行。
 
 ### 10.2 Backend Tasks
 
-新增：
+新增或明确：
 
-- `src/terminal/pty_manager.py`
-- `src/terminal/command_log.py`
-- `TerminalService`
-
-WebSocket messages:
-
-- `terminal.open`
-- `terminal.input`
-- `terminal.resize`
-- `terminal.close`
-- `terminal.output`
-- `terminal.exited`
-
-Routes:
-
-- `POST /api/sessions/{session_id}/terminals`
-- `GET /api/terminals/{terminal_id}/commands`
-- `POST /api/commands/{command_run_id}/evidence`
+- 外部命令结果 evidence 约定
+- 命令建议事件格式
+- 外部结果导入到 attack path / finding / writeup 的关联规则
 
 Behavior:
 
-- Terminal process runs with Project/Session working directory.
-- Output streams through WebSocket.
-- Command boundaries are recorded where detectable.
-- User can save selected output as evidence.
-- Agent suggested commands can be inserted into terminal input.
+- Agent 只生成命令建议，不在产品内执行命令。
+- 用户在外部工具环境中执行命令。
+- 用户可以把命令文本、结果摘录、文件、截图或原始输出整理为 evidence。
+- 这些材料可关联到 attack path node、finding 和 writeup。
 
 ### 10.3 Desktop Tasks
 
 Implement:
 
-- terminal panel
-- multiple terminal tabs
-- output selection
-- save selection as evidence
-- command history
-- rerun command
-- attach command to attack path node
+- command suggestion cards
+- external result intake form
+- evidence attachment flow for files / screenshots / pasted output
 
 ### 10.4 Tests
 
-- PTY manager can start and stop process.
-- terminal output event serialization works.
-- command run is persisted.
-- selected output creates evidence.
-- terminal close cleans up process.
+- 外部命令结果 evidence payload 校验通过。
+- 命令结果 evidence 能关联到 attack path 或 finding。
+- 上传或粘贴的外部结果能够持久化并恢复。
 
 ### 10.5 Acceptance
 
-- 用户能在桌面端打开终端。
-- 用户能执行交互命令并看到实时输出。
-- 命令和输出能保存。
-- 用户能将输出片段保存为 evidence。
-- evidence 能出现在攻击路径中。
+- 用户能看到 Agent 给出的命令建议。
+- 用户能把外部命令结果整理为 evidence。
+- evidence 能进入 attack path 和 writeup 工作流。
 
-### 10.6 Current Implementation Notes
-
-当前 Phase 6 基线实现为本地 POSIX PTY 终端：
-
-- `TerminalService` 通过 `PtyManager` 管理内存中的交互终端会话，并在 FastAPI lifespan 结束时关闭所有活动终端。
-- macOS/Linux 使用 Python 标准库 PTY；不支持的平台返回明确诊断，不新增跨平台 PTY 依赖。
-- 终端进程工作目录为当前 Project/Session 目录。
-- WebSocket `/ws/events` 支持 `terminal.open`、`terminal.input`、`terminal.resize`、`terminal.close`，并推送 `terminal.output`、`terminal.exited`。
-- HTTP routes 支持打开终端、读取命令历史、将命令输出片段保存为 `terminal_output` evidence。
-- `CommandRun` 保存命令文本、工作目录、输出 artifact 引用、输出摘要、开始/结束时间和可选退出码。
-- 桌面端使用现有 React/CSS 实现终端面板，不引入 xterm.js；用户可以打开多终端 tab、发送命令、查看输出、保存选中输出为 evidence。
 
 ## 10.5. Phase 6.5: LLM Agent Orchestrator and Tool Router
 
 ### 10.5.1 Goal
 
-将当前确定性的 Phase 4 Agent 编排升级为真实 LLM Agent 主路径。Agent 应能理解普通用户输入、读取当前 Project/Session 上下文，并通过受控高层工具创建扫描、证据、攻击路径、finding、终端建议和 writeup 草稿。
+将当前确定性的 Phase 4 Agent 编排升级为真实 LLM Agent 主路径。Agent 应能理解普通用户输入、读取当前 Project/Session 上下文，并通过受控高层工具创建扫描、证据、攻击路径、finding、命令建议和 writeup 草稿。
 
 ### 10.5.2 Backend Tasks
 
@@ -596,7 +559,7 @@ Agent tools:
 - `summarize_task_result`
 - `create_attack_path_node`
 - `create_finding`
-- `suggest_terminal_command`
+- `suggest_command`
 - `create_writeup_draft`
 
 Behavior:
@@ -605,7 +568,7 @@ Behavior:
 - 扫描类请求由 LLM 选择高层 tool call。
 - tool call 参数必须经过 schema 校验和 Session scope 校验。
 - Agent 不获得原始 `bash` 或任意 shell 字符串执行能力。
-- 终端命令只作为建议写入事件，由用户明确触发执行。
+- 命令只作为建议写入事件，由用户在系统外部明确执行。
 - 现有确定性枚举闭环保留为稳定 fallback 和回归基线。
 
 ### 10.5.3 Desktop Tasks
@@ -647,7 +610,7 @@ Extend Agent Console:
 - Control Center 专用 `ctf_reports` 持久化，不复用 legacy Report
 - report material 与 writeup 文件按 report public id 版本化保存在 Project/Session 报告目录
 - 生成后校验必需章节、未知 public id、事实性条目 public id 引用和 Command Log 命令来源
-- Command Log 命令来源包含人工终端 `CommandRun` 与 Scanner Task 的 `argv`
+- Command Log 命令来源包含用户明确录入到 evidence/notes 的命令文本与 Scanner Task 的 `argv`
 
 Routes:
 
@@ -656,7 +619,6 @@ Routes:
 - `GET /api/projects/{project_id}/reports`
 - `POST /api/projects/{project_id}/reports`
 - `GET /api/reports/{report_id}/download`
-- `GET /api/sessions/{session_id}/commands`
 
 Writeup sections:
 
@@ -745,7 +707,7 @@ Required behavior:
 - The WebSocket URL must continue to derive from the selected backend URL so HTTP and event replay
   stay scoped to the same server.
 - Remote server mode must treat the server as the source of truth for runtime state, artifacts,
-  report files, tool paths, wordlists, templates, and terminal execution.
+  report files, tool paths, wordlists, templates, and evidence storage.
 - Opening local report paths from Tauri is only valid for local server mode. Remote mode must use
   download or preview APIs instead of assuming the report exists on the client filesystem.
 
@@ -875,7 +837,6 @@ Required integration coverage:
 - Project -> Session -> Task creation
 - scanner task lifecycle using fixture runners
 - WebSocket event sequence
-- terminal output event flow
 - evidence linking
 - writeup generation from fixture Project
 
@@ -892,11 +853,10 @@ Manual v1 smoke target:
 5. Run nmap scan.
 6. Run ffuf against discovered HTTP service.
 7. Run nuclei against candidate URL.
-8. Open terminal and execute a command.
-9. Save terminal output as evidence.
-10. Record a flag.
-11. Generate writeup.
-12. Restart app and verify state recovery.
+8. Record a manual note or external command result as evidence.
+9. Record a flag.
+10. Generate writeup.
+11. Restart app and verify state recovery.
 
 ## 16. Documentation Updates
 
@@ -924,5 +884,5 @@ v1 is done only when the complete path works:
 
 ```text
 Project -> Target Session -> Agent enumeration -> nmap -> ffuf -> nuclei
--> attack path -> terminal evidence -> flag -> Markdown writeup -> recovery after restart
+-> attack path -> manual evidence -> flag -> Markdown writeup -> recovery after restart
 ```

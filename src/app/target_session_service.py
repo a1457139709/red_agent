@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 
 from agent.settings import Settings, get_settings
 from models.control_center import Project, SessionDashboard, TargetSession, TargetSessionStatus, TargetType
+from models.run import utc_now_iso
 from storage.project_paths import (
     project_session_artifacts_dir,
     project_session_root,
@@ -65,6 +66,8 @@ class TargetSessionService(ControlCenterService):
         summary: str | None = None,
     ) -> TargetSession:
         project = self.project_repository.require(project_identifier)
+        if project.status.value == "archived":
+            raise ValueError(f"Project is archived: {project_identifier}")
         session = TargetSession.create(
             project_id=project.id,
             name=name,
@@ -104,6 +107,30 @@ class TargetSessionService(ControlCenterService):
 
     def require_session(self, identifier: str) -> TargetSession:
         return self.repository.require(identifier)
+
+    def update_session(
+        self,
+        identifier: str,
+        *,
+        name: str | None = None,
+        target_value: str | None = None,
+        target_type: TargetType | None = None,
+        summary: str | None = None,
+        status: TargetSessionStatus | None = None,
+    ) -> TargetSession:
+        session = self.repository.require(identifier)
+        if name is not None:
+            session.name = name
+        if target_value is not None:
+            session.target_value = target_value
+        if target_type is not None:
+            session.target_type = TargetType(target_type)
+        if summary is not None:
+            session.summary = summary
+        if status is not None:
+            session.status = TargetSessionStatus(status)
+        session.updated_at = utc_now_iso()
+        return self.repository.update(session)
 
     def build_dashboard(self, session_identifier: str) -> SessionDashboard:
         session = self.require_session(session_identifier)

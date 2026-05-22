@@ -1,3 +1,5 @@
+# RETIRED DOCUMENT
+
 # Phase 8 Finalization: Web Adapter Readiness
 
 ## Purpose

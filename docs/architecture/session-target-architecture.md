@@ -1,3 +1,5 @@
+# RETIRED DOCUMENT
+
 # Session-Centric Target Architecture
 
 ## 1. Purpose
