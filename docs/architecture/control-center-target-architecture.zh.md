@@ -15,7 +15,7 @@
 
 ## 架构修订：Session 不再绑定目标
 
-Control Center 的 Session 是 Agent 对话与执行上下文，不是单台靶机或单个 URL 的绑定对象。Session 创建只接收 `name` 和可选 `summary`，不会保存 `target_value`、`target_type` 或 `target_id`。
+Control Center 的 Session 是 Agent 对话与执行上下文，不是单台靶机或单个 URL 的绑定对象。Session 创建不接收操作员输入的名称或描述；系统从 Session 表的 UUID 派生 16 位可见标识，首条操作员消息到达后再作为 Session 标题展示。Session 不会保存 `target_value`、`target_type` 或 `target_id`。
 
 Target 只存在于 Project Target Pool，并通过 Project scope policy 管理 active / pending / rejected / archived 状态。所有扫描任务必须显式引用 Target Pool 中 active 的 `target_id`；Agent 对新目标的流程必须是 `propose_target(value)` -> 准入结果 -> active 后调用扫描工具。pending、rejected 或超出 Project scope 的目标不得直接扫描。
 

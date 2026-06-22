@@ -6,7 +6,7 @@ from typing import Any
 from uuid import uuid4
 
 from agent.settings import Settings, get_settings
-from models.control_center import AttackPathNode, Event, TargetSession, Task, TaskStatus
+from models.control_center import AttackPathNode, Event, TargetSession, Task, TaskStatus, session_display_id
 from models.run import utc_now_iso
 from storage.repositories.control_center import (
     AttackPathNodeRepository,
@@ -189,6 +189,12 @@ class CTFAgentService(ControlCenterService):
         normalized_message = message.strip()
         if not normalized_message:
             raise ValueError("agent message must be non-empty.")
+        if _uses_auto_session_title(session):
+            session.name = _session_title_from_message(normalized_message)
+            session.metadata["auto_title"] = False
+            session.metadata["title_source"] = "first_operator_message"
+            session.updated_at = utc_now_iso()
+            self.session_repository.update(session)
         task = Task.create(
             project_id=project.id,
             session_id=session.id,
@@ -460,6 +466,18 @@ def _should_record_agent_summary(result: dict[str, Any]) -> bool:
     summary = result.get("summary")
     response = result.get("response")
     return not (isinstance(summary, str) and isinstance(response, str) and summary == response)
+
+
+def _uses_auto_session_title(session: TargetSession) -> bool:
+    display_id = session_display_id(session.id)
+    return bool(session.metadata.get("auto_title")) or session.name in {display_id, f"Session {display_id}", "New session"}
+
+
+def _session_title_from_message(message: str) -> str:
+    normalized = " ".join(message.split())
+    if len(normalized) <= 60:
+        return normalized
+    return f"{normalized[:57]}..."
 
 
 def _web_target_from_port(host: str, port_data: dict[str, Any]) -> str | None:

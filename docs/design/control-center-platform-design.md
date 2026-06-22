@@ -14,7 +14,7 @@
 
 ## Architecture Revision: Session 与 Target Pool
 
-当前 Control Center 架构中，Session 是 Agent 对话与执行上下文，不再是目标绑定实体。创建 Session 只需要 `name` 和可选 `summary`；公开 API/DTO 不暴露 `target_value`、`target_type` 或 `target_id`。
+当前 Control Center 架构中，Session 是 Agent 对话与执行上下文，不再是目标绑定实体。创建 Session 不接收操作员输入的名称或描述；系统从 Session 表的 UUID 派生 16 位可见标识，并在首条操作员消息到达后用该消息作为 Session 标题。公开 API/DTO 不暴露 `target_value`、`target_type` 或 `target_id`。
 
 Target 只存在于 Project Target Pool，并由 scope policy 约束。扫描器和 Agent 工具必须显式使用 Target Pool 中 active 的 `target_id`；新发现目标必须先通过 `propose_target(value)` 进入准入流程，pending/rejected/out-of-scope 目标不得直接扫描。本文档后续早期草图中的 `TargetSession` 字样应按该修订理解为 “Session + Project Target Pool” 的组合边界，而不是单个目标绑定 Session。
 

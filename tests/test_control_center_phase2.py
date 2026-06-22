@@ -63,7 +63,6 @@ def test_target_session_repository_creates_lists_and_gets_sessions(tmp_path):
 
     session = session_service.create_session(
         project_identifier=project.public_id,
-        name="Linux target",
     )
     session_service.create_session(
         project_identifier=other_project.public_id,
@@ -71,6 +70,7 @@ def test_target_session_repository_creates_lists_and_gets_sessions(tmp_path):
     )
 
     assert session.public_id == "T0001"
+    assert session.name == session.id.replace("-", "")[:16].upper()
     assert session_service.require_session(session.public_id).id == session.id
     assert [item.id for item in session_service.list_sessions(project_identifier=project.public_id)] == [session.id]
 
@@ -396,10 +396,11 @@ def test_phase2_project_and_session_api_routes(tmp_path, monkeypatch):
 
         create_session = client.post(
             f"/api/projects/{project['public_id']}/sessions",
-            json={"name": "Linux target"},
+            json={},
         )
         assert create_session.status_code == 201
         session = create_session.json()["session"]
+        expected_session_name = session["id"].replace("-", "")[:16].upper()
 
         list_sessions = client.get(f"/api/projects/{project['id']}/sessions")
         assert list_sessions.status_code == 200
@@ -407,7 +408,7 @@ def test_phase2_project_and_session_api_routes(tmp_path, monkeypatch):
 
         get_session = client.get(f"/api/sessions/{session['public_id']}")
         assert get_session.status_code == 200
-        assert get_session.json()["session"]["name"] == "Linux target"
+        assert get_session.json()["session"]["name"] == expected_session_name
 
         dashboard = client.get(f"/api/sessions/{session['id']}/dashboard")
         assert dashboard.status_code == 200
@@ -424,6 +425,12 @@ def test_phase2_project_and_session_api_routes(tmp_path, monkeypatch):
         )
         assert legacy_session.status_code == 422
 
+        named_session = client.post(
+            f"/api/projects/{project['id']}/sessions",
+            json={"name": "Manual name"},
+        )
+        assert named_session.status_code == 422
+
 
 def test_project_and_session_lifecycle_routes_include_project_dashboard(tmp_path, monkeypatch):
     settings = build_settings(tmp_path)
@@ -436,7 +443,7 @@ def test_project_and_session_lifecycle_routes_include_project_dashboard(tmp_path
         project = client.post("/api/projects", json={"name": "Archive Lab"}).json()["project"]
         session = client.post(
             f"/api/projects/{project['id']}/sessions",
-            json={"name": "Initial target"},
+            json={},
         ).json()["session"]
 
         patched_project = client.patch(
@@ -476,7 +483,7 @@ def test_project_and_session_lifecycle_routes_include_project_dashboard(tmp_path
 
         create_session = client.post(
             f"/api/projects/{project['id']}/sessions",
-            json={"name": "Should fail"},
+            json={},
         )
         assert create_session.status_code == 400
 

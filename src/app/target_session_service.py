@@ -61,7 +61,7 @@ class TargetSessionService(ControlCenterService):
         self,
         *,
         project_identifier: str,
-        name: str,
+        name: str | None = None,
         summary: str | None = None,
     ) -> TargetSession:
         project = self.project_repository.require(project_identifier)

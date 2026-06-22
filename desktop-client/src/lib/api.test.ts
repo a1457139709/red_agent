@@ -332,15 +332,14 @@ describe("control center API clients", () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({session}));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(
-      createTargetSession("http://127.0.0.1:8000", "project-1", {
-        name: "Linux target",
-      }),
-    ).resolves.toMatchObject({id: "session-1", project_id: "project-1"});
+    await expect(createTargetSession("http://127.0.0.1:8000", "project-1")).resolves.toMatchObject({
+      id: "session-1",
+      project_id: "project-1",
+    });
     expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8000/api/projects/project-1/sessions", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({name: "Linux target"}),
+      body: JSON.stringify({}),
     });
   });
 

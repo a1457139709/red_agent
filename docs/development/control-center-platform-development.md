@@ -173,7 +173,7 @@ Frontend:
 - `POST /api/projects`
 - `GET /api/projects/{project_id}`
 - `GET /api/projects/{project_id}/sessions`
-- `POST /api/projects/{project_id}/sessions`
+- `POST /api/projects/{project_id}/sessions`，创建请求不接收 Session 名称或描述；系统用 Session UUID 派生 16 位可见标识，并在首条操作员消息后更新展示标题。
 - `GET /api/sessions/{session_id}`
 - `GET /api/sessions/{session_id}/dashboard`
 

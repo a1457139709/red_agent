@@ -7,15 +7,6 @@ export function validateProjectForm(input: { name: string }) {
   return input.name.trim() ? null : "Project name is required.";
 }
 
-export function validateTargetSessionForm(input: {
-  name: string;
-}) {
-  if (!input.name.trim()) {
-    return "Session name is required.";
-  }
-  return null;
-}
-
 export function validateScanTaskForm(input: {
   task_type: string;
   target: string;

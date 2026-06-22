@@ -39,9 +39,6 @@ class ProjectPatchRequest(BaseModel):
 class TargetSessionCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(min_length=1)
-    summary: str | None = None
-
 
 class TargetSessionPatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -241,13 +238,11 @@ async def list_project_sessions(project_id: str) -> dict[str, list[dict[str, Any
 @router.post("/projects/{project_id}/sessions", status_code=201)
 async def create_project_session(
     project_id: str,
-    request: TargetSessionCreateRequest,
+    request: TargetSessionCreateRequest | None = None,
 ) -> dict[str, Any]:
     try:
         session = TargetSessionService.from_settings().create_session(
             project_identifier=project_id,
-            name=request.name,
-            summary=request.summary,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

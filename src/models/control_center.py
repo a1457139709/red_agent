@@ -159,17 +159,21 @@ class TargetSession:
         cls,
         *,
         project_id: str,
-        name: str,
+        name: str | None = None,
         summary: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> "TargetSession":
+        session_id = str(uuid4())
+        normalized_name = name.strip() if name and name.strip() else session_display_id(session_id)
+        next_metadata = dict(metadata or {})
+        next_metadata.setdefault("auto_title", normalized_name == session_display_id(session_id))
         return cls(
-            id=str(uuid4()),
+            id=session_id,
             public_id="",
             project_id=project_id,
-            name=name,
+            name=normalized_name,
             summary=summary,
-            metadata=dict(metadata or {}),
+            metadata=next_metadata,
         )
 
     @classmethod
@@ -199,6 +203,10 @@ class TargetSession:
             "updated_at": self.updated_at,
             "metadata": json.dumps(self.metadata, ensure_ascii=False),
         }
+
+
+def session_display_id(session_id: str) -> str:
+    return session_id.replace("-", "")[:16].upper()
 
 
 @dataclass(slots=True)

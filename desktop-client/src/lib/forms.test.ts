@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateAgentMessageForm, validateProjectForm, validateScanTaskForm, validateTargetSessionForm } from "./forms";
+import { validateAgentMessageForm, validateProjectForm, validateScanTaskForm } from "./forms";
 
 describe("validateProjectForm", () => {
   it("requires project name", () => {
@@ -16,15 +16,6 @@ describe("validateScanTaskForm", () => {
       "Ports must be comma-separated numbers between 1 and 65535.",
     );
     expect(validateScanTaskForm({task_type: "poc_scan", target: "http://target"})).toBeNull();
-  });
-});
-
-describe("validateTargetSessionForm", () => {
-  it("requires session name", () => {
-    expect(validateTargetSessionForm({name: ""})).toBe(
-      "Session name is required.",
-    );
-    expect(validateTargetSessionForm({name: "Agent context"})).toBeNull();
   });
 });
 

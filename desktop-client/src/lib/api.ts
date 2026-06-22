@@ -302,10 +302,7 @@ export type CreateProjectInput = {
   description?: string | null;
 };
 
-export type CreateTargetSessionInput = {
-  name: string;
-  summary?: string | null;
-};
+export type CreateTargetSessionInput = Record<string, never>;
 
 export type CreateScanTaskInput = {
   task_type: "port_scan" | "dir_scan" | "poc_scan";
@@ -693,7 +690,7 @@ export async function listProjectTargets(baseUrl: string, projectId: string): Pr
 export async function createTargetSession(
   baseUrl: string,
   projectId: string,
-  input: CreateTargetSessionInput,
+  input: CreateTargetSessionInput = {},
 ): Promise<TargetSessionDto> {
   const payload = requireRecord(
     await requestJson(`${baseUrl}/api/projects/${projectId}/sessions`, {

@@ -430,6 +430,7 @@ button {
 .rail-create-form button,
 .project-create-panel button,
 .setup-form button,
+.session-start-panel > button,
 .connection-panel > button {
   min-height: 36px;
   border: 1px solid rgba(115, 196, 151, 0.35);
@@ -446,6 +447,7 @@ button {
 .project-create-panel button:disabled,
 .project-create-panel input:disabled,
 .setup-form button:disabled,
+.session-start-panel > button:disabled,
 .connection-panel > button:disabled,
 .setup-form input:disabled,
 .setup-form textarea:disabled,
@@ -717,6 +719,20 @@ button {
   color: #f8faf6;
   font-size: 24px;
   line-height: 1.2;
+}
+
+.session-start-panel p {
+  margin: 0;
+  max-width: 360px;
+  color: #aeb8b1;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.session-start-panel > button {
+  min-width: min(100%, 260px);
+  padding: 0 16px;
 }
 
 .setup-form,

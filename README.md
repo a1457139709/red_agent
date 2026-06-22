@@ -251,8 +251,10 @@ Agent messages, or replaying event streams.
 
 Project lifecycle endpoints now include `PATCH /api/projects/{project_id}`,
 `GET /api/projects/{project_id}/dashboard`, and `PATCH /api/sessions/{session_id}`.
-`POST /api/projects/{project_id}/sessions` creates an Agent Session from `name` plus optional
-`summary`; it does not accept or persist `target_value`, `target_type`, or `target_id`.
+`POST /api/projects/{project_id}/sessions` creates an Agent Session without operator-entered Session
+fields; the backend derives the initial visible Session label from the Session UUID and replaces it with
+the first operator message when the conversation starts. The endpoint does not accept `name`, `summary`,
+`target_value`, `target_type`, or `target_id` during creation.
 The project dashboard summarizes Session counts by status, running scan tasks, open services derived
 from persisted scan results, finding/flag totals, and recent project activity. Archiving a Project
 also archives its Sessions and blocks creation of new Sessions inside that archived Project.

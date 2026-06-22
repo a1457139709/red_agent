@@ -297,6 +297,19 @@ def test_failed_port_scan_tool_call_records_diagnostic_event(tmp_path):
     assert scan_tasks[0].status.value == "failed"
 
 
+def test_first_agent_message_titles_auto_named_session(tmp_path):
+    settings = build_settings(tmp_path)
+    project = ProjectService.from_settings(settings).create_project(name="Auto title")
+    session = TargetSessionService.from_settings(settings).create_session(project_identifier=project.id)
+    service = CTFAgentService(settings=settings, model_factory=lambda _settings: FakeToolCallingModel([]))
+
+    service.create_agent_task(session_identifier=session.id, message="扫描本地的 80 端口")
+
+    updated = TargetSessionService.from_settings(settings).require_session(session.id)
+    assert updated.name == "扫描本地的 80 端口"
+    assert updated.metadata["title_source"] == "first_operator_message"
+
+
 def test_llm_agent_answers_general_questions_without_phase4_fallback(tmp_path):
     settings = build_settings(tmp_path)
     project, session = prepare_session(settings)

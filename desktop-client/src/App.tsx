@@ -23,7 +23,6 @@ import {
   X,
 } from "lucide-react";
 import {
-  type CreateTargetSessionInput,
   type EvidenceDto,
   type FindingDto,
   type ProjectDto,
@@ -58,7 +57,7 @@ import {
   setBackendUrl,
   updateToolConfig,
 } from "./lib/api";
-import { validateAgentMessageForm, validateProjectForm, validateTargetSessionForm } from "./lib/forms";
+import { validateAgentMessageForm, validateProjectForm } from "./lib/forms";
 import { appendChatMessage, type ChatMessage, mapServerEventToChatMessage } from "./lib/agentEvents";
 import { backendHttpToWebSocketUrl, connectEventSocket } from "./lib/ws";
 
@@ -67,11 +66,6 @@ type WorkspaceMode = "Recon" | "Exploit" | "Report" | "Settings";
 type ProjectGroup = {
   project: ProjectDto;
   sessions: TargetSessionDto[];
-};
-
-type SessionDraft = {
-  name: string;
-  summary: string;
 };
 
 type EvidenceItem = {
@@ -149,15 +143,12 @@ export function App() {
   const [agentSubmitting, setAgentSubmitting] = useState(false);
   const [agentError, setAgentError] = useState<string | null>(null);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
-  const [newSessionProjectId, setNewSessionProjectId] = useState<string | null>(null);
   const [creationError, setCreationError] = useState<string | null>(null);
   const [creationSubmitting, setCreationSubmitting] = useState(false);
   const [projectDraft, setProjectDraft] = useState({name: "", description: ""});
-  const [sessionDraft, setSessionDraft] = useState<SessionDraft>(emptySessionDraft());
   const [initialDraft, setInitialDraft] = useState({
     projectName: "",
-    sessionName: "",
-    summary: "",
+    description: "",
   });
   const authToken = getApiAuthToken();
   const localBackend = isLocalBackendUrl(backendUrl);
@@ -405,28 +396,22 @@ export function App() {
   const createInitialWorkspace = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const projectError = validateProjectForm({name: initialDraft.projectName});
-    const sessionError = validateTargetSessionForm({
-      name: initialDraft.sessionName,
-    });
-    if (projectError || sessionError || creationSubmitting) {
-      setCreationError(projectError ?? sessionError);
+    if (projectError || creationSubmitting) {
+      setCreationError(projectError);
       return;
     }
     setCreationSubmitting(true);
     try {
       const project = await createProject(backendUrl, {
         name: initialDraft.projectName.trim(),
-        description: initialDraft.summary.trim() || null,
+        description: initialDraft.description.trim() || null,
       });
-      const session = await createTargetSession(backendUrl, project.id, {
-        name: initialDraft.sessionName.trim(),
-        summary: initialDraft.summary.trim() || null,
-      });
+      const session = await createTargetSession(backendUrl, project.id);
       setProjectGroups([{project, sessions: [session]}]);
       await refreshProjectTargets(project.id);
       setActiveProjectId(project.id);
       setActiveSessionId(session.id);
-      setInitialDraft({projectName: "", sessionName: "", summary: ""});
+      setInitialDraft({projectName: "", description: ""});
       setCreationError(null);
     } catch (error) {
       setCreationError(error instanceof Error ? error.message : "Failed to initialize workspace.");
@@ -461,20 +446,13 @@ export function App() {
     }
   };
 
-  const createSessionForProject = async (event: FormEvent<HTMLFormElement>, projectId: string) => {
-    event.preventDefault();
-    const sessionError = validateTargetSessionForm(sessionDraft);
-    if (sessionError || creationSubmitting) {
-      setCreationError(sessionError);
+  const createSessionForProject = async (projectId: string) => {
+    if (creationSubmitting) {
       return;
     }
     setCreationSubmitting(true);
     try {
-      const input: CreateTargetSessionInput = {
-        name: sessionDraft.name.trim(),
-        summary: sessionDraft.summary.trim() || null,
-      };
-      const session = await createTargetSession(backendUrl, projectId, input);
+      const session = await createTargetSession(backendUrl, projectId);
       setProjectGroups((current) =>
         current.map((group) => (
           group.project.id === projectId ? {...group, sessions: [...group.sessions, session]} : group
@@ -483,8 +461,6 @@ export function App() {
       await refreshProjectTargets(projectId);
       setActiveProjectId(projectId);
       setActiveSessionId(session.id);
-      setSessionDraft(emptySessionDraft());
-      setNewSessionProjectId(null);
       setCreationError(null);
     } catch (error) {
       setCreationError(error instanceof Error ? error.message : "Failed to create session.");
@@ -492,6 +468,23 @@ export function App() {
       setCreationSubmitting(false);
     }
   };
+
+  const applyFirstMessageTitle = useCallback((sessionId: string, message: string) => {
+    const title = titleFromMessage(message);
+    if (!title) {
+      return;
+    }
+    setProjectGroups((current) =>
+      current.map((group) => ({
+        ...group,
+        sessions: group.sessions.map((session) => (
+          session.id === sessionId && isAutoSessionTitle(session)
+            ? {...session, name: title, updated_at: new Date().toISOString()}
+            : session
+        )),
+      })),
+    );
+  }, []);
 
   const sendMessage = async (body: string) => {
     const normalized = body.trim();
@@ -507,6 +500,7 @@ export function App() {
     setAgentSubmitting(true);
     try {
       await sendAgentMessage(backendUrl, activeSession.id, {message: normalized});
+      applyFirstMessageTitle(activeSession.id, normalized);
       setDraft("");
       setAgentError(null);
     } catch (error) {
@@ -621,6 +615,12 @@ export function App() {
             return;
           }
           seenEventIdsRef.current.add(event.event_id);
+          if (event.event_kind === "agent.message.received") {
+            const message = stringPayload(event.payload.message);
+            if (message) {
+              applyFirstMessageTitle(sessionId, message);
+            }
+          }
           const message = mapServerEventToChatMessage(event);
           if (message) {
             setMessages((current) => appendChatMessage(current, message));
@@ -645,7 +645,7 @@ export function App() {
     return () => {
       socket.close();
     };
-  }, [activeProjectId, activeSession, authToken, backendUrl, refreshProjectReports, refreshWorkspace]);
+  }, [activeProjectId, activeSession, applyFirstMessageTitle, authToken, backendUrl, refreshProjectReports, refreshWorkspace]);
 
   const saveToolSettings = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -685,25 +685,16 @@ export function App() {
           projectGroups={projectGroups}
           collapsed={!sidebarOpen}
           newProjectOpen={newProjectOpen}
-          newSessionProjectId={newSessionProjectId}
           projectDraft={projectDraft}
-          sessionDraft={sessionDraft}
           creationError={creationError}
           creationSubmitting={creationSubmitting}
           onSelectProject={selectProject}
           onSelectSession={selectSession}
           onToggleNewProject={() => {
             setNewProjectOpen((current) => !current);
-            setNewSessionProjectId(null);
-            setCreationError(null);
-          }}
-          onToggleNewSession={(projectId) => {
-            setNewSessionProjectId((current) => (current === projectId ? null : projectId));
-            setNewProjectOpen(false);
             setCreationError(null);
           }}
           onProjectDraftChange={setProjectDraft}
-          onSessionDraftChange={setSessionDraft}
           onCreateProject={createProjectOnly}
           onCreateSession={createSessionForProject}
           onCloseMobile={() => setMobileDrawerOpen(false)}
@@ -718,25 +709,16 @@ export function App() {
             projectGroups={projectGroups}
             collapsed={false}
             newProjectOpen={newProjectOpen}
-            newSessionProjectId={newSessionProjectId}
             projectDraft={projectDraft}
-            sessionDraft={sessionDraft}
             creationError={creationError}
             creationSubmitting={creationSubmitting}
             onSelectProject={selectProject}
             onSelectSession={selectSession}
             onToggleNewProject={() => {
               setNewProjectOpen((current) => !current);
-              setNewSessionProjectId(null);
-              setCreationError(null);
-            }}
-            onToggleNewSession={(projectId) => {
-              setNewSessionProjectId((current) => (current === projectId ? null : projectId));
-              setNewProjectOpen(false);
               setCreationError(null);
             }}
             onProjectDraftChange={setProjectDraft}
-            onSessionDraftChange={setSessionDraft}
             onCreateProject={createProjectOnly}
             onCreateSession={createSessionForProject}
             onCloseMobile={() => setMobileDrawerOpen(false)}
@@ -770,7 +752,7 @@ export function App() {
                 <Radio aria-hidden="true" size={14} />
                 {activeProject?.name ?? "Control Center"}
               </span>
-              <h1>{activeSession?.name ?? (activeProject ? "Create a Session" : "Initialize workspace")}</h1>
+              <h1>{activeSession ? sessionTitle(activeSession) : activeProject ? "Start an Agent Session" : "Initialize workspace"}</h1>
             </div>
           </div>
           <div className="mode-tabs" aria-label="Workspace mode">
@@ -811,13 +793,11 @@ export function App() {
                       onSubmit={createInitialWorkspace}
                     />
                   ) : activeProject && !activeSession ? (
-                    <SessionSetupPanel
+                    <SessionStartPanel
                       project={activeProject}
-                      draft={sessionDraft}
                       error={creationError}
                       submitting={creationSubmitting}
-                      onDraftChange={setSessionDraft}
-                      onSubmit={(event) => createSessionForProject(event, activeProject.id)}
+                      onCreateSession={() => void createSessionForProject(activeProject.id)}
                     />
                   ) : messages.length ? (
                     messages.map((message) => (
@@ -1029,8 +1009,29 @@ function formatCompactTime(value: string): string {
   });
 }
 
-function emptySessionDraft(): SessionDraft {
-  return {name: "", summary: ""};
+function sessionDisplayId(sessionId: string): string {
+  return sessionId.replace(/-/g, "").slice(0, 16).toUpperCase();
+}
+
+function sessionTitle(session: TargetSessionDto): string {
+  return isAutoSessionTitle(session) ? "New session" : session.name;
+}
+
+function isAutoSessionTitle(session: TargetSessionDto): boolean {
+  const displayId = sessionDisplayId(session.id);
+  return !session.name || session.name === displayId || session.name === `Session ${displayId}` || session.name === "New session";
+}
+
+function titleFromMessage(message: string): string {
+  const normalized = message.trim().replace(/\s+/g, " ");
+  if (!normalized) {
+    return "";
+  }
+  return normalized.length <= 60 ? normalized : `${normalized.slice(0, 57)}...`;
+}
+
+function stringPayload(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
 }
 
 function emptyToolConfigForm(): ToolConfigForm {
@@ -1089,17 +1090,13 @@ function ConversationPanel({
   projectGroups,
   collapsed,
   newProjectOpen,
-  newSessionProjectId,
   projectDraft,
-  sessionDraft,
   creationError,
   creationSubmitting,
   onSelectProject,
   onSelectSession,
   onToggleNewProject,
-  onToggleNewSession,
   onProjectDraftChange,
-  onSessionDraftChange,
   onCreateProject,
   onCreateSession,
   onCloseMobile,
@@ -1109,19 +1106,15 @@ function ConversationPanel({
   projectGroups: ProjectGroup[];
   collapsed: boolean;
   newProjectOpen: boolean;
-  newSessionProjectId: string | null;
   projectDraft: {name: string; description: string};
-  sessionDraft: SessionDraft;
   creationError: string | null;
   creationSubmitting: boolean;
   onSelectProject: (projectId: string) => void;
   onSelectSession: (projectId: string, sessionId: string) => void;
   onToggleNewProject: () => void;
-  onToggleNewSession: (projectId: string) => void;
   onProjectDraftChange: (draft: {name: string; description: string}) => void;
-  onSessionDraftChange: (draft: SessionDraft) => void;
   onCreateProject: (event: FormEvent<HTMLFormElement>) => void;
-  onCreateSession: (event: FormEvent<HTMLFormElement>, projectId: string) => void;
+  onCreateSession: (projectId: string) => void;
   onCloseMobile: () => void;
 }) {
   return (
@@ -1199,28 +1192,20 @@ function ConversationPanel({
                   title="New Session"
                   onClick={(event) => {
                     event.stopPropagation();
-                    onToggleNewSession(group.project.id);
+                    onCreateSession(group.project.id);
                   }}
+                  disabled={creationSubmitting}
                 >
                   <Plus aria-hidden="true" size={15} />
                 </button>
               ) : null}
             </div>
-            {!collapsed && newSessionProjectId === group.project.id ? (
-              <SessionMiniForm
-                draft={sessionDraft}
-                error={creationError}
-                submitting={creationSubmitting}
-                onDraftChange={onSessionDraftChange}
-                onSubmit={(event) => onCreateSession(event, group.project.id)}
-              />
-            ) : null}
             {group.sessions.map((session) => (
               <button
                 type="button"
                 className={`conversation-item session-item ${session.id === activeSessionId ? "active" : ""}`}
                 key={session.id}
-                title={collapsed ? session.name : undefined}
+                title={collapsed ? sessionTitle(session) : undefined}
                 onClick={() => {
                   onSelectSession(group.project.id, session.id);
                   onCloseMobile();
@@ -1231,8 +1216,8 @@ function ConversationPanel({
                 </span>
                 {!collapsed ? (
                   <span className="conversation-copy">
-                    <strong>{session.name}</strong>
-                    <small>{session.status}</small>
+                    <strong>{sessionTitle(session)}</strong>
+                    <small>{sessionDisplayId(session.id)} · {session.status}</small>
                   </span>
                 ) : null}
                 {!collapsed ? <span className="conversation-time">{formatCompactTime(session.updated_at)}</span> : null}
@@ -1309,10 +1294,10 @@ function InitializationPanel({
   onDraftChange,
   onSubmit,
 }: {
-  draft: {projectName: string; sessionName: string; summary: string};
+  draft: {projectName: string; description: string};
   error: string | null;
   submitting: boolean;
-  onDraftChange: (draft: {projectName: string; sessionName: string; summary: string}) => void;
+  onDraftChange: (draft: {projectName: string; description: string}) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   return (
@@ -1333,61 +1318,43 @@ function InitializationPanel({
           placeholder="Project name"
           onChange={(event) => onDraftChange({...draft, projectName: event.target.value})}
         />
-        <label htmlFor="initial-session-name">Session name</label>
-        <input
-          id="initial-session-name"
-          value={draft.sessionName}
-          disabled={submitting}
-          placeholder="Session name"
-          onChange={(event) => onDraftChange({...draft, sessionName: event.target.value})}
-        />
-        <label htmlFor="initial-summary">Summary</label>
+        <label htmlFor="initial-description">Description</label>
         <textarea
-          id="initial-summary"
-          value={draft.summary}
+          id="initial-description"
+          value={draft.description}
           disabled={submitting}
-          placeholder="Scope notes"
-          onChange={(event) => onDraftChange({...draft, summary: event.target.value})}
+          placeholder="Scope, platform, or engagement notes"
+          onChange={(event) => onDraftChange({...draft, description: event.target.value})}
         />
         <div className="setup-actions">
-          {error ? <p>{error}</p> : <span>Creates the Project and first Agent Session.</span>}
-          <button type="submit" disabled={submitting}>Create Project and Session</button>
+          {error ? <p>{error}</p> : <span>Creates the Project and opens a new Agent Session.</span>}
+          <button type="submit" disabled={submitting}>Create Project</button>
         </div>
       </form>
     </section>
   );
 }
 
-function SessionSetupPanel({
+function SessionStartPanel({
   project,
-  draft,
   error,
   submitting,
-  onDraftChange,
-  onSubmit,
+  onCreateSession,
 }: {
   project: ProjectDto;
-  draft: SessionDraft;
   error: string | null;
   submitting: boolean;
-  onDraftChange: (draft: SessionDraft) => void;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onCreateSession: () => void;
 }) {
   return (
-    <section className="setup-panel" aria-label="Create Session">
+    <section className="setup-panel session-start-panel" aria-label="Start Agent Session">
       <div className="welcome-icon" aria-hidden="true">
         <Command size={22} />
       </div>
       <h2>{project.name}</h2>
-      <SessionMiniForm
-        draft={draft}
-        error={error}
-        submitting={submitting}
-        onDraftChange={onDraftChange}
-        onSubmit={onSubmit}
-        submitLabel="Create Session"
-        expanded
-      />
+      <p>Start a new Agent conversation context for this Project.</p>
+      <button type="button" onClick={onCreateSession} disabled={submitting}>Start Agent Session</button>
+      {error ? <p>{error}</p> : null}
     </section>
   );
 }
@@ -1396,48 +1363,9 @@ function AgentEmptyState({session}: {session: TargetSessionDto | null}) {
   return (
     <section className="agent-empty" aria-label="Agent event stream">
       <Bot aria-hidden="true" size={22} />
-      <strong>{session ? session.name : "No Session selected"}</strong>
+      <strong>{session ? sessionTitle(session) : "No Session selected"}</strong>
       <span>{session ? "Agent replay is connected to this Session." : "Select or create a Session."}</span>
     </section>
-  );
-}
-
-function SessionMiniForm({
-  draft,
-  error,
-  submitting,
-  onDraftChange,
-  onSubmit,
-  submitLabel = "Create",
-  expanded = false,
-}: {
-  draft: SessionDraft;
-  error: string | null;
-  submitting: boolean;
-  onDraftChange: (draft: SessionDraft) => void;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-  submitLabel?: string;
-  expanded?: boolean;
-}) {
-  return (
-    <form className={`rail-create-form session-create-form ${expanded ? "expanded" : ""}`} onSubmit={onSubmit}>
-      <label htmlFor={expanded ? "setup-session-name" : "rail-session-name"}>Session name</label>
-      <input
-        id={expanded ? "setup-session-name" : "rail-session-name"}
-        value={draft.name}
-        disabled={submitting}
-        placeholder="Session name"
-        onChange={(event) => onDraftChange({...draft, name: event.target.value})}
-      />
-      <textarea
-        value={draft.summary}
-        disabled={submitting}
-        placeholder="Summary"
-        onChange={(event) => onDraftChange({...draft, summary: event.target.value})}
-      />
-      <button type="submit" disabled={submitting}>{submitLabel}</button>
-      {error ? <p>{error}</p> : null}
-    </form>
   );
 }
 
